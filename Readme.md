@@ -16,7 +16,7 @@ Version 2
 
 Version 3
 
-- [ ] Mint NFT set
+- [ ] Mint NFT set 💸💸💸💸💸💸💸💸💸💸💸💸
 
 ## Ideas to explore
 
