@@ -40,50 +40,58 @@ export const agentModel1 = createModel();
 export const agentModel2 = createModel();
 export const agentModel3 = createModel();
 
-export function calculateReward1(agentBatch: AgentBatch) {
-  // Take the first and second agent positions from the batch
+// Squared distance function for pairwise calculation
+function squared_dist(A, B) {
+  // dimensions
+  const m = A.shape[0];
+  const n = B.shape[0];
+
+  const A_square = tf.matMul(A, A, false, true).sum(1).expandDims(1);
+  const B_square = tf
+    .matMul(B, B, false, true)
+    .sum(1)
+    .expandDims()
+    .tile([m, 1]);
+
+  const AB = tf.matMul(A, B, true, false);
+
+  return A_square.sub(AB.mul(2)).add(B_square);
+}
+
+export function calculateReward1(agentBatch) {
   const agent1Positions = agentBatch.agentPositions[0];
   const agent2Positions = agentBatch.agentPositions[1];
 
-  // calculate the Euclidean distance between all pairs of agent 1 and agent 2
-  const distances = agent1Positions.sub(agent2Positions).norm("euclidean", 1);
-  const v = distances.mean().neg(); // maximize for closeness is same as minimize the negative distance
+  const distances = squared_dist(agent1Positions, agent2Positions).sqrt();
+  const v = distances.mean().neg();
 
-  // return scalar reward
   return v.asScalar();
 }
 
-export function calculateReward2(agentBatch: AgentBatch) {
+export function calculateReward2(agentBatch) {
   const agent1Positions = agentBatch.agentPositions[0];
   const agent2Positions = agentBatch.agentPositions[1];
 
-  // calculate the distance between each agent 2 and all other agent 2s
-  const distances2 = agent2Positions.sub(agent2Positions).norm("euclidean", 1);
-  // calculate the distance between agent 2 and agent 1
-  const distances1 = agent2Positions.sub(agent1Positions).norm("euclidean", 1);
-  // reward is minimizing the closeness to agent 2s and maximizing distance from agent 1
+  const distances2 = squared_dist(agent2Positions, agent2Positions).sqrt();
+  const distances1 = squared_dist(agent2Positions, agent1Positions).sqrt();
+
   const v = distances2.mean().add(distances1.mean().neg());
 
-  // return scalar reward
   return v.asScalar();
 }
 
-export function calculateReward3(agentBatch: AgentBatch) {
+export function calculateReward3(agentBatch) {
   const agent1Positions = agentBatch.agentPositions[0];
   const agent2Positions = agentBatch.agentPositions[1];
   const agent3Positions = agentBatch.agentPositions[2];
 
-  // calculate the squared distance between agent 3 and agent 1
-  const distances1 = agent3Positions
-    .sub(agent1Positions)
-    .norm("euclidean", 1)
+  const distances1 = squared_dist(agent3Positions, agent1Positions)
+    .sqrt()
     .square();
-  // calculate the squared distance between agent 3 and agent 2
-  const distances2 = agent3Positions
-    .sub(agent2Positions)
-    .norm("euclidean", 1)
+  const distances2 = squared_dist(agent3Positions, agent2Positions)
+    .sqrt()
     .square();
-  // reward is the sum of both squared distances
+
   const v = distances1.mean().add(distances2.mean());
 
   return v.asScalar();

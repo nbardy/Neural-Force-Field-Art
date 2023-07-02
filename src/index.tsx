@@ -1,13 +1,14 @@
 import React from "react";
 
-import { mainLoop } from "./main";
+import { startLoop } from "./main";
 import { useLayoutEffect } from "react";
 
 import { createRoot } from "react-dom/client";
-import { App } from "./App";
 
 const container = document.getElementById("app");
-const root = createRoot(container)
+if (!container) throw new Error("Container not found");
+const root = createRoot(container);
+
 root.render(<App />);
 
 export default function App() {
@@ -16,8 +17,10 @@ export default function App() {
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
+    // throw error if canvas is not supported
+    if (!canvas) throw new Error("Canvas not supported");
 
-    mainLoop(canvas);
+    startLoop(canvas);
   }, []);
 
   return (

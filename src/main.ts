@@ -53,7 +53,7 @@ function drawAgents(canvas, agents: AgentBatch) {
 
 // let currentAgents = initializeAgents();
 
-export function startLoop(canvas: HTMLCanvasElement, agentSet: AgentSet) {
+export function startLoop(canvas: HTMLCanvasElement) {
   let agentState = initializeAgents(canvas);
 
   // Create optimizers
@@ -73,6 +73,10 @@ export function startLoop(canvas: HTMLCanvasElement, agentSet: AgentSet) {
       agentPositions: [],
       agentVelocities: [],
     };
+
+    /**
+     * Setup functions
+     */
 
     // Process an agent at index i
     const processAgent = (positions, i) => {
@@ -99,8 +103,6 @@ export function startLoop(canvas: HTMLCanvasElement, agentSet: AgentSet) {
       optimizers[i].minimize(() => {
         return rewardFunctions[i](agentState);
       });
-
-      // Minimize the negative reward
     };
 
     const cleanTensors = (_, i) => {
@@ -109,13 +111,22 @@ export function startLoop(canvas: HTMLCanvasElement, agentSet: AgentSet) {
       agentVelocities[i].dispose();
     };
 
+    /**
+     * Run Loop
+     */
+
     agentPositions.forEach(processAgent);
     // Cleanup old tensors
     agentPositions.forEach(cleanTensors);
 
     drawAgents(canvas, updatedAgents);
-    requestAnimationFrame(mainLoop);
+
+    requestAnimationFrame(() => {
+      console.log("frame request");
+      mainLoop(canvas);
+    });
   }
 
-  mainLoop();
+  console.log("starting loop");
+  mainLoop(canvas);
 }
