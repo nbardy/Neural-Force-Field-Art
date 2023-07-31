@@ -5,8 +5,14 @@ export interface AgentBatch {
   agentVelocities: tf.Tensor2D[];
 }
 
+type T1 = (agentBatch: AgentBatch, i: number) => tf.Scalar;
+type T2 = (agentBatch: AgentBatch) => tf.Scalar;
+
+type RewardFn = T1 | T2;
+
 // type
 export type AgentSet = {
   agentModels: tf.Sequential[];
-  rewardFunctions: ((agentBatch: AgentBatch) => tf.Scalar)[];
+  rewardFunctions: RewardFn[];
+  initializeAgents: (args: { width: number; height: number }) => AgentBatch;
 };
