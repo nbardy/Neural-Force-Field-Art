@@ -4,7 +4,7 @@
  *
  * Why?
  *
- * 1. Drawing counts in the 1,000,000s should be available to generative artists who know only
+ * 1. Drawing counts in the 100,000s should be available to generative artists who know only
  *    drawTriangle, drawCircle.
  *
  *    Right now generative artists need to be able to write shaders to draw with WebGL. This will
