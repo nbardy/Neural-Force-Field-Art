@@ -1,4 +1,4 @@
-![image](https://github.com/nbardy/tfjs-agents/assets/1278972/44263855-747d-4b0c-9578-cf7dd8b6fd87)# TrashPanda JS
+# TrashPanda JS
 
 <img width="300" src="out-0.png"></img>
 
