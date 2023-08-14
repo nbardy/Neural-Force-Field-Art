@@ -4,10 +4,10 @@ import { timeout } from "./utils";
 
 import * as tf from "@tensorflow/tfjs";
 
-import { AgentBatch, AgentSet } from "./types";
-import { updateParticles2 } from "./updateParticles";
+import { AgentBatch, AgentSet } from "./types/all";
+import { updateParticles2 } from "./physics/updateParticles";
 
-import { drawAgents } from "./draw_gpu";
+import { drawAgents } from "./draw/draw_gpu";
 
 // Print debugger
 const predictField = true;

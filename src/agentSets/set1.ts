@@ -14,8 +14,8 @@
 
 import * as tf from "@tensorflow/tfjs";
 import { Rank } from "@tensorflow/tfjs";
-import { pairwiseDistanceWithDropout } from "../math";
-import { AgentBatch, AgentSet as AgentConfig } from "../types";
+import { pairwiseDistanceWithDropout } from "../utils/math";
+import { AgentBatch, AgentSet as AgentConfig } from "../types/all";
 
 export function createModel() {
   const model = tf.sequential();

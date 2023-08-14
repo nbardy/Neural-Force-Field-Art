@@ -1,5 +1,5 @@
 // import types
-import { AgentBatch } from "./types";
+import { AgentBatch } from "../types/all";
 import * as tf from "@tensorflow/tfjs";
 
 const colors = ["#ff0000", "#00ff00", "#0000ff"];

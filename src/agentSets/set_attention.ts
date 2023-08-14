@@ -14,7 +14,7 @@
 
 import * as tf from "@tensorflow/tfjs";
 import { Rank } from "@tensorflow/tfjs";
-import { pairwiseDistanceWithDropout } from "../math";
+import { pairwiseDistanceWithDropout } from "../utils/math";
 import { Transformer } from "../trashPanda/blocks/clipTransformer";
 import { AgentBatch, AgentSet as AgentConfig } from "../types";
 

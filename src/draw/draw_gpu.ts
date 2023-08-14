@@ -2,7 +2,7 @@ import { AgentBatch } from "./types";
 import * as twgl from "twgl.js";
 import * as tf from "@tensorflow/tfjs";
 import { labConversionFunctions, rotateAB, skewL } from "./color";
-import { drawCircles, drawTriangles } from "./quickDraw";
+import { drawCircles, drawTriangles } from "./quickDraw/main";
 import { createTiles } from "./tensor_utils";
 
 /*

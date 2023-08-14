@@ -58,7 +58,7 @@
 import * as tf from "@tensorflow/tfjs";
 import { buffer, GPUData, input } from "@tensorflow/tfjs";
 import * as twgl from "twgl.js";
-import { normalize } from "./trashPanda/linalg";
+import { normalize } from "../trashPanda/linalg";
 
 type NumberInput = tf.Tensor | number;
 // vec3 or vec4 (Should default to no alpha)

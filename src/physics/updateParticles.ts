@@ -4,7 +4,7 @@
 //
 //
 import * as tf from "@tensorflow/tfjs";
-import { getEnv } from "./env";
+import { getEnv } from "../utils/env";
 
 export function newField(config) {
   const w = config.width * config.density;

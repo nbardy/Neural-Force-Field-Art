@@ -2,7 +2,7 @@ import * as tf from "@tensorflow/tfjs"; // Import TensorFlow.js
 import {
   extractBufferFromTexture,
   WebGLContextElite as WebGLRenderingContextElite,
-} from "../src/quickDraw";
+} from "../src/quickDraw/main";
 
 // read buffer data
 function readBufferData(

@@ -1,5 +1,5 @@
 import * as tf from "@tensorflow/tfjs";
-import { models, Model } from "./trashPanda";
+import { models, Model } from "../trashPanda";
 
 type TModel = typeof models.Transformer;
 
