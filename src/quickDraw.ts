@@ -315,6 +315,28 @@ export const normalizeColorType = (color: ColorAll) => {
   }
 };
 
+export const processBackgroundInput = (args: {
+  color?: ColorInput;
+  image?: string;
+  // gradient
+  startColor?: ColorInput;
+  endColor?: ColorInput;
+  angle?: NumberInput;
+  radius?: NumberInput;
+  gradientType?: "linear" | "radial";
+}) => {
+  const color = args.color && normalizeColorType(args.color);
+  const startColor = args.startColor && normalizeColorType(args.startColor);
+  const endColor = args.endColor && normalizeColorType(args.endColor);
+
+  return {
+    color,
+    startColor,
+    endColor,
+    ...args,
+  };
+};
+
 export function drawTriangles(args: {
   canvas: HTMLCanvasElement;
   positions: tf.Tensor; // Bx2
@@ -322,14 +344,14 @@ export function drawTriangles(args: {
   height?: NumberInput; // B | Scalar
   baseWidth?: tf.Tensor; // B | Scalar
   fragmentShader?: string;
-  color?: ColorAll; // Bx4 | Length 4 Vector
+  background?: { color?: ColorInput; image?: string };
 }) {
   const argsWithDefault = {
     ...args,
     dir: args.directions ?? tf.tensor2d([0, 1]),
     height: args.height ?? tf.tensor([10]),
     baseWidth: args.baseWidth ?? tf.tensor([10]),
-    color: args.color && normalizeColorType(args.color),
+    background: args.background && processBackgroundInput(args.background),
   };
 
   const {
@@ -339,7 +361,7 @@ export function drawTriangles(args: {
     height,
     baseWidth,
     fragmentShader,
-    color,
+    background,
   } = argsWithDefault;
   // Compute triangle vertices using pos, dir, height, and baseWidth
 
@@ -353,7 +375,7 @@ export function drawTriangles(args: {
 
   // Generate uniforms
   const uniforms = {
-    u_color: color,
+    u_color: background?.color,
     // Add pos, dir, height, and baseWidth as uniforms (TODO: Can uniforms be tensors?)
     u_pos: pos,
     u_dir: dir,
