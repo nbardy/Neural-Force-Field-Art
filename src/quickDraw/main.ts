@@ -244,12 +244,17 @@ function computeTriangleVertices(
     baseWidth instanceof tf.Tensor ? baseWidth : tf.scalar(baseWidth); // B
 
   const normalizedDir = dir2D.div(tf.norm(dir2D, "euclidean", -1, true)); // Bx2
-  const perpendicularDir = tf.stack(
+  // print
+  normalizedDir.print(true);
+  -normalizedDir.slice([0, 1], [-1, 1]).print(true);
+  normalizedDir.slice([0, 0], [-1, 1]).print(true);
+
+  const perpendicularDir = tf.concat(
     [
       -normalizedDir.slice([0, 1], [-1, 1]),
       normalizedDir.slice([0, 0], [-1, 1]),
     ],
-    -1
+    0
   ); // Bx2
 
   const halfBaseWidth =
