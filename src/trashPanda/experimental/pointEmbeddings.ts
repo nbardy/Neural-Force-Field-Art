@@ -13,13 +13,13 @@
  *  algorithm we want to add enough information to the data to allow the model to
  *  learn slowly and watch learning.
  *
- *  Some things I'm trying
+ *  What worked in the past: (Simple MLP works at low and high dimensions for simple objectives)
+ *  Using MLP to expand the dimensions(https://github.com/nbardy/force-field-ml-art/blob/master/src/models.js#L61)
+ * 
+ *  Some things I'm trying now:
  *  1. Hand crafted features(fft, gaussiankernel, etc...)
  *  2. Repeating the point in a spiral
  *  3. Using positional encoding from transformers(rotary embedding)
- *  4. Using MLP to expand the dimensions
- *
- *  Also adding some dilated repeating patterns to duplicate the
  *
  */
 import * as tf from "@tensorflow/tfjs";
