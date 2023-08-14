@@ -1,0 +1,45 @@
+import * as tf from "@tensorflow/tfjs"; // Import TensorFlow.js
+
+function testTensorToGPUDataAndExtraction() {
+  // 1. Create a tensor with known data
+  const tensor = tf.tensor([
+    [1, 2, 3, 4],
+    [5, 6, 7, 8],
+  ]); // Shape: 2x4
+
+  // 2. Convert the tensor to GPU data
+  const gpuData = tensorToGPUData(tensor); // You need to provide this function
+
+  // Get a WebGL rendering context
+  const canvas = document.createElement("canvas");
+  const gl = canvas.getContext("webgl") as WebGLRenderingContext;
+
+  // 3. Extract the buffer using the provided function
+  const buffer = extractBufferFromTexture(gl, gpuData);
+
+  // 4. Bind the buffer and read its content
+  gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buffer);
+  const bufferData = new Float32Array(
+    gpuData.texShape[0] * gpuData.texShape[1] * 4
+  );
+  gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, bufferData);
+
+  // Convert the tensor data to a standard array for comparison
+  const tensorData = tensor.arraySync();
+
+  // 5. Compare the buffer data with the original tensor data
+  for (let i = 0; i < tensorData.length; i++) {
+    for (let j = 0; j < tensorData[i].length; j++) {
+      const index = i * tensorData[i].length + j;
+      if (bufferData[index] !== tensorData[i][j]) {
+        throw new Error(
+          `Data mismatch at index ${index}: expected ${tensorData[i][j]}, got ${bufferData[index]}`
+        );
+      }
+    }
+  }
+
+  console.log("Test passed!");
+}
+
+testTensorToGPUDataAndExtraction(); // Run the test

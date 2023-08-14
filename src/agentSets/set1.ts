@@ -13,8 +13,9 @@
 // of the behavior of the other agents types.
 
 import * as tf from "@tensorflow/tfjs";
+import { Rank } from "@tensorflow/tfjs";
 import { pairwiseDistanceWithDropout } from "../math";
-import { AgentBatch, AgentSet } from "../types";
+import { AgentBatch, AgentSet as AgentConfig } from "../types";
 
 export function createModel() {
   const model = tf.sequential();
@@ -109,9 +110,9 @@ const rewardFunctions = [calculateReward1, calculateReward2, calculateReward3];
 
 const totalDim = 2;
 
-const count1 = 10;
-const count2 = 7;
-const count3 = 5;
+const count1 = 100;
+const count2 = 70;
+const count3 = 50;
 
 const initializeAgents = ({
   width,
@@ -164,7 +165,7 @@ const initializeAgents = ({
   };
 };
 
-export const agentSet: AgentSet = {
+export const agentConfig: AgentConfig = {
   agentModels,
   rewardFunctions,
   initializeAgents,

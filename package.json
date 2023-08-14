@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@tensorflow/tfjs": "^4.9.0",
-    "@tensorflow/tfjs-vis": "^1.5.1"
+    "@tensorflow/tfjs-vis": "^1.5.1",
+    "twgl.js": "^5.5.1"
   }
 }

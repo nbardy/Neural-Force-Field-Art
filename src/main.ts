@@ -1,4 +1,4 @@
-import { agentSet } from "./agentSets/set1";
+import { agentConfig } from "./agentSets/set1";
 
 import { timeout } from "./utils";
 
@@ -7,6 +7,8 @@ import * as tf from "@tensorflow/tfjs";
 import { AgentBatch, AgentSet } from "./types";
 import { updateParticles2 } from "./updateParticles";
 import { Rank } from "@tensorflow/tfjs";
+
+import { drawAgents } from "./draw_gpu";
 
 // x,y
 
@@ -18,31 +20,6 @@ const colors = ["yellow", "blue", "green"];
 // SGD Optimizers for each agent model
 const learningRate = 0.0001;
 
-function drawAgents(canvas, agents: AgentBatch) {
-  // debug
-  // count of agents
-
-  const ctx = canvas.getContext("2d");
-
-  const { agentPositions } = agents;
-
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  agentPositions.forEach((_, i) => {
-    // sync tensors to array
-    const positions = agentPositions[i] as tf.Tensor2D;
-    // const velocities = agentVelocities[i] as tf.Tensor2D;
-    const agents = positions.arraySync() as number[][];
-
-    agents.forEach((agent) => {
-      ctx.beginPath();
-      ctx.arc(agent[0], agent[1], 10, 0, Math.PI * 2);
-      ctx.fillStyle = colors[i];
-      ctx.fill();
-      ctx.closePath();
-    });
-  });
-}
-
 // let currentAgents = initializeAgents();
 
 export function startLoop(canvas: HTMLCanvasElement) {
@@ -53,6 +30,8 @@ export function startLoop(canvas: HTMLCanvasElement) {
   canvas.width = width;
   canvas.height = height;
 
+  const { agentModels, rewardFunctions, initializeAgents } = agentConfig;
+
   let agentState = initializeAgents({ width, height });
 
   // Create optimizers
@@ -61,8 +40,6 @@ export function startLoop(canvas: HTMLCanvasElement) {
     tf.train.adam(learningRate),
     tf.train.adam(learningRate),
   ];
-
-  const { agentModels, rewardFunctions } = agentSet;
 
   function mainLoop(canvas: HTMLCanvasElement) {
     let { agentPositions, agentVelocities } = agentState;
