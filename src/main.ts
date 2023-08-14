@@ -1,6 +1,9 @@
+/**
+ * The main loop kicks off training and adds drawing each frame
+ */
 import { agentConfig } from "./agentSets/set1";
 
-import { timeout } from "./utils";
+import { timeout } from "./utils/utils";
 
 import * as tf from "@tensorflow/tfjs";
 

@@ -16,7 +16,7 @@ import * as tf from "@tensorflow/tfjs";
 import { Rank } from "@tensorflow/tfjs";
 import { pairwiseDistanceWithDropout } from "../utils/math";
 import { Transformer } from "../trashPanda/blocks/clipTransformer";
-import { AgentBatch, AgentSet as AgentConfig } from "../types";
+import { AgentBatch, AgentSet as AgentConfig } from "../types/all";
 
 const middleStrength1 = tf.scalar(2.0);
 const middleStrength2 = tf.scalar(2.0);
