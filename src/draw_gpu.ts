@@ -50,8 +50,8 @@ export function drawAgents(
       const forceUpdatesMagnitude = tf.norm(forceUpdates, 2, 2); // Calculate the magnitude of the force updates
       drawTriangles({
         canvas,
-        pos: tiles,
-        dir: forceUpdates,
+        positions: tiles,
+        directions: forceUpdates,
         height: forceUpdatesMagnitude,
       });
     }
@@ -67,13 +67,13 @@ export function drawAgents(
     // lighten based on velocity
 
     // pos circle
-    drawCircles({ canvas, pos: positions, radius: 4, color: posColor });
+    drawCircles({ canvas, positions, radius: 4, color: posColor });
 
     // velocity arrow
     drawTriangles({
       canvas,
-      pos: positions,
-      dir: agents.agentVelocities[i],
+      positions: positions,
+      directions: agents.agentVelocities[i],
       height: 10,
       color: velColor,
     });

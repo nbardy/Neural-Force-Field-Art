@@ -313,8 +313,8 @@ export const normalizeColorType = (color: ColorAll) => {
 
 export function drawTriangles(args: {
   canvas: HTMLCanvasElement;
-  pos: tf.Tensor; // Bx2
-  dir?: tf.Tensor; // Bx2 | Length 2 Vector
+  positions: tf.Tensor; // Bx2
+  directions?: tf.Tensor; // Bx2 | Length 2 Vector
   height?: NumberInput; // B | Scalar
   baseWidth?: tf.Tensor; // B | Scalar
   fragmentShader?: string;
@@ -322,14 +322,21 @@ export function drawTriangles(args: {
 }) {
   const argsWithDefault = {
     ...args,
-    dir: args.dir ?? tf.tensor2d([0, 1]),
+    dir: args.directions ?? tf.tensor2d([0, 1]),
     height: args.height ?? tf.tensor([10]),
     baseWidth: args.baseWidth ?? tf.tensor([10]),
     color: args.color && normalizeColorType(args.color),
   };
 
-  const { canvas, pos, dir, height, baseWidth, fragmentShader, color } =
-    argsWithDefault;
+  const {
+    canvas,
+    positions: pos,
+    dir,
+    height,
+    baseWidth,
+    fragmentShader,
+    color,
+  } = argsWithDefault;
   // Compute triangle vertices using pos, dir, height, and baseWidth
 
   // if dir is empty. make vertical

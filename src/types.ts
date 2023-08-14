@@ -1,11 +1,14 @@
 import * as tf from "@tensorflow/tfjs";
-import * as TrashPanda from "./trashPanda";
+import { models, Model } from "./trashPanda";
 
-export type ModelType = tf.LayersModel | tf.Sequential | TrashPanda.Transformer;
+type TModel = typeof models.Transformer;
+
+export type MLModel = tf.LayersModel | tf.Sequential | Model;
+
 export interface AgentBatch {
   agentPositions: tf.Tensor2D[];
   agentVelocities: tf.Tensor2D[];
-  agentModels: ModelType[];
+  agentModels: MLModel[];
 }
 
 type T1 = (agentBatch: AgentBatch, i: number) => tf.Scalar;
@@ -15,7 +18,7 @@ type RewardFn = T1 | T2;
 
 // type
 export type AgentSet = {
-  agentModels: tf.Sequential[];
+  agentModels: MLModel[];
   rewardFunctions: RewardFn[];
   initializeAgents: (args: { width: number; height: number }) => AgentBatch;
 };
