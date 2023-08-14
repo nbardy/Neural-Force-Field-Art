@@ -1,9 +1,10 @@
 import * as tf from "@tensorflow/tfjs";
 import { models, Model } from "../trashPanda";
+import { TrashPandaModel } from "../trashPanda/types";
 
 type TModel = typeof models.Transformer;
 
-export type MLModel = tf.LayersModel | tf.Sequential | Model;
+export type MLModel = tf.LayersModel | tf.Sequential | TrashPandaModel;
 
 // Includes all current state and the models
 export interface AgentBatch {
