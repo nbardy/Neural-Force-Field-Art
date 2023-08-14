@@ -3,14 +3,19 @@ import { Tensor3D } from "@tensorflow/tfjs";
 import { assertShape } from "../../utils/assert";
 import { Transformer } from "../blocks/clipTransformer";
 import { RotaryEmbedding } from "../embeddings/rotaryEmbeddings";
+import { RotaryTransformer } from "../blocks/rotaryEmbeddingTransformer";
 import { TrashPandaModel } from "../types";
 
 export class MaxEmbeddingTransformer implements TrashPandaModel {
   embeddingLayer: MaxPointEmbeddingLayer;
   name: string;
-  transformer: Transformer;
+  transformer: Transformer | RotaryTransformer;
 
-  constructor(args: { modelDim: number; depth: number }) {
+  constructor(args: {
+    modelDim: number;
+    depth: number;
+    useRotaryTransformer?: boolean;
+  }) {
     const { modelDim, depth } = args;
 
     this.name = "maxEmbeddingTransformer";

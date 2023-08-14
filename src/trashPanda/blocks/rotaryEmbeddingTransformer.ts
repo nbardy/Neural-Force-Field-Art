@@ -64,19 +64,19 @@ class ResidualAttentionBlock {
 }
 
 // Decoder only transformer used for GPT/CLIP
-export class Transformer implements TrashPandaModel {
+export class RotaryTransformer implements TrashPandaModel {
   layers; // BxSxD
 
   constructor({
     modelDim = 64,
-    attn_heads = 8,
-    attn_head_dim = 64,
+    attnHeads = 8,
+    attnHeadDim = 64,
     dropout = 0,
     depth: depth = 6,
   }: {
     modelDim?: number;
-    attn_heads?: number;
-    attn_head_dim?: number;
+    attnHeads?: number;
+    attnHeadDim?: number;
     dropout?: number;
     depth?: number;
   } = {}) {
@@ -84,9 +84,9 @@ export class Transformer implements TrashPandaModel {
     for (let i = 0; i < depth; i++) {
       this.layers.push(
         new ResidualAttentionBlock({
-          modelDim: modelDim,
-          attnHeads: attn_heads,
-          attn_head_dim: attn_head_dim,
+          modelDim,
+          attnHeads,
+          attnHeadDim:,
           dropout: dropout,
         })
       );
