@@ -231,34 +231,36 @@ export function drawTWGL(
 function computeTriangleVertices(
   pos: tf.Tensor, // Bx2
   dir: tf.Tensor, // Bx2
-  height: tf.Tensor | number, // B or 1
-  baseWidth: tf.Tensor | number // B or 1
+  heightArg: tf.Tensor | number, // B or 1
+  baseWidthArg: tf.Tensor | number // B or 1
 ): tf.Tensor {
   // broadcast
   const pos2D = pos.reshape([-1, 2]); // Bx2
   const dir2D = dir.reshape([-1, 2]); // Bx2
 
-  // height as scalar or tensor
-  const heightV = height instanceof tf.Tensor ? height : tf.scalar(height); // B
-  const baseWidthV =
-    baseWidth instanceof tf.Tensor ? baseWidth : tf.scalar(baseWidth); // B
+  // broadcast with reshape or convert to scalar
+  let height =
+    heightArg instanceof tf.Tensor
+      ? heightArg.reshape([-1, 1])
+      : tf.scalar(heightArg); // B
+
+  const baseWidth =
+    baseWidthArg instanceof tf.Tensor
+      ? baseWidthArg.reshape([-1, 1])
+      : tf.scalar(baseWidthArg); // B
 
   const normalizedDir = dir2D.div(tf.norm(dir2D, "euclidean", -1, true)); // Bx2
-  // print
-  normalizedDir.print(true);
-  -normalizedDir.slice([0, 1], [-1, 1]).print(true);
-  normalizedDir.slice([0, 0], [-1, 1]).print(true);
 
-  const perpendicularDir = tf.concat(
-    [
-      -normalizedDir.slice([0, 1], [-1, 1]),
-      normalizedDir.slice([0, 0], [-1, 1]),
-    ],
-    0
-  ); // Bx2
+  const slice1 = tf.mul(normalizedDir.slice([0, 1], [-1, 1]), 1.0);
+  const slice2 = normalizedDir.slice([0, 0], [-1, 1]);
+  const perpendicularDir = tf.concat([slice1, slice2], 1);
+
+  normalizedDir.print(true);
+  slice1.print(true);
+  slice2.print(true);
 
   const halfBaseWidth =
-    baseWidthV instanceof tf.Tensor ? baseWidthV.div(2) : baseWidthV / 2; // B
+    baseWidth instanceof tf.Tensor ? baseWidth.div(2) : baseWidth / 2; // B
 
   const vertex1 = pos2D.add(normalizedDir.mul(height)); // Bx2
   const vertex2 = pos2D.add(perpendicularDir.mul(halfBaseWidth)); // Bx2
