@@ -56,9 +56,7 @@ while (true) {
    const direction = [1,0];
 
    points = x.concat(y,1).flatten()
-   customShader = ```
-   ... frag Shader ...
-   \`\`\`
+   customShader = "frag shader"
    
    // draw circle
    // high level drawing API
