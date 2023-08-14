@@ -50,8 +50,13 @@ while (true) {
    
    // move up and down
    y = tf.add(y + tf.sin(x + t));
+
+   const height = 0.2;
+   const baseWidth = 0.02
+   const direction = [1,0];
    
    // draw circle
    drawCircles(canvas, x, y, 0.01);
+   drawTriangles(canvas, x, y, direction, height, baseWidth, 0.01);
 }
 ```
