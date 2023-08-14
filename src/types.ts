@@ -1,9 +1,11 @@
 import * as tf from "@tensorflow/tfjs";
+import { Transformer } from "./trashPanda/blocks/clipTransformer";
 
+export type ModelType = tf.LayersModel | tf.Sequential | Transformer;
 export interface AgentBatch {
   agentPositions: tf.Tensor2D[];
   agentVelocities: tf.Tensor2D[];
-  agentModels: tf.Sequential[];
+  agentModels: ModelType[];
 }
 
 type T1 = (agentBatch: AgentBatch, i: number) => tf.Scalar;

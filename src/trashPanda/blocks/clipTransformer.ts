@@ -55,7 +55,7 @@ class ResidualAttentionBlock {
 }
 
 // Decoder only transformer used for GPT/CLIP
-export class Transformer extends LayersModel {
+export class Transformer {
   layers; // BxSxD
 
   constructor({
@@ -86,7 +86,7 @@ export class Transformer extends LayersModel {
     this.layers = tf.sequential({ layers: layers });
   }
 
-  forward(x: tf.Tensor) {
+  predict(x: tf.Tensor) {
     return this.layers.apply(x);
   }
 }
