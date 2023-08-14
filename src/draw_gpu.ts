@@ -59,18 +59,20 @@ export function drawAgents(
 
   // Draw Agents
   agents.agentPositions.forEach((_, i) => {
+    const positions = agents.agentPositions[i];
+
     const posColor = pointColorSet[i][0];
     const velColor = pointColorSet[i][1];
 
     // lighten based on velocity
 
     // pos circle
-    drawCircles(canvas, agents.agentPositions[i], 4, posColor);
+    drawCircles(canvas, positions, 4, posColor);
 
     // velocity arrow
     drawTriangles({
       canvas,
-      positions: agents.agentPositions[i],
+      positions: positions,
       velocities: agents.agentVelocities[i],
       height: 10,
       velColor,

@@ -60,6 +60,10 @@ import { buffer, GPUData, input } from "@tensorflow/tfjs";
 import * as twgl from "twgl.js";
 import { normalize } from "./trashPanda/linalg";
 
+type NumberInput = tf.Tensor | number;
+type Color = [number, number, number, number];
+type ColorInput = tf.Tensor | Color;
+
 // Stored shaders
 const shaderCache = new Map<string, any>();
 
@@ -249,9 +253,9 @@ export function drawCircles(
   canvas,
   x: tf.Tensor,
   y: tf.Tensor,
-  radius: number,
+  radius: NumberInput,
   fragmentShader?: string,
-  background?: { color?: tf.Tensor | number[]; image?: string }
+  background?: { color?: ColorInput; image?: string }
 ) {
   const gl = canvas.getContext("webgl");
   const numCircles = x.shape[0];
@@ -300,9 +304,6 @@ export const normalizeColorType = (color: ColorAll) => {
     throw new Error("Invalid color type");
   }
 };
-
-// Can be scalar or tensor, handle both
-export type NumberInput = tf.Tensor | number;
 
 export function drawTriangles(args: {
   canvas: HTMLCanvasElement;
