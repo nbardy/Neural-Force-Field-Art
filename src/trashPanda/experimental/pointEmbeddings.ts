@@ -15,7 +15,7 @@
  *
  *  What worked in the past: (Simple MLP works at low and high dimensions for simple objectives)
  *  Using MLP to expand the dimensions(https://github.com/nbardy/force-field-ml-art/blob/master/src/models.js#L61)
- * 
+ *
  *  Some things I'm trying now:
  *  1. Hand crafted features(fft, gaussiankernel, etc...)
  *  2. Repeating the point in a spiral
@@ -190,39 +190,50 @@ export const printMaxEmbeddingsImageSeries = () => {
 
 type Dense = ReturnType<typeof tf.layers.dense>;
 
-class MaxEmbeddingLayer {
+class MaxPointEmbeddingLayer {
   // stores layers
   layers = [];
   useGaussianKernel = false;
-  conv2x = true;
   useFFT = true;
   finalLayerSize = 512;
   a = 1;
   numSamples = 100;
   denseLayer: Dense;
+  conv2dlayer: ReturnType<typeof tf.layers.conv2d> | null = null;
 
   //constructorA
   constructor(
     numSamples,
     a,
+    NSize = 2, // 2D or 3D Point
     finalLayerSize = 512,
     useFFT = true,
     conv2x = true,
     useGaussianKernel = false
   ) {
+    // params
     const denseLayer = tf.layers.dense({ units: finalLayerSize });
+    this.denseLayer = denseLayer;
 
+    if (conv2x) {
+      const conv2dlayer = tf.layers.conv2d({
+        filters: NSize * 2,
+        kernelSize: [1, 1],
+        useBias: false,
+      });
+      this.conv2dlayer = conv2dlayer;
+    }
+
+    //hyperParams
     this.numSamples = numSamples;
     this.a = a;
     this.finalLayerSize = finalLayerSize;
     this.useFFT = useFFT;
-    this.conv2x = conv2x;
     this.useGaussianKernel = useGaussianKernel;
-    this.denseLayer = denseLayer;
   }
 
   predict(inputTensor: tf.Tensor2D) {
-    const { numSamples, a, conv2x, useFFT, useGaussianKernel } = this;
+    const { numSamples, a, conv2dlayer, useFFT, useGaussianKernel } = this;
     // Input: BxN
     const B = inputTensor.shape[0];
     const N = inputTensor.shape[1];
@@ -246,6 +257,7 @@ class MaxEmbeddingLayer {
     const sphericalCoords = tf.stack([r, theta, phi], -1); // Shape: BxSx3
 
     // +Samples S times
+
     // Already in the shape BxSx(1|2)xN
 
     // +Rotary Embedding 3x
@@ -262,14 +274,8 @@ class MaxEmbeddingLayer {
 
     // + 2xConv
     let outputs = tf.stack(rotaryEmbeddings, 1); // Shape: Bx3xSx3
-    if (conv2x) {
-      outputs = tf.layers
-        .conv2d({
-          filters: outputs.shape[-1] * 2,
-          kernelSize: [1, 1],
-          useBias: false,
-        })
-        .apply(outputs) as tf.Tensor; // Shape: Bx(3)xSx(6)
+    if (this.conv2dlayer) {
+      outputs = this.conv2dlayer.apply(outputs) as tf.Tensor; // Shape: Bx(3)xSx3
     }
 
     // +useFFT|gaussianKernl
