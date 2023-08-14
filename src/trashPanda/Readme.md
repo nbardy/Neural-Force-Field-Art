@@ -1,6 +1,6 @@
 # TrashPanda JS
 
-<img src="out-0.png"></img>
+<img width="300" src="out-0.png"></img>
 
 Trash Panda JS is a library for writing modern architectures in tensorflow.js
 
