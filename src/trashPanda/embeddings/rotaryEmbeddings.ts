@@ -59,7 +59,7 @@ export class RotaryEmbedding {
     }
   }
 
-  rotateQueriesOrKeys(t, seqDim = 0, offset = 0) {
+  rotateQueriesOrKeys(t, seqDim = 0, offset = 0): tf.Tensor {
     const seqLen = t.shape[seqDim];
     const freqs = tf
       .range(0, seqLen)

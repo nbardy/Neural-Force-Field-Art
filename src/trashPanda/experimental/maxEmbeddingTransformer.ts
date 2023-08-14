@@ -1,5 +1,6 @@
 import * as tf from "@tensorflow/tfjs";
 import { Tensor3D } from "@tensorflow/tfjs";
+import { assertShape } from "../../utils/assert";
 import { Transformer } from "../blocks/clipTransformer";
 import { RotaryEmbedding } from "../embeddings/rotaryEmbeddings";
 import { TrashPandaModel } from "../types";
@@ -122,7 +123,9 @@ class MaxPointEmbeddingLayer {
     // stack spherical
     // expand
     let stackedCoords = curvePoints.expandDims(1); // Shape: Bx1xSx3xN
+
     assertShape(stackedCoords, [B, 1, numSamples, 3, N]);
+
     if (this.useSphericalCoords) {
       // Spherical coords
       const xyz = curvePoints.reshape([B, numSamples, 3]); // Shape: BxSx3
@@ -145,20 +148,30 @@ class MaxPointEmbeddingLayer {
       // do nothing
     }
 
+    let rotated: tf.Tensor[] = [];
     // Already in the shape BxSx(1|2)xN
-    this.rotaryEmbeddings.rotateQueriesOrKeys(sphericalCoords);
+    for (let i = 0; i < this.rotaryEmbeddings.length; i++) {
+      const rotaryEmbedding = this.rotaryEmbeddings[i];
+      const rotaryEmbeddingOutput =
+        rotaryEmbedding.rotateQueriesOrKeys(stackedCoords);
 
-    // + 2xConv
-    let outputs = tf.stack(rotaryEmbeddings, 1); // Shape: Bx3xSx3
+      rotated.push(rotaryEmbeddingOutput);
+    }
+
+    const rotated2 = tf.concat(rotated, 1); // Shape: Bx3xSx3xN
+
+    let outputs = rotated2;
     if (this.conv2dlayer) {
-      outputs = this.conv2dlayer.apply(outputs) as tf.Tensor; // Shape: Bx(3)xSx3
+      outputs = this.conv2dlayer.apply(rotated) as tf.Tensor; // Shape: Bx(3)xSx3
     }
 
     // +useFFT|gaussianKernl
+    let fftOutput;
     if (useFFT) {
-      outputs = tf.spectral.fft(outputs); // Shape: Bx((1|2|3)x(1|2)x(1|2))x3xSxN
+      fftOutput = tf.spectral.fft(outputs); // Shape: Bx((1|2|3)x(1|2)x(1|2))x3xSxN
     }
 
+    let gaussianOutput;
     if (useGaussianKernel) {
       const kernelSize = 5; // Can be adjusted
       const sigma = 1.0; // Can be adjusted
@@ -183,7 +196,7 @@ class MaxPointEmbeddingLayer {
       // Check if outputs is of rank 3
       if (outputs.rank === 3) {
         // Apply the 1D convolution
-        outputs = tf.conv1d(
+        gaussianOutput = tf.conv1d(
           outputs as tf.Tensor3D,
           reshapedKernel,
           1,
@@ -195,10 +208,20 @@ class MaxPointEmbeddingLayer {
     }
     // Final shape BxMx3xSxN , where M = (1,2,4,8,24)
 
+    // stack up fft, gaussian, and outputs
+    const all = [outputs];
+    // filter
+    const clean = all.filter((x) => x);
+    // stack
+    outputs = tf.concat(clean, 1); // Shape: BxMx3xSxN
+
     // Flatten
     let finalOutput = tf.layers.flatten().apply(outputs) as tf.Tensor;
     // Shape: BxK where K = Mx3xSxN
     // range for N = 2,3 S = 24 and M = 1,2,4,8,24, K = 24x3x24x2 = 3456
+
+    console.log("final", finalOutput.shape);
+    finalOutput.print(true);
 
     // Linear transformation to get the final layer size
     finalOutput = this.denseLayer.apply(finalOutput) as tf.Tensor; // Shape: B x finalLayerSize
