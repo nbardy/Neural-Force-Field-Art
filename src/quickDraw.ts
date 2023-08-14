@@ -149,7 +149,7 @@ export interface BackgroundConfig {
 }
 
 export function drawTWGL(
-  gl,
+  gl: WebGLContextElite,
   pos: tf.Tensor,
   shape: number,
   fragmentShader?: string,
@@ -249,14 +249,23 @@ function computeTriangleVertices(
   return tf.stack([vertex1, vertex2, vertex3], 1).reshape([-1, 6]); // Bx6
 }
 
-export function drawCircles(
-  canvas,
-  positions: tf.Tensor,
-  radius: NumberInput,
-  fragmentShader?: string,
-  background?: { color?: ColorInput; image?: string }
-) {
-  const gl = canvas.getContext("webgl");
+export const getWebGL = (canvas: HTMLCanvasElement) => {
+  const gl = canvas.getContext("webgl") as WebGLContextElite;
+  if (!gl) {
+    throw new Error("No WebGL");
+  }
+  return gl;
+};
+
+export function drawCircles(args: {
+  canvas: HTMLCanvasElement;
+  positions: tf.Tensor;
+  radius: NumberInput;
+  fragmentShader?: string;
+  background?: { color?: ColorInput; image?: string };
+}) {
+  const { canvas, positions, radius, fragmentShader, background } = args;
+  const gl = getWebGL(canvas);
 
   // Generate uniforms
   const uniforms = {
@@ -329,10 +338,7 @@ export function drawTriangles(args: {
 
   const vertices = computeTriangleVertices(pos, dir, height, baseWidth); // Bx6
 
-  const gl = canvas.getContext("webgl");
-  if (!gl) {
-    throw new Error("WebGL not supported");
-  }
+  const gl = getWebGL(canvas);
 
   // Generate uniforms
   const uniforms = {
