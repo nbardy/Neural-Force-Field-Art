@@ -1,9 +1,9 @@
 import * as tf from "@tensorflow/tfjs";
 import { Tensor3D } from "@tensorflow/tfjs";
 import { assertShape } from "../../utils/assert";
-import { Transformer } from "../blocks/clipTransformer";
+import { Transformer } from "../models/clipTransformer";
 import { RotaryEmbedding } from "../embeddings/rotaryEmbeddings";
-import { RotaryTransformer } from "../blocks/rotaryEmbeddingTransformer";
+import { RotaryTransformer } from "../models/rotaryEmbeddingTransformer";
 import { TrashPandaModel } from "../types";
 
 export class MaxEmbeddingTransformer implements TrashPandaModel {

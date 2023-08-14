@@ -23,8 +23,17 @@
  *
  */
 import * as tf from "@tensorflow/tfjs";
-import { input, OptimizerConstructors, Tensor3D } from "@tensorflow/tfjs";
+import {
+  input,
+  OptimizerConstructors,
+  Sequential,
+  Tensor,
+  Tensor3D,
+} from "@tensorflow/tfjs";
 import { RotaryEmbedding } from "../embeddings/rotaryEmbeddings";
+import { Transformer } from "../models/clipTransformer";
+import { RotaryTransformer } from "../models/rotaryEmbeddingTransformer";
+import { TrashPandaModel } from "../types";
 
 //
 
@@ -39,8 +48,10 @@ class LinearExpandDims implements TrashPandaModel {
     const { inputDim, outputDim } = args;
     this.layer = tf.sequential();
     this.layer.add(tf.layers.dense({ units: inputDim, activation: "relu" }));
-    for (let i = 0; i < depth; i++) {
-      this.layer.add(tf.layers.dense({ units: hiddenDim, activation: "relu" }));
+    for (let i = 0; i < args.depth; i++) {
+      this.layer.add(
+        tf.layers.dense({ units: args.hiddenDim, activation: "relu" })
+      );
     }
     this.layer.add(tf.layers.dense({ units: outputDim, activation: "relu" }));
   }

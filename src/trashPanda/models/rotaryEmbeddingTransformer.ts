@@ -86,7 +86,7 @@ export class RotaryTransformer implements TrashPandaModel {
         new ResidualAttentionBlock({
           modelDim,
           attnHeads,
-          attnHeadDim:,
+          attnHeadDim,
           dropout: dropout,
         })
       );
