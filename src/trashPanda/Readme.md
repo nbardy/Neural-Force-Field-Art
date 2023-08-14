@@ -19,7 +19,7 @@ Also the particle simulator should give a particularly interesting style of visu
 
 Goals:
 - [x] MHSA
-- [ ] Local attentio
+- [ ] Local attention
 - [ ] Dilated Global Residual (My idea for a simple speedup)
   - [ ] Windowed Attention
 - [ ] SWIN attention
