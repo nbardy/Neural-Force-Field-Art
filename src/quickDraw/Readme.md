@@ -1,4 +1,4 @@
-## Trash Panda
+## Quick Draw
 
 An artistic generative art library that runs entirely on the GPU
 
