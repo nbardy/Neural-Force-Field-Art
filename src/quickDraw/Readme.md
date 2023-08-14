@@ -39,7 +39,7 @@ Consists of:
 Starting as a simple wrapper over twgl.js
 
 Example wave
-
+```
 // range
 const x = tf.linspace(-1, 1, 100);
 let y = tf.sin(x);
@@ -54,3 +54,4 @@ y = y + tf.sin(x + t);
 // draw circle
 drawCircles(canvas, x, y, 0.01);
 }
+```
