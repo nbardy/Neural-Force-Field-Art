@@ -24,7 +24,7 @@
  */
 import * as tf from "@tensorflow/tfjs";
 import { input, OptimizerConstructors, Tensor3D } from "@tensorflow/tfjs";
-import { RotaryEmbedding } from "./rotaryEmbeddings";
+import { RotaryEmbedding } from "../embeddings/rotaryEmbeddings";
 
 //
 // Basic linear expand (Baseline)

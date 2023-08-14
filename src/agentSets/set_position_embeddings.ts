@@ -17,14 +17,18 @@ import { Rank } from "@tensorflow/tfjs";
 import { pairwiseDistanceWithDropout } from "../utils/math";
 import { Transformer } from "../trashPanda/blocks/clipTransformer";
 import { AgentBatch, AgentSet as AgentConfig } from "../types/all";
+import { MaxEmbeddingTransformer } from "../trashPanda/experimental/maxEmbeddingTransformer";
 
 const middleStrength1 = tf.scalar(2.0);
 const middleStrength2 = tf.scalar(2.0);
 const middleStrength3 = tf.scalar(2.0);
 
-export const agentModel1 = new Transformer({ depth: 512 });
-export const agentModel2 = new Transformer({ depth: 64 });
-export const agentModel3 = new Transformer({ depth: 12 });
+export const agentModel1 = new MaxEmbeddingTransformer({
+  modelDim: 64,
+  depth: 12,
+});
+export const agentModel2 = new Transformer({ modelDim: 64, depth: 12 });
+export const agentModel3 = new Transformer({ modelDim: 64, depth: 12 });
 
 const agentModels = [agentModel1, agentModel2, agentModel3];
 

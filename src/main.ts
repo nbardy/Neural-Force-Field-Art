@@ -12,10 +12,7 @@ import { updateParticles2 } from "./physics/updateParticles";
 
 import { drawAgents } from "./draw/draw_gpu";
 
-import {
-  RotaryEmbedding,
-  printMaxEmbeddingsImageSeries,
-} from "./trashPanda/experimental/pointEmbeddings";
+import { printMaxEmbeddingsImageSeries } from "./trashPanda/experimental/pointEmbeddings";
 
 console.log("testing");
 printMaxEmbeddingsImageSeries();

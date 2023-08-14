@@ -2,6 +2,7 @@ import * as tf from "@tensorflow/tfjs";
 import { LayersModel } from "@tensorflow/tfjs";
 
 import { MultiHeadAttention } from "../layers/multiheadattention";
+import { TrashPandaModel } from "../types";
 
 class ResidualAttentionBlock {
   attn: any; // BxCxWxH
@@ -55,27 +56,27 @@ class ResidualAttentionBlock {
 }
 
 // Decoder only transformer used for GPT/CLIP
-export class Transformer {
+export class Transformer implements TrashPandaModel {
   layers; // BxSxD
 
   constructor({
-    dModel: d_model = 64,
+    modelDim = 64,
     attn_heads = 8,
     attn_head_dim = 64,
     dropout = 0,
-    numLayers: num_layers = 6,
+    depth: depth = 6,
   }: {
-    dModel?: number;
+    modelDim?: number;
     attn_heads?: number;
     attn_head_dim?: number;
     dropout?: number;
-    numLayers?: number;
+    depth?: number;
   } = {}) {
     const layers = [];
-    for (let i = 0; i < num_layers; i++) {
+    for (let i = 0; i < depth; i++) {
       this.layers.push(
         new ResidualAttentionBlock({
-          d_model: d_model,
+          d_model: modelDim,
           attn_heads: attn_heads,
           attn_head_dim: attn_head_dim,
           dropout: dropout,
