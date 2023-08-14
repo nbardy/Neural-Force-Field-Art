@@ -29,7 +29,7 @@ Goals:
 - [ ] Mobile Attention (Depthwise Separable Convolutions) (MobileVIT)
 - [ ] Dilated Attention
 - [ ] Memory Aware Attention(Implement it naively from the torch repo)
-   -  [ ] Re-Implement with tfjs specific memory management 🤔 (will need to benchmark with WEBGPU and WebGL)
+   -  [ ] Re-Implement with tfjs specific memory management (will need to benchmark with WEBGPU and WebGL)
 
 Currently 
 
