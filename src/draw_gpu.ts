@@ -42,7 +42,10 @@ export function drawAgents(
 
   if (predictField) {
     // Divide canvas into tiles based on gridDensity
-    const tiles = createTiles(canvas.width, canvas.height, gridDensity, true); // Centering tiles
+    let tiles = createTiles(canvas.width, canvas.height, gridDensity, true); // Centering tiles
+    // flatten to set of poitns from WxHx2 to (W*H)x2
+    tiles = tf.reshape(tiles, [-1, 2]);
+
     for (let i = 0; i < agentModels.length; i++) {
       const model = agentModels[i];
       const modelColor = modelColorSet[i];
@@ -50,7 +53,8 @@ export function drawAgents(
       const forceUpdates = model.predict(tiles); // Assume the model predicts force updates for each tile
 
       // Create the triangles with tfjs
-      const forceUpdatesMagnitude = tf.norm(forceUpdates, 2, 2); // Calculate the magnitude of the force updates
+      const forceUpdatesMagnitude = tf.norm(forceUpdates, 2, 1); // Calculate the magnitude of the force updates
+
       drawTriangles({
         canvas,
         positions: tiles,

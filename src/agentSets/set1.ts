@@ -162,6 +162,7 @@ const initializeAgents = ({
   return {
     agentPositions: [agent1Positions, agent2Positions, agent3Positions],
     agentVelocities: [agent1Velocities, agent2Velocities, agent3Velocities],
+    agentModels,
   };
 };
 

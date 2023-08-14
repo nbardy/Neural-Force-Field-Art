@@ -5,6 +5,7 @@ type TModel = typeof models.Transformer;
 
 export type MLModel = tf.LayersModel | tf.Sequential | Model;
 
+// Includes all current state and the models
 export interface AgentBatch {
   agentPositions: tf.Tensor2D[];
   agentVelocities: tf.Tensor2D[];
