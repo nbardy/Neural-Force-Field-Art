@@ -61,7 +61,11 @@ import * as twgl from "twgl.js";
 import { normalize } from "./trashPanda/linalg";
 
 type NumberInput = tf.Tensor | number;
-type Color = [number, number, number, number];
+// vec3 or vec4 (Should default to no alpha)
+type Color =
+  | [number, number, number, number]
+  | [number, number, number]
+  | Array<number>;
 type ColorInput = tf.Tensor | Color;
 
 // Stored shaders

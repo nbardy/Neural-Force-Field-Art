@@ -67,7 +67,12 @@ export function drawAgents(
     // lighten based on velocity
 
     // pos circle
-    drawCircles({ canvas, positions, radius: 4, color: posColor });
+    drawCircles({
+      canvas,
+      positions,
+      radius: 4,
+      background: { color: posColor },
+    });
 
     // velocity arrow
     drawTriangles({
