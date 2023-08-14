@@ -61,6 +61,8 @@ class MaxPointEmbeddingLayer {
   numSamples = 100;
   denseLayer: Dense;
   conv2dlayer: ReturnType<typeof tf.layers.conv2d> | null = null;
+  rotaryEmbeddings: RotaryEmbedding[] = [];
+  useSphericalCoords = true;
 
   //constructorA
   constructor({
@@ -68,9 +70,10 @@ class MaxPointEmbeddingLayer {
     a,
     NSize = 2, // 2D or 3D Point
     finalLayerSize = 512,
-    useFFT = true,
+    useSphericalCoords = true,
     conv2x = true,
-    useGaussianKernel = false,
+    useFFT = true,
+    useGaussianKernel = true,
   }) {
     // params
     const denseLayer = tf.layers.dense({ units: finalLayerSize });
@@ -85,12 +88,24 @@ class MaxPointEmbeddingLayer {
       this.conv2dlayer = conv2dlayer;
     }
 
+    // Rotary Embedding
+    // +Rotary Embedding 3x
+    const frequencies = [5231, 7819, 9212];
+    const rotaryEmbeddings = frequencies.map((freq) => {
+      return new RotaryEmbedding({
+        dim: 3,
+        freqsFor: "pixel",
+      });
+    }); // Shape: 3xBxSx3
+
+    this.rotaryEmbeddings = rotaryEmbeddings;
     //hyperParams
     this.numSamples = numSamples;
     this.a = a;
     this.finalLayerSize = finalLayerSize;
     this.useFFT = useFFT;
     this.useGaussianKernel = useGaussianKernel;
+    this.useSphericalCoords = useSphericalCoords;
   }
 
   predict(inputTensor: tf.Tensor2D) {
@@ -101,37 +116,37 @@ class MaxPointEmbeddingLayer {
 
     // Generate spherical curve points
     const t = tf.linspace(0, 0.7, numSamples);
-    const curvePoints = spiralCurve(t, inputTensor, a); // Shape: BxnumSamplesx3
+    // + Samples S times
+    const curvePoints = spiralCurve(t, inputTensor, a); // Shape: BxSxN
 
-    // + Spherical coords
-    const xyz = curvePoints.reshape([B, numSamples, 3]); // Shape: BxSx3
-    const r = tf.norm(xyz, "euclidean", -1); // Shape: BxS
+    // stack spherical
+    // expand
+    let stackedCoords = curvePoints.expandDims(1); // Shape: Bx1xSx3xN
+    assertShape(stackedCoords, [B, 1, numSamples, 3, N]);
+    if (this.useSphericalCoords) {
+      // Spherical coords
+      const xyz = curvePoints.reshape([B, numSamples, 3]); // Shape: BxSx3
+      const r = tf.norm(xyz, "euclidean", -1); // Shape: BxS
 
-    // Options Bx(1|2)xN
-    const theta = tf.acos(
-      xyz.slice([0, 0, 2], [-1, -1, 1]).div(r.expandDims(-1))
-    ); // Shape: BxS
-    const phi = tf.atan2(
-      xyz.slice([0, 0, 1], [-1, -1, 1]),
-      xyz.slice([0, 0, 0], [-1, -1, 1])
-    ); // Shape: BxS
-    const sphericalCoords = tf.stack([r, theta, phi], -1); // Shape: BxSx3
-
-    // +Samples S times
+      // Options Bx(1|2)xN
+      const theta = tf.acos(
+        xyz.slice([0, 0, 2], [-1, -1, 1]).div(r.expandDims(-1))
+      ); // Shape: BxS
+      const phi = tf.atan2(
+        xyz.slice([0, 0, 1], [-1, -1, 1]),
+        xyz.slice([0, 0, 0], [-1, -1, 1])
+      ); // Shape: BxS
+      const sphericalCoords = tf.stack([r, theta, phi], -1); // Shape: BxSx3
+      stackedCoords = tf.concat(
+        [stackedCoords, sphericalCoords.expandDims(1)],
+        1
+      ); // Shape: Bx2xSx3
+    } else {
+      // do nothing
+    }
 
     // Already in the shape BxSx(1|2)xN
-
-    // +Rotary Embedding 3x
-    const frequencies = [5231, 7819, 9212];
-    const rotaryEmbeddings = frequencies.map((freq) => {
-      const rotary = new RotaryEmbedding(
-        sphericalCoords.shape[-1], // Corrected this line
-        null,
-        "pixel",
-        freq
-      );
-      return rotary.rotateQueriesOrKeys(sphericalCoords); // Corrected this line, Shape: BxSx3
-    }); // Shape: 3xBxSx3
+    this.rotaryEmbeddings.rotateQueriesOrKeys(sphericalCoords);
 
     // + 2xConv
     let outputs = tf.stack(rotaryEmbeddings, 1); // Shape: Bx3xSx3
