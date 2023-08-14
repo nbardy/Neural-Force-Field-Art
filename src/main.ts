@@ -6,12 +6,11 @@ import * as tf from "@tensorflow/tfjs";
 
 import { AgentBatch, AgentSet } from "./types";
 import { updateParticles2 } from "./updateParticles";
-import { Rank } from "@tensorflow/tfjs";
 
 import { drawAgents } from "./draw_gpu";
 
-// x,y
-
+// Print debugger
+const predictField = true;
 const debugPauseTime = 2000;
 
 // Colors for agents
@@ -48,13 +47,14 @@ export function startLoop(canvas: HTMLCanvasElement) {
     const updatedAgents: AgentBatch = {
       agentPositions: [],
       agentVelocities: [],
+      agentModels,
     };
 
     /**
      * Setup functions
      */
 
-    drawAgents(canvas, agentState);
+    drawAgents(canvas, agentState, { predictField });
 
     // Process an agent at index i
     // This will optimize it and update the state

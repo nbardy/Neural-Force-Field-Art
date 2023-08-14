@@ -53,8 +53,9 @@
  *
  */
 import * as tf from "@tensorflow/tfjs";
-import { GPUData, input } from "@tensorflow/tfjs";
+import { buffer, GPUData, input } from "@tensorflow/tfjs";
 import * as twgl from "twgl.js";
+import { normalize } from "./trashPanda/linalg";
 
 // Stored shaders
 const shaderCache = new Map<string, any>();
@@ -157,7 +158,17 @@ export function drawTWGL(
 
   uniforms = uniforms || {};
 
-  const posBuffer = extractBufferFromTexture(gl, pos.dataToGPU());
+  const posBuffer = extractBufferFromTexture(gl, pos);
+
+  const bufferInfo: twgl.BufferInfo = {
+    numElements: shape, // You might need to determine the correct value for numElements
+    attribs: {
+      a_position: {
+        numComponents: 2, // or 3 or 4 depending on your data
+        buffer: posBuffer,
+      },
+    },
+  };
 
   // get keys of default uniforms
   const inputUniforms = Object.keys(uniforms);
@@ -201,9 +212,9 @@ export function drawTWGL(
   );
 
   // Draw the shape
-  twgl.setBuffersAndAttributes(gl, programInfo, posBuffer);
+  twgl.setBuffersAndAttributes(gl, programInfo, bufferInfo);
   twgl.setUniforms(programInfo, uniforms);
-  twgl.drawBufferInfo(gl, shape, posBuffer);
+  twgl.drawBufferInfo(gl, bufferInfo);
 }
 
 function computeTriangleVertices(
@@ -215,7 +226,7 @@ function computeTriangleVertices(
   const pos2D = pos.reshape([-1, 2]); // Bx2
   const dir2D = dir.reshape([-1, 2]); // Bx2
 
-  const normalizedDir = tf.linalg.normalize(dir2D);
+  const normalizedDir = normalize(dir2D);
   const perpendicularDir = tf.tensor2d([
     -normalizedDir.arraySync()[0][1],
     normalizedDir.arraySync()[0][0],
@@ -228,7 +239,7 @@ function computeTriangleVertices(
   const vertex2 = pos2D.add(perpendicularDir.mul(halfBaseWidth));
   const vertex3 = pos2D.sub(perpendicularDir.mul(halfBaseWidth));
 
-  return tf.stack([vertex1, vertex2, vertex3], (axis = 1)).reshape([-1, 6]); // Bx6
+  return tf.stack([vertex1, vertex2, vertex3], 1).reshape([-1, 6]); // Bx6
 }
 
 export function drawCircles(
@@ -241,7 +252,7 @@ export function drawCircles(
 ) {
   const gl = canvas.getContext("webgl");
   const numCircles = x.shape[0];
-  const pos = tf.stack([x, y], (axis = 1)).reshape([numCircles, 2]);
+  const pos = tf.stack([x, y], 1).reshape([numCircles, 2]);
 
   // Generate uniforms
   const uniforms = {
@@ -334,12 +345,13 @@ export function drawTriangles(args: {
 }
 
 // Webgl rendering context extended with pixel pack buffer
-interface WebGLContextElite extends WebGLRenderingContext {
+export interface WebGLContextElite extends WebGLRenderingContext {
   PIXEL_PACK_BUFFER: number;
+  STATIC_READ: number;
 }
 
 // This allows us to
-function extractBufferFromTexture(
+export function extractBufferFromTexture(
   glInput: WebGLRenderingContext,
   tensor: tf.Tensor
 ): WebGLBuffer {
@@ -373,6 +385,11 @@ function extractBufferFromTexture(
 
   // Create a buffer and bind it
   const buffer = gl.createBuffer();
+
+  if (!buffer) {
+    throw new Error("Buffer is null");
+  }
+
   gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buffer);
   gl.bufferData(
     gl.PIXEL_PACK_BUFFER,
@@ -388,7 +405,7 @@ function extractBufferFromTexture(
     gpuData.texShape[0],
     gl.RGBA,
     gl.FLOAT,
-    0
+    null // TODO: Should this be different
   );
 
   // Unbind the framebuffer and the buffer

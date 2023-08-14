@@ -1,4 +1,8 @@
 import * as tf from "@tensorflow/tfjs"; // Import TensorFlow.js
+import {
+  extractBufferFromTexture,
+  WebGLContextElite as WebGLRenderingContextElite,
+} from "../src/quickDraw";
 
 function testTensorToGPUDataAndExtraction() {
   // 1. Create a tensor with known data
@@ -7,25 +11,22 @@ function testTensorToGPUDataAndExtraction() {
     [5, 6, 7, 8],
   ]); // Shape: 2x4
 
-  // 2. Convert the tensor to GPU data
-  const gpuData = tensorToGPUData(tensor); // You need to provide this function
-
   // Get a WebGL rendering context
   const canvas = document.createElement("canvas");
-  const gl = canvas.getContext("webgl") as WebGLRenderingContext;
+  const gl = canvas.getContext("webgl") as WebGLRenderingContextElite;
 
   // 3. Extract the buffer using the provided function
-  const buffer = extractBufferFromTexture(gl, gpuData);
-
-  // 4. Bind the buffer and read its content
-  gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buffer);
-  const bufferData = new Float32Array(
-    gpuData.texShape[0] * gpuData.texShape[1] * 4
-  );
-  gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, bufferData);
+  const buffer = extractBufferFromTexture(gl, tensor);
 
   // Convert the tensor data to a standard array for comparison
-  const tensorData = tensor.arraySync();
+  const tensorData = tensor.arraySync<number[][]>();
+
+  // if number
+  if (typeof bufferData[0] === "number") {
+    // dump data for debug
+    console.debug("bufferData", bufferData);
+    throw new Error(" bufferData[0] is number");
+  }
 
   // 5. Compare the buffer data with the original tensor data
   for (let i = 0; i < tensorData.length; i++) {

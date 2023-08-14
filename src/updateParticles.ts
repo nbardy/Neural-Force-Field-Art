@@ -4,6 +4,7 @@
 //
 //
 import * as tf from "@tensorflow/tfjs";
+import { getEnv } from "./env";
 
 export function newField(config) {
   const w = config.width * config.density;
@@ -118,13 +119,16 @@ export function updateParticles2(
 
     // Slice to take only the X values then mod them by config.width to wrap around
     const posX = updatedPos.slice([0, 0], [-1, 1]).mod(tf.scalar(config.width));
+
     // sync and check for NaNs
-    const synced = posX.arraySync();
-    for (let i = 0; i < synced.length; i++) {
-      if (isNaN(synced[i])) {
-        console.log("NaN at " + i);
-      } else {
-        // console.log("not NaN at " + i);
+    if (getEnv().debugNan === true) {
+      const synced = posX.arraySync();
+      for (let i = 0; i < synced.length; i++) {
+        if (isNaN(synced[i])) {
+          console.log("NaN at " + i);
+        } else {
+          // console.log("not NaN at " + i);
+        }
       }
     }
 
