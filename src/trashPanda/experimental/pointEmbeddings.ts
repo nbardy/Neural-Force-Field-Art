@@ -23,9 +23,7 @@
  *
  */
 import * as tf from "@tensorflow/tfjs";
-import { Tensor3D } from "@tensorflow/tfjs";
-
-import { gaussianKernel } from "../kernels";
+import { input, OptimizerConstructors, Tensor3D } from "@tensorflow/tfjs";
 
 //
 // Basic linear expand
@@ -190,113 +188,139 @@ export const printMaxEmbeddingsImageSeries = () => {
   // TODO: PrintSphericalPathEmbeddingsRotated + Various features
 };
 
-function maxEmbedding(
-  inputTensor: tf.Tensor2D,
-  numSamples: number,
-  a: number,
-  finalLayerSize = 512,
-  useFFT = true,
-  conv2x = true,
-  useGaussianKernel = false
-) {
-  // Input: BxN
-  const B = inputTensor.shape[0];
-  const N = inputTensor.shape[1];
+type Dense = ReturnType<typeof tf.layers.dense>;
 
-  // Generate spherical curve points
-  const t = tf.linspace(0, 0.7, numSamples);
-  const curvePoints = spiralCurve(t, inputTensor, a); // Shape: BxnumSamplesx3
+class MaxEmbeddingLayer {
+  // stores layers
+  layers = [];
+  useGaussianKernel = false;
+  conv2x = true;
+  useFFT = true;
+  finalLayerSize = 512;
+  a = 1;
+  numSamples = 100;
+  denseLayer: Dense;
 
-  // + Spherical coords
-  const xyz = curvePoints.reshape([B, numSamples, 3]); // Shape: BxSx3
-  const r = tf.norm(xyz, "euclidean", -1); // Shape: BxS
+  //constructorA
+  constructor(
+    numSamples,
+    a,
+    finalLayerSize = 512,
+    useFFT = true,
+    conv2x = true,
+    useGaussianKernel = false
+  ) {
+    const denseLayer = tf.layers.dense({ units: finalLayerSize });
 
-  // Options Bx(1|2)xN
-  const theta = tf.acos(
-    xyz.slice([0, 0, 2], [-1, -1, 1]).div(r.expandDims(-1))
-  ); // Shape: BxS
-  const phi = tf.atan2(
-    xyz.slice([0, 0, 1], [-1, -1, 1]),
-    xyz.slice([0, 0, 0], [-1, -1, 1])
-  ); // Shape: BxS
-  const sphericalCoords = tf.stack([r, theta, phi], -1); // Shape: BxSx3
-
-  // +Samples S times
-  // Already in the shape BxSx(1|2)xN
-
-  // +Rotary Embedding 3x
-  const frequencies = [5231, 7819, 9212];
-  const rotaryEmbeddings = frequencies.map((freq) => {
-    const rotary = new RotaryEmbedding(
-      sphericalCoords.shape[-1], // Corrected this line
-      null,
-      "pixel",
-      freq
-    );
-    return rotary.rotateQueriesOrKeys(sphericalCoords); // Corrected this line, Shape: BxSx3
-  }); // Shape: 3xBxSx3
-
-  // + 2xConv
-  let outputs = tf.stack(rotaryEmbeddings, 1); // Shape: Bx3xSx3
-  if (conv2x) {
-    outputs = tf.layers
-      .conv2d({
-        filters: outputs.shape[-1] * 2,
-        kernelSize: [1, 1],
-        useBias: false,
-      })
-      .apply(outputs) as tf.Tensor; // Shape: Bx(3)xSx(6)
+    this.numSamples = numSamples;
+    this.a = a;
+    this.finalLayerSize = finalLayerSize;
+    this.useFFT = useFFT;
+    this.conv2x = conv2x;
+    this.useGaussianKernel = useGaussianKernel;
+    this.denseLayer = denseLayer;
   }
 
-  // +useFFT|gaussianKernl
-  if (useFFT) {
-    outputs = tf.spectral.fft(outputs); // Shape: Bx((1|2|3)x(1|2)x(1|2))x3xSxN
-  }
+  predict(inputTensor: tf.Tensor2D) {
+    const { numSamples, a, conv2x, useFFT, useGaussianKernel } = this;
+    // Input: BxN
+    const B = inputTensor.shape[0];
+    const N = inputTensor.shape[1];
 
-  if (useGaussianKernel) {
-    const kernelSize = 5; // Can be adjusted
-    const sigma = 1.0; // Can be adjusted
+    // Generate spherical curve points
+    const t = tf.linspace(0, 0.7, numSamples);
+    const curvePoints = spiralCurve(t, inputTensor, a); // Shape: BxnumSamplesx3
 
-    // Create a 1D Gaussian kernel
-    const kernel1D = tf
-      .range(-kernelSize / 2, kernelSize / 2 + 1)
-      .div(kernelSize)
-      .mul(-1)
-      .square()
-      .div(2 * sigma * sigma)
-      .exp();
-    const normalizedKernel = kernel1D.div(kernel1D.sum());
+    // + Spherical coords
+    const xyz = curvePoints.reshape([B, numSamples, 3]); // Shape: BxSx3
+    const r = tf.norm(xyz, "euclidean", -1); // Shape: BxS
 
-    // Reshape kernel to 3D
-    const reshapedKernel: Tensor3D = normalizedKernel.reshape([
-      kernelSize,
-      1,
-      1,
-    ]);
+    // Options Bx(1|2)xN
+    const theta = tf.acos(
+      xyz.slice([0, 0, 2], [-1, -1, 1]).div(r.expandDims(-1))
+    ); // Shape: BxS
+    const phi = tf.atan2(
+      xyz.slice([0, 0, 1], [-1, -1, 1]),
+      xyz.slice([0, 0, 0], [-1, -1, 1])
+    ); // Shape: BxS
+    const sphericalCoords = tf.stack([r, theta, phi], -1); // Shape: BxSx3
 
-    // Check if outputs is of rank 3
-    if (outputs.rank === 3) {
-      // Apply the 1D convolution
-      outputs = tf.conv1d(
-        outputs as tf.Tensor3D,
-        reshapedKernel,
-        1,
-        "same"
-      ) as tf.Tensor3D; // Output shape: BxSx(1|2)xN
-    } else {
-      // Error handling or reshaping logic if needed
+    // +Samples S times
+    // Already in the shape BxSx(1|2)xN
+
+    // +Rotary Embedding 3x
+    const frequencies = [5231, 7819, 9212];
+    const rotaryEmbeddings = frequencies.map((freq) => {
+      const rotary = new RotaryEmbedding(
+        sphericalCoords.shape[-1], // Corrected this line
+        null,
+        "pixel",
+        freq
+      );
+      return rotary.rotateQueriesOrKeys(sphericalCoords); // Corrected this line, Shape: BxSx3
+    }); // Shape: 3xBxSx3
+
+    // + 2xConv
+    let outputs = tf.stack(rotaryEmbeddings, 1); // Shape: Bx3xSx3
+    if (conv2x) {
+      outputs = tf.layers
+        .conv2d({
+          filters: outputs.shape[-1] * 2,
+          kernelSize: [1, 1],
+          useBias: false,
+        })
+        .apply(outputs) as tf.Tensor; // Shape: Bx(3)xSx(6)
     }
+
+    // +useFFT|gaussianKernl
+    if (useFFT) {
+      outputs = tf.spectral.fft(outputs); // Shape: Bx((1|2|3)x(1|2)x(1|2))x3xSxN
+    }
+
+    if (useGaussianKernel) {
+      const kernelSize = 5; // Can be adjusted
+      const sigma = 1.0; // Can be adjusted
+
+      // Create a 1D Gaussian kernel
+      const kernel1D = tf
+        .range(-kernelSize / 2, kernelSize / 2 + 1)
+        .div(kernelSize)
+        .mul(-1)
+        .square()
+        .div(2 * sigma * sigma)
+        .exp();
+      const normalizedKernel = kernel1D.div(kernel1D.sum());
+
+      // Reshape kernel to 3D
+      const reshapedKernel: Tensor3D = normalizedKernel.reshape([
+        kernelSize,
+        1,
+        1,
+      ]);
+
+      // Check if outputs is of rank 3
+      if (outputs.rank === 3) {
+        // Apply the 1D convolution
+        outputs = tf.conv1d(
+          outputs as tf.Tensor3D,
+          reshapedKernel,
+          1,
+          "same"
+        ) as tf.Tensor3D; // Output shape: BxSx(1|2)xN
+      } else {
+        // Error handling or reshaping logic if needed
+      }
+    }
+    // Final shape BxMx3xSxN , where M = (1,2,4,8,24)
+
+    // Flatten
+    let finalOutput = tf.layers.flatten().apply(outputs) as tf.Tensor;
+    // Shape: BxK where K = Mx3xSxN
+    // range for N = 2,3 S = 24 and M = 1,2,4,8,24, K = 24x3x24x2 = 3456
+
+    // Linear transformation to get the final layer size
+    finalOutput = this.denseLayer.apply(finalOutput) as tf.Tensor; // Shape: B x finalLayerSize
+
+    return finalOutput;
   }
-  // Final shape BxMx3xSxN , where M = (1,2,4,8,24)
-
-  // Flatten
-  let finalOutput = tf.layers.flatten().apply(outputs) as tf.Tensor;
-  // Shape: BxK where K = Mx3xSxN
-  // range for N = 2,3 S = 24 and M = 1,2,4,8,24, K = 24x3x24x2 = 3456
-
-  // Linear transformation to get the final layer size
-  const denseLayer = tf.layers.dense({ units: finalLayerSize });
-  finalOutput = denseLayer.apply(finalOutput) as tf.Tensor; // Shape: B x finalLayerSize
-
-  return finalOutput;
 }

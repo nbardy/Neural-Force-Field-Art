@@ -1,10 +1,13 @@
 import * as tf from "@tensorflow/tfjs";
 
+/**
+ * Warning not yet in use, might be wrong
+ */
 export function gaussianKernel(
   M: number,
   std: number = 1.0,
   sym: boolean = true,
-  dtype: "float32" = "float32"
+  dtype: "float32" | "int32" = "float32"
 ): tf.Tensor {
   if (std <= 0) {
     throw new Error(
