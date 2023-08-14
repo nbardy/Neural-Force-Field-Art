@@ -1,4 +1,5 @@
 import * as tf from "@tensorflow/tfjs";
+import { LayersModel } from "@tensorflow/tfjs";
 
 import { MultiHeadAttention } from "../layers/multiheadattention";
 
@@ -54,7 +55,7 @@ class ResidualAttentionBlock {
 }
 
 // Decoder only transformer used for GPT/CLIP
-export class Transformer {
+export class Transformer extends LayersModel {
   layers; // BxSxD
 
   constructor({

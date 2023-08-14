@@ -18,7 +18,9 @@ import { pairwiseDistanceWithDropout } from "../math";
 import { Transformer } from "../trashPanda/blocks/clipTransformer";
 import { AgentBatch, AgentSet as AgentConfig } from "../types";
 
-const middleRewardStrength = 0.1;
+const middleStrength1 = tf.scalar(2.0);
+const middleStrength2 = tf.scalar(2.0);
+const middleStrength3 = tf.scalar(2.0);
 
 export const agentModel1 = new Transformer({ num_layers: 512 });
 export const agentModel2 = new Transformer({ num_layers: 64 });
@@ -36,70 +38,35 @@ function squared_dist(A: tf.Tensor2D, B: tf.Tensor2D) {
 }
 
 // calculates if the agents in batch i are close to the center, position: 0.5, 0.5
-export function middleReward(agentBatch, i) {
-  const agentPositions = agentBatch.agentPositions[i];
-
+export function middleReward(positions, i) {
   const center = tf.tensor2d([[0.5, 0.5]]);
-
-  const distances = squared_dist(agentPositions, center);
+  const distances = squared_dist(positions, center);
 
   return distances.mean().asScalar();
 }
 
-export function calculateReward1(agentBatch, i) {
-  // This model wants to get away from all the other
-  const newV = agentBatch.agentVelocities[i];
+export function repelAndMiddle(agentBatch, selfI, enemiesI) {
+  const agentPositionsSelf = agentBatch.agentPositions[selfI];
 
-  console.log("reward 1");
-  const agent1Positions = agentBatch.agentPositions[0];
-  const agent2Positions = agentBatch.agentPositions[1];
-  const agent3Positions = agentBatch.agentPositions[2];
+  const enemiesPositions = enemiesI.map((i) => agentBatch.agentPositions[i]);
+  const enemiesDistances = enemiesPositions
+    .map((enemyPositions) =>
+      pairwiseDistanceWithDropout(agentPositionsSelf, enemyPositions, 24)
+    )
+    .map((distances) => distances.mean());
 
-  const distances = pairwiseDistanceWithDropout(
-    agent1Positions,
-    agent3Positions,
-    5
-  );
-  let v = distances.mean().neg();
+  const distanceEnemies = tf.stack(enemiesDistances).mean();
+  const distanceToMiddle = middleReward(agentBatch, agentPositionsSelf);
 
-  return v.asScalar();
+  return middleStrength1.mul(distanceToMiddle).add(distanceEnemies).asScalar();
 }
 
-export function calculateReward2(agentBatch) {
-  // TODO: Something is wrong with this reward function. The model optimized with it will return NaNs
-
-  // return tf.mean(agentBatch.agentVelocities[1]).asScalar();
-
-  const agent1Positions = agentBatch.agentPositions[0];
-  const agent2Positions = agentBatch.agentPositions[1];
-
-  const d = pairwiseDistanceWithDropout(agent1Positions, agent2Positions, 6);
-
-  return d.mean().asScalar();
-}
-
-export function calculateReward3(agentBatch) {
-  // return tf.mean(agentBatch.agentVelocities[2]).asScalar();
-
-  const agent1Positions = agentBatch.agentPositions[0];
-  const agent2Positions = agentBatch.agentPositions[1];
-  const agent3Positions = agentBatch.agentPositions[2];
-
-  const distances1 = pairwiseDistanceWithDropout(
-    agent3Positions,
-    agent1Positions,
-    5
-  );
-  const distances2 = pairwiseDistanceWithDropout(
-    agent3Positions,
-    agent2Positions,
-    5
-  );
-
-  const v = distances1.mean().add(distances2.mean());
-
-  return v.asScalar();
-}
+export const calculateReward1 = (agentBatch) =>
+  repelAndMiddle(agentBatch, 0, [1, 2]);
+export const calculateReward2 = (agentBatch) =>
+  repelAndMiddle(agentBatch, 1, [0, 2]);
+export const calculateReward3 = (agentBatch) =>
+  repelAndMiddle(agentBatch, 2, [0, 1]);
 
 // Reward functions
 const rewardFunctions = [calculateReward1, calculateReward2, calculateReward3];
@@ -153,6 +120,7 @@ const initializeAgents = ({
   return {
     agentPositions: [agent1Positions, agent2Positions, agent3Positions],
     agentVelocities: [agent1Velocities, agent2Velocities, agent3Velocities],
+    agentModels: agentModels,
   };
 };
 
