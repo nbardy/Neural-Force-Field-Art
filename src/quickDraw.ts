@@ -14,6 +14,10 @@
  *    being computed on by tfjs. Reusing another API would require copying the data to CPU
  *    or doing compute on the CPU. Computing the geometry on the GPU is much faster.
  *
+ *    Provides one simple function for passing data back and forth between tfjs
+ *    and into shaders, which allows custom rendering build on top of tfjs tensors
+ *    for those want no limitations.
+ *
  * How?
  *
  * WebGL has no geometry shaders so we do the geometry calculations on GPU with tfjs.
@@ -27,8 +31,7 @@
  * our scenes to both render fast and update fast.
  *
  * Consists of:
- *
- *  1. one helper function (drawTWGL that draws TWGIL with default gl.TRIANGLES) or another shape.
+ *  1. One helper function (drawTWGL that draws TWGIL with default gl.TRIANGLES) or another shape.
  *  2. Artistic Layer that provides drawing oriented APIs instead of GPU oriented APIs
  *     e.g. Position, Direction, etc... over  triangle vertices
  *
@@ -298,11 +301,14 @@ export const normalizeColorType = (color: ColorAll) => {
   }
 };
 
+// Can be scalar or tensor, handle both
+export type NumberInput = tf.Tensor | number;
+
 export function drawTriangles(args: {
   canvas: HTMLCanvasElement;
   pos: tf.Tensor; // Bx2
   dir?: tf.Tensor; // Bx2 | Length 2 Vector
-  height?: tf.Tensor; // B | Scalar
+  height?: NumberInput; // B | Scalar
   baseWidth?: tf.Tensor; // B | Scalar
   fragmentShader?: string;
   color?: ColorAll; // Bx4 | Length 4 Vector
@@ -348,6 +354,10 @@ export function drawTriangles(args: {
 export interface WebGLContextElite extends WebGLRenderingContext {
   PIXEL_PACK_BUFFER: number;
   STATIC_READ: number;
+
+  // WEBGL 2.0
+  // TODO: Fix this type
+  getBufferSubData: any;
 }
 
 // This allows us to

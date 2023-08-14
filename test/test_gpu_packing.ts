@@ -4,6 +4,25 @@ import {
   WebGLContextElite as WebGLRenderingContextElite,
 } from "../src/quickDraw";
 
+// read buffer data
+function readBufferData(
+  gl: WebGLRenderingContextElite,
+  buffer: WebGLBuffer
+): Float32Array {
+  // 1. Bind the buffer
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+
+  // 2. Get the buffer size
+  const bufferSize = gl.getBufferParameter(gl.ARRAY_BUFFER, gl.BUFFER_SIZE);
+
+  // 3. Read the data from the buffer into an ArrayBuffer
+  const rawData = new ArrayBuffer(bufferSize);
+  gl.getBufferSubData(gl.ARRAY_BUFFER, 0, new Float32Array(rawData));
+
+  // 4. Return the data as a Float32Array
+  return new Float32Array(rawData);
+}
+
 function testTensorToGPUDataAndExtraction() {
   // 1. Create a tensor with known data
   const tensor = tf.tensor([
@@ -17,9 +36,10 @@ function testTensorToGPUDataAndExtraction() {
 
   // 3. Extract the buffer using the provided function
   const buffer = extractBufferFromTexture(gl, tensor);
+  const bufferData = readBufferData(gl, buffer);
 
   // Convert the tensor data to a standard array for comparison
-  const tensorData = tensor.arraySync<number[][]>();
+  const tensorData = tensor.arraySync() as number[][];
 
   // if number
   if (typeof bufferData[0] === "number") {

@@ -1,7 +1,7 @@
 import * as tf from "@tensorflow/tfjs";
-import { Transformer } from "./trashPanda/blocks/clipTransformer";
+import * as TrashPanda from "./trashPanda";
 
-export type ModelType = tf.LayersModel | tf.Sequential | Transformer;
+export type ModelType = tf.LayersModel | tf.Sequential | TrashPanda.Transformer;
 export interface AgentBatch {
   agentPositions: tf.Tensor2D[];
   agentVelocities: tf.Tensor2D[];
