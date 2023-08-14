@@ -59,17 +59,17 @@ export class Transformer {
   layers; // BxSxD
 
   constructor({
-    d_model = 64,
+    dModel: d_model = 64,
     attn_heads = 8,
     attn_head_dim = 64,
     dropout = 0,
-    num_layers = 6,
+    numLayers: num_layers = 6,
   }: {
-    d_model?: number;
+    dModel?: number;
     attn_heads?: number;
     attn_head_dim?: number;
     dropout?: number;
-    num_layers?: number;
+    numLayers?: number;
   } = {}) {
     const layers = [];
     for (let i = 0; i < num_layers; i++) {
