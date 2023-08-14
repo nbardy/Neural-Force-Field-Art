@@ -30,16 +30,16 @@ function applyRotaryEmb(freqs, t, startIndex = 0, scale = 1) {
 // Rotary embedding class
 // Use this API
 export class RotaryEmbedding {
-  theta: number;
-  freqs: tf.Tensor1D;
+  private theta: number;
+  private freqs: tf.Tensor1D;
 
-  constructor(
-    dim,
+  constructor({
+    dim = 512,
     customFreqs = null,
     freqsFor = "lang",
     theta = 10000,
-    maxFreq = 10
-  ) {
+    maxFreq = 10,
+  }) {
     this.theta = theta;
     if (customFreqs) {
       this.freqs = customFreqs;
@@ -51,7 +51,9 @@ export class RotaryEmbedding {
         )
       );
     } else if (freqsFor === "pixel") {
-      this.freqs = tf.linspace(1, maxFreq / 2, dim / 2).mul(Math.PI);
+      // this.freqs = tf.linspace(1, maxFreq / 2, dim / 2).mul(Math.PI);
+      //  as parameter
+      const initialFreqs = tf.linspace(1, maxFreq / 2, dim / 2).mul(Math.PI);
     } else {
       throw new Error(`Unknown modality ${freqsFor}`);
     }

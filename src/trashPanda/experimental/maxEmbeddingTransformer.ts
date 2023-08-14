@@ -94,7 +94,7 @@ class MaxPointEmbeddingLayer {
   }
 
   predict(inputTensor: tf.Tensor2D) {
-    const { numSamples, a, conv2dlayer, useFFT, useGaussianKernel } = this;
+    const { numSamples, a, useFFT, useGaussianKernel } = this;
     // Input: BxN
     const B = inputTensor.shape[0];
     const N = inputTensor.shape[1];
