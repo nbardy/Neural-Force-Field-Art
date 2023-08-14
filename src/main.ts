@@ -12,6 +12,14 @@ import { updateParticles2 } from "./physics/updateParticles";
 
 import { drawAgents } from "./draw/draw_gpu";
 
+import {
+  RotaryEmbedding,
+  printMaxEmbeddingsImageSeries,
+} from "./trashPanda/experimental/pointEmbeddings";
+
+console.log("testing");
+printMaxEmbeddingsImageSeries();
+
 // Print debugger
 const predictField = true;
 const debugPauseTime = 2000;
