@@ -251,15 +251,12 @@ function computeTriangleVertices(
 
 export function drawCircles(
   canvas,
-  x: tf.Tensor,
-  y: tf.Tensor,
+  positions: tf.Tensor,
   radius: NumberInput,
   fragmentShader?: string,
   background?: { color?: ColorInput; image?: string }
 ) {
   const gl = canvas.getContext("webgl");
-  const numCircles = x.shape[0];
-  const pos = tf.stack([x, y], 1).reshape([numCircles, 2]);
 
   // Generate uniforms
   const uniforms = {
@@ -286,7 +283,7 @@ export function drawCircles(
   `;
 
   // Draw circles using TWGL
-  drawTWGL(gl, pos, gl.POINTS, circleFragmentShader, uniforms);
+  drawTWGL(gl, positions, gl.POINTS, circleFragmentShader, uniforms);
 }
 
 type ColorAll = tf.Tensor | number[];
