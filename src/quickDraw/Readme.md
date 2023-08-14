@@ -54,9 +54,18 @@ while (true) {
    const height = 0.2;
    const baseWidth = 0.02
    const direction = [1,0];
+
+   points = x.concat(y,1).flatten()
+   customShader = ```
+   ... frag Shader ...
+   ```
    
    // draw circle
+   // high level drawing API
    drawCircles(canvas, x, y, 0.01, {background: {color: [0.2, 0.4, 0.9]}});
    drawTriangles(canvas, x, y, direction, height, baseWidth, 0.01);
+
+   // low level custom shader API
+   drawTWIGL(canvas, points, gl.TRIANGLES, customShader);
 }
 ```
