@@ -56,7 +56,7 @@ while (true) {
    const direction = [1,0];
    
    // draw circle
-   drawCircles(canvas, x, y, 0.01);
+   drawCircles(canvas, x, y, 0.01, {background: {color: [0.2, 0.4, 0.9]}});
    drawTriangles(canvas, x, y, direction, height, baseWidth, 0.01);
 }
 ```
