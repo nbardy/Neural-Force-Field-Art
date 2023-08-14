@@ -39,19 +39,19 @@ Consists of:
 Starting as a simple wrapper over twgl.js
 
 Example wave
-```
+```typescript
 // range
 const x = tf.linspace(-1, 1, 100);
 let y = tf.sin(x);
 
 // loop and draw updating positions with sin wave
 while (true) {
-const t = tf.scalar(Date.now() \* 0.001);
-
-// move up and down
-y = y + tf.sin(x + t);
-
-// draw circle
-drawCircles(canvas, x, y, 0.01);
+   const t = tf.scalar(Date.now() * 0.001);
+   
+   // move up and down
+   y = tf.add(y + tf.sin(x + t));
+   
+   // draw circle
+   drawCircles(canvas, x, y, 0.01);
 }
 ```
