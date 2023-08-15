@@ -39,12 +39,18 @@ export class RotaryEmbedding {
     freqsFor = "lang",
     theta = 10000,
     maxFreq = 10,
+    // TODO: Is this right? I don't think so.
+    // Should anyhting be trainable
+    // freqsTrainable = true,
   }) {
     this.theta = theta;
+    let initFreqs;
+
     if (customFreqs) {
-      this.freqs = customFreqs;
+      initFreqs = customFreqs;
     } else if (freqsFor === "lang") {
-      this.freqs = tf.tensor1d(
+      // creataes init
+      initFreqs = tf.tensor1d(
         Array.from(
           { length: dim / 2 },
           (_, i) => 1 / Math.pow(theta, (2 * i) / dim)
@@ -53,10 +59,15 @@ export class RotaryEmbedding {
     } else if (freqsFor === "pixel") {
       // this.freqs = tf.linspace(1, maxFreq / 2, dim / 2).mul(Math.PI);
       //  as parameter
-      const initialFreqs = tf.linspace(1, maxFreq / 2, dim / 2).mul(Math.PI);
+      initFreqs = tf.linspace(1, maxFreq / 2, dim / 2).mul(Math.PI);
     } else {
       throw new Error(`Unknown modality ${freqsFor}`);
     }
+
+    // TODO: What is the number 1 last arg
+    // A tensor type or something wtf!?
+    // this.freqs = new tf.Variable(initFreqs, true, "freqs", 1);
+    this.freqs = initFreqs;
   }
 
   rotateQueriesOrKeys(t, seqDim = 0, offset = 0): tf.Tensor {
@@ -68,6 +79,7 @@ export class RotaryEmbedding {
       .reshape([-1, 1])
       .tile([1, this.freqs.shape[0]])
       .mul(this.freqs);
+
     const freqsRotated = tf.concat([freqs.cos(), freqs.sin()], 1);
     return applyRotaryEmb(freqsRotated, t);
   }
