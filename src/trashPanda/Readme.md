@@ -14,10 +14,7 @@ I tried to impliment the famous decoder only GPT in tfjs and I noticed there was
 
 Not even attention was available.
 
-I Decided why not start implimenting layers here. This will become my playground for implementing papers. And I can test the different layers visually with generative art to give particularly interesting renditions of he rapidly advancing field of attention mechanisms. I will pull out the common std lib ML code that is in keras and pytorch I will need to port.
-
-Also the particle simulator should give a particularly interesting style of visualization showing the different inductive biases visually in the patterns.
-
+I Decided why not start implimenting layers here. This will become my playground for implementing papers. 
 Goals:
 
 - [x] MHSA
