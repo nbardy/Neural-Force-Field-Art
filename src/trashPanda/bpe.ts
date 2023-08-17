@@ -39,33 +39,88 @@ class Encoder {
 
   // The method bpe uses bpeRanks to iteratively merge all possible BPE tokens up the tree.
   bpe(token) {
-    if (token in this.cache) {
-      return this.cache[token];
-    }
-    // Rest of the logic as per Python code.
-    // ...
-
-    // Cache the result and return
-    this.cache[token] = word;
-    return word;
+  if (token in this.cache) {
+    return this.cache[token];
   }
+
+  let word = Array.from(token); // individual characters that make up the token
+  let pairs = getPairs(word); // get all bigrams
+
+  if (!pairs.size) {
+    return token;
+  }
+
+  while (true) {
+    // find the next lowest rank bigram that can be merged
+    let bigram = Array.from(pairs).reduce((minPair, pair) => {
+      return this.bpeRanks[pair] < this.bpeRanks[minPair] ? pair : minPair;
+    }, Array.from(pairs)[0]);
+
+    if (!(bigram in this.bpeRanks)) {
+      break; // no more bigrams are eligible to be merged
+    }
+    
+    let [first, second] = bigram;
+
+    // we will now replace all occurrences of (first, second) in the list of current words
+    // into one merged token first_second
+    let newWord = [];
+    let i = 0;
+    while (i < word.length) {
+      try {
+        let j = word.indexOf(first, i);
+        newWord = newWord.concat(word.slice(i, j));
+        i = j;
+      } catch {
+        newWord = newWord.concat(word.slice(i));
+        break;
+      }
+
+      if (word[i] == first && i < word.length - 1 && word[i + 1] == second) {
+        newWord.push(first + second);
+        i += 2;
+      } else {
+        newWord.push(word[i]);
+        i += 1;
+      }
+    }
+
+    // all occurrences of (first, second) have been merged to first_second
+    word = newWord;
+    if (word.length === 1) {
+      break;
+    } else {
+      pairs = getPairs(word);
+    }
+  }
+
+  // concat all words into a string, using ' ' as the separator
+  word = word.join(' ');
+
+  // cache the result and return
+  this.cache[token] = word;
+  return word;
+}
 
   encode(text) {
-    // string goes in, list of integers comes out
-    // Logic for encoding as per Python code.
-    // ...
-  }
-
-  encodeAndShowWork(text) {
-    // debugging function, same as encode but returns all intermediate work
-    // Logic for encoding and showing work as per Python code.
-    // ...
+    let bpeIdx = [];
+    const tokens = Array.from(text.matchAll(this.pat)).map(m => m[0]);
+    for (let token of tokens) {
+      const tokenBytes = Buffer.from(token, 'utf-8');
+      const tokenTranslated = tokenBytes.reduce((acc, b) => acc + this.byteEncoder[b], '');
+      const tokenMerged = this.bpe(tokenTranslated).split(' ');
+      const tokenIdx = tokenMerged.map(bpeToken => this.encoder[bpeToken]);
+      bpeIdx = bpeIdx.concat(tokenIdx);
+    }
+    return bpeIdx;
   }
 
   decode(bpeIdx) {
-    // list of integers comes in, string comes out
-    // Logic for decoding as per Python code.
-    // ...
+    const tokensMerged = bpeIdx.map(token => this.decoder[token]);
+    const tokensFlat = tokensMerged.join('');
+    const tokensBytes = tokensFlat.split('').map(c => this.byteDecoder[c]);
+    const text = Buffer.from(tokensBytes).toString('utf-8');
+    return text;
   }
 }
 
@@ -110,3 +165,11 @@ async getEncoder() {
     return new Encoder(encoder, bpeMerges);
   }
 }
+
+// Example usage:
+const encoderInstance = new Encoder(encoder, bpeMerges);
+const text = "Hello!! I'm Andrej Karpathy. It's 2022. w00t :D 🤗";
+const encoded = encoderInstance.encode(text);
+const decoded = encoderInstance.decode(encoded);
+console.log("Encoded:", encoded);
+console.log("Decoded:", decoded);
