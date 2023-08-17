@@ -2,25 +2,9 @@ import * as tf from "@tensorflow/tfjs";
 
 /*
  * Playing with some ideas for geometric embeddings
+ * i tink im 
  */
 
-import * as tf from "@tensorflow/tfjs";
-
-/**
- * Rotated in random spherical directions. (Should maintain length)
- */
-export function rotateSphericalEmbedding(inputTensor, numDirections) {
-  const dim = inputTensor.shape[1];
-  const randomDirections = tf.randomNormal([numDirections, dim, dim]); // Shape: numDirections x dim x dim
-  const [q, _] = tf.linalg.qr(randomDirections);
-
-  const expandedInput = tf.expandDims(inputTensor, 0); // Shape: 1 x B x dim
-  const tiledInput = tf.tile(expandedInput, [numDirections, 1, 1]); // Shape: numDirections x B x dim
-  const embeddings = tf.matMul(tiledInput, q, false, true); // Shape: numDirections x B x dim
-  const sphericalEmbeddings = tf.reshape(embeddings, [-1, numDirections * dim]); // Shape: B x (numDirections * dim)
-
-  return sphericalEmbeddings;
-}
 
 /**
  * Rotated in full disc sampled m times around a great circle around n hyperspheres.
