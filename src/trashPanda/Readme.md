@@ -35,7 +35,7 @@ Models:
   - [x] Windowed Attention
   - [x] Shifted Windows
   - [x] Stacked Shifted Window Blocks
-- [x] models. (MobileVIT)
+- [x] MobileVIT
 - [ ] Dilated Attention
 - [ ] Flash attention/Memory Aware Attention(Implement it naively from the torch repo)
   - [ ] Re-Implement with tfjs specific memory management (will need to benchmark with WEBGPU and WebGL)
@@ -48,6 +48,7 @@ Geometric Embeddings
 - [x] hypersphereRotationEmbedding
 - [x] Max Embeddings(feature engineered Point Embeddings)
 
+Usage
 ```
 import * as tp from "./trashPanda"
 
