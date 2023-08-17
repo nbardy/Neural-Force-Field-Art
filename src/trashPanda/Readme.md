@@ -22,8 +22,11 @@ Demos:
 Models:
 
 - [x] MHSA
+
+- [x] GPT
 - [x] Transformer
-  - [x] Decoder only Self Atttention(GPT)
+  - [x] BPE
+  - [ ] Training scripts        
 - [x] Rotary Embeddings
 - [ ] Local attention
 - [ ] Dilated Global Residual (My idea for a simple speedup)
