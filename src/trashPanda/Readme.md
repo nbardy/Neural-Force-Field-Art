@@ -8,7 +8,7 @@ It is a collection of layers, blocks, and models re-implemented in tfjs.
 
 Soon it will also contain benchmarks for preformsnce in JS.
 
-Why?
+### Why?
 
 I tried to impliment the famous decoder only GPT in tfjs and I noticed there was a lot missing in the standard lib that you would find in torch or tensorflow.
 
@@ -16,7 +16,7 @@ Not even attention was available.
 
 I Decided why not start implimenting layers here. This will become my playground for implementing papers.
 
-Demos:
+### Demos:
 - [ ] Write a small web page thst will train a GPT-tiny on an iphone.
 
 Models:
