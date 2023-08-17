@@ -14,32 +14,36 @@ I tried to impliment the famous decoder only GPT in tfjs and I noticed there was
 
 Not even attention was available.
 
-I Decided why not start implimenting layers here. This will become my playground for implementing papers. 
-Goals:
+I Decided why not start implimenting layers here. This will become my playground for implementing papers.
+
+Demos:
+- [ ] Write a small web page thst will train a GPT-tiny on an iphone.
+
+Models:
 
 - [x] MHSA
 - [x] Transformer
-  - [x] Decoder only Self Atttention
+  - [x] Decoder only Self Atttention(GPT)
 - [x] Rotary Embeddings
-- [x] Max Embeddings(Experimental Point Embeddings)
 - [ ] Local attention
 - [ ] Dilated Global Residual (My idea for a simple speedup)
   - [ ] Windowed Attention
-- [x] Shfited attention(warning not tested)
+- [x] Shfited Trasnformer
   - [x] Windowed Attention
   - [x] Shifted Windows
   - [x] Stacked Shifted Window Blocks
 - [x] models. (MobileVIT)
 - [ ] Dilated Attention
-- [ ] flash attention/Memory Aware Attention(Implement it naively from the torch repo)
+- [ ] Flash attention/Memory Aware Attention(Implement it naively from the torch repo)
   - [ ] Re-Implement with tfjs specific memory management (will need to benchmark with WEBGPU and WebGL)
 
-Stuff Done:
+Experimental:
 
 Geometric Embeddings
 
 - [x] sphericalRotationEmbedding
 - [x] hypersphereRotationEmbedding
+- [x] Max Embeddings(feature engineered Point Embeddings)
 
 ```
 import * as tp from "./trashPanda"
