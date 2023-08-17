@@ -4,6 +4,12 @@ import * as tf from "@tensorflow/tfjs";
  * Playing with some ideas for geometric embeddings
  */
 
+// note the spehre rotsres the point a random amount.
+// the hyper sphere does it seiujd a random point. this is very different, i should implimwnt each method 
+// as rotate, or rotate around m centers
+// and then have four embeddeing functions
+  
+
 /**
  *  Rotated in random spherical directions. (Should maintain length)
  */
