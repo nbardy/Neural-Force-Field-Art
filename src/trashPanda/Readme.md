@@ -26,10 +26,10 @@ Goals:
 - [ ] Local attention
 - [ ] Dilated Global Residual (My idea for a simple speedup)
   - [ ] Windowed Attention
-- [ ] SWIN attention
-  - [ ] Windowed Attention
-  - [ ] Shifted Windows
-  - [ ] Stacked Shifted Window Blocks
+- [x] Shfited attention(warning not tested)
+  - [x] Windowed Attention
+  - [x] Shifted Windows
+  - [x[ Stacked Shifted Window Blocks
 - [ ] Mobile Attention (Depthwise Separable Convolutions) (MobileVIT)
 - [ ] Dilated Attention
 - [ ] Memory Aware Attention(Implement it naively from the torch repo)
