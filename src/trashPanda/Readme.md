@@ -9,6 +9,7 @@ It is a collection of layers, blocks, and models re-implemented in tfjs.
 Soon it will also contain benchmarks for preformsnce in JS.
 
 Why?
+
 I tried to impliment the famous decoder only GPT in tfjs and I noticed there was a lot missing in the standard lib that you would find in torch or tensorflow.
 
 Not even attention was available.
