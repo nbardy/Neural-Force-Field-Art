@@ -2,10 +2,11 @@
 
 <img width="300" src="out-0.png"></img>
 
-Trash Panda JS is a library for writing modern architectures in tensorflow.js
+Trash Panda JS is a library for writing modern attention architectures in tensorflow.js
 
-It is a collection of layers, blocks, and models re-implemented in tfjs. Hopefully, Some of them will
-be upstreamed to @tfjs/layers and other will remain research.
+It is a collection of layers, blocks, and models re-implemented in tfjs.
+
+Soon it will also contain benchmarks for preformsnce in JS.
 
 Why?
 I tried to impliment the famous decoder only GPT in tfjs and I noticed there was a lot missing in the standard lib that you would find in torch or tensorflow.
@@ -29,10 +30,10 @@ Goals:
 - [x] Shfited attention(warning not tested)
   - [x] Windowed Attention
   - [x] Shifted Windows
-  - [x[ Stacked Shifted Window Blocks
-- [ ] Mobile Attention (Depthwise Separable Convolutions) (MobileVIT)
+  - [x] Stacked Shifted Window Blocks
+- [x] models. (MobileVIT)
 - [ ] Dilated Attention
-- [ ] Memory Aware Attention(Implement it naively from the torch repo)
+- [ ] flash attention/Memory Aware Attention(Implement it naively from the torch repo)
   - [ ] Re-Implement with tfjs specific memory management (will need to benchmark with WEBGPU and WebGL)
 
 Stuff Done:
