@@ -112,3 +112,38 @@ export function rotateSphericalOffsetCenter(inputTensor: tf.Tensor3D, offset: tf
 
   return rotatedPoints as tf.Tensor3D;
 }
+
+/**
+ * Rotates the points in the hyperspherical embedding space.
+ *
+ * @param inputTensor The input tensor with shape B x L x D, where B is the batch size, L is the sequence length, and D is the dimensionality.
+ * @param angle The angle of rotation in radians.
+ * @param axis The axis around which the points will be rotated. Must be a unit vector with shape D.
+ * @returns The rotated tensor with shape B x L x D.
+ */
+export function rotateHypersphericalEmbedding(inputTensor: tf.Tensor3D, angle: number, axis: tf.Tensor1D): tf.Tensor3D {
+  const cosAngle = tf.scalar(Math.cos(angle));
+  const sinAngle = tf.scalar(Math.sin(angle));
+  const oneMinusCosAngle = tf.scalar(1).sub(cosAngle);
+
+  const axisComponents = tf.unstack(axis);
+  const [u, v, w] = axisComponents.map((comp) => comp.reshape([]));
+
+  // Create the rotation matrix using the angle and axis
+  const rotationMatrix = tf.stack([
+    u.mul(u).mul(oneMinusCosAngle).add(cosAngle),
+    u.mul(v).mul(oneMinusCosAngle).sub(w.mul(sinAngle)),
+    u.mul(w).mul(oneMinusCosAngle).add(v.mul(sinAngle)),
+    v.mul(u).mul(oneMinusCosAngle).add(w.mul(sinAngle)),
+    v.mul(v).mul(oneMinusCosAngle).add(cosAngle),
+    v.mul(w).mul(oneMinusCosAngle).sub(u.mul(sinAngle)),
+    w.mul(u).mul(oneMinusCosAngle).sub(v.mul(sinAngle)),
+    w.mul(v).mul(oneMinusCosAngle).add(u.mul(sinAngle)),
+    w.mul(w).mul(oneMinusCosAngle).add(cosAngle),
+  ]).reshape([3, 3]); // Shape: 3 x 3
+
+  // Apply the rotation matrix to the input tensor
+  const rotatedPoints = inputTensor.matMul(rotationMatrix); // Shape: B x L x D
+
+  return rotatedPoints as tf.Tensor3D;
+}
