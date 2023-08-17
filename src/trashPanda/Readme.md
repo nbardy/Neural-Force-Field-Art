@@ -16,13 +16,15 @@ Not even attention was available.
 
 I Decided why not start implimenting layers here. This will become my playground for implementing papers.
 
-### Demos:
-- [ ] Write a small web page thst will train a GPT-tiny on an iphone.
+### Whats Here
 
-Models:
+Demos:
+
+- [ ] Write a small web page that will train a GPT-tiny on an iphone.
+
+Models and Layers from Research
 
 - [x] MHSA
-
 - [x] GPT
 - [x] Transformer
   - [x] BPE
@@ -40,9 +42,9 @@ Models:
 - [ ] Flash attention/Memory Aware Attention(Implement it naively from the torch repo)
   - [ ] Re-Implement with tfjs specific memory management (will need to benchmark with WEBGPU and WebGL)
 
-Experimental:
+### Experimental Code I came up with
 
-Geometric Embeddings
+Embeddings:
 
 - [x] sphericalRotationEmbedding
 - [x] hypersphereRotationEmbedding
