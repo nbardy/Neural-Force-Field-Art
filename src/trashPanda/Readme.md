@@ -28,12 +28,13 @@ Models and Layers from Research
 - [x] GPT
 - [x] Transformer
   - [x] BPE
-  - [ ] Training scripts        
+  - [x] Training scripts
+  - [ ] Train Model      
 - [x] Rotary Embeddings
 - [ ] Local attention
 - [ ] Dilated Global Residual (My idea for a simple speedup)
-  - [ ] Windowed Attention
-- [x] Shfited Trasnformer
+  - [x] Windowed Attention
+- [x] SWIN Trasnformer
   - [x] Windowed Attention
   - [x] Shifted Windows
   - [x] Stacked Shifted Window Blocks
@@ -44,6 +45,8 @@ Models and Layers from Research
 
 ### Experimental Code I came up with
 
+Models:
+- [x] FastTransformer(combines Swin and MobileViT)
 Embeddings:
 - [x] rotateEmbedding
 - [x] sphericalRotationEmbedding
