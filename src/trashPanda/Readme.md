@@ -45,16 +45,20 @@ Models and Layers from Research
 
 ### Experimental Code I came up with
 
+
 Models:
+
 - [x] FastTransformer(combines Swin and MobileViT)
 
 Embeddings:
+
 - [x] rotateEmbedding
 - [x] sphericalRotationEmbedding
 - [x] octoniomRotarionalEmbeddings
 - [x] Max Embeddings(feature engineered Point Embeddings)
 
-Usage
+### Usage:
+
 ```
 import * as tp from "./trashPanda"
 
@@ -62,3 +66,7 @@ tp.linalg.normalize
 tp.models.Transformers
 tp.models.layers.MultiheadAttention
 ```
+
+### Contributions 
+
+Contirbutions are welcome. I want to grow this collection to encompass all of the attention implimentstjons thst slready [exist in torch]()
