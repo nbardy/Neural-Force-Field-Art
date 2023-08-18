@@ -2,10 +2,14 @@
 //
 // inspired by papers that interleave conv and transformers for speed gains. 
 //
-// transforming mobilvit into a much deep versio, slows down mobilecit, but allows us to scale
-// compite with depth
-// todo: replace swin blocks with a faster windowed attention with global residual
-// first train with swin to get baseline.
+// this model interleaves conv based attention model mobilevit with real attention 
+// effecient swin transformers and MobileNet2 conv blocks also seen in mobilevit
+// 
+// the swin blockd sre bissed towards the end sfter we have learned deep festures to takw advantage
+// of the more expensive large more sccurate attention blocks.
+//
+// we trade off some of the speed of mobilevit for a fast but deeper architecture for scaling
+// to web scale compute.
 import * as tfjs from "@tfjs/core"
 import {SwinBlock} from "./swinTransformer.ts"
 
