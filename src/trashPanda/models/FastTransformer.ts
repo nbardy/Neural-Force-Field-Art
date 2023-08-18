@@ -108,7 +108,7 @@ class Decoder {
 
 function fastTransformerXXS() {
     const dims = [128, 128, 128];
-    const dims = [64, 128, 128];
+    const dims = [128, 256, 512];
     // const channels = [16, 16, 24, 24, 48, 48, 64, 64, 80, 80, 320];
     const channels = [16, 16, 16, 16, 24, 24, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48];
     return new MobileViT([256, 256], dims, channels, 1000, 2);
