@@ -18,9 +18,11 @@ I Decided why not start implimenting layers here. This will become my playground
 
 ### Whats Here
 
+warning: code is written, but untested. will be getting it sll fully working slowly.
+
 Demos:
 
-- [ ] Write a small web page that will train a GPT-tiny on an iphone.
+- [x] Write a small web page that will train a GPT-tiny on an iphone.
 
 Models and Layers from Research
 
