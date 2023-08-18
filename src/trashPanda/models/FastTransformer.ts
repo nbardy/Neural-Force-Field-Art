@@ -10,7 +10,8 @@ import * as tfjs from "@tfjs/core"
 import {SwinBlock} from "./swinTransformer.ts"
 
 class FastTransformer {
-    constructor(image_size, dims, channels, num_classes, expansion = 4, kernel_size = 3, patch_size = [2, 2]) {
+    // output could be class or image or upscale
+    constructor(image_size, dims, channels, num_classes, expansion = 4, kernel_size = 3, patch_size = [2, 2], ouput="class") {
         const [ih, iw] = image_size;
         const [ph, pw] = patch_size;
         if (ih % ph !== 0 || iw % pw !== 0) {
@@ -41,38 +42,64 @@ class FastTransformer {
             new SwinBlock(swin_dims[2], swin_L[2], channels[15]),
             new MV2Block(channels[15], channels[16], 1, expansion),
         ])
-
         this.conv2 = conv_1x1_bn(channels[channels.length - 2], channels[channels.length - 1]);
-        this.pool = tf.layers.averagePooling2d({ poolSize: [ih // 32, ih // 32], strides: 1 });
-        this.fc = tf.layers.dense({ units: num_classes, useBias: false });
+        
+        this.decoder = new Decoder(output, channels, num_classes, num_feat, num_out_ch, upscale);
     }
 
     call(input) {
         let x = this.conv1.apply(input);
 
-        x = this.mv2[0].call(x);
-
-        x = this.mv2[1].call(x);
-        x = this.mv2[2].call(x);
-        x = this.mv2[3].call(x); // Repeat
-
-        x = this.mv2[4].call(x);
-        x = this.mvit[0].call(x);
-
-        x = this.mv2[5].call(x);
-        x = this.mvit[1].call(x);
-
-        x = this.mv2[6].call(x);
-        x = this.mvit[2].call(x);
+        x = this.transformer(x);
         x = this.conv2.apply(x);
 
-        x = this.pool.apply(x);
-        x = x.reshape([x.shape[0], -1]); 
-        x = this.fc.apply(x);
+        x = this.decoder.call(x);
 
         return x;
     }
 }
+
+class Decoder {
+    constructor(output, channels, upscale) {
+        this.output = output;
+        this.upscale = upscale;
+
+        if (this.output === 'upscale' || this.output === 'segmentation') {
+            this.conv_before_upsample = tf.layers.conv2d({ filters: channels[channels.length - 2], kernelSize: 3, padding: 'same', activation: 'relu' });
+            this.conv_up1 = tf.layers.conv2d({ filters: channels[channels.length - 2], kernelSize: 3, padding: 'same' });
+            this.conv_up2 = tf.layers.conv2d({ filters: channels[channels.length - 2], kernelSize: 3, padding: 'same' });
+            this.conv_hr = tf.layers.conv2d({ filters: channels[channels.length - 2], kernelSize: 3, padding: 'same' });
+            this.conv_last = tf.layers.conv2d({ filters: 1, kernelSize: 3, padding: 'same', activation: 'sigmoid' }); // Binary output
+            this.lrelu = tf.layers.leakyReLU({ alpha: 0.2 });
+        } else {
+            this.pool = tf.layers.averagePooling2d({ poolSize: [channels[channels.length - 2] // 32, channels[channels.length - 2] // 32], strides: 1 });
+            this.fc = tf.layers.dense({ units: channels[channels.length - 1], useBias: false });
+        }
+    }
+
+    call(x) {
+        if (this.output === 'upscale') {
+            x = this.conv_before_upsample.apply(x);
+            x = this.lrelu.apply(this.conv_up1.apply(tf.image.resizeNearestNeighbor(x, [x.shape[1] * 2, x.shape[2] * 2])));
+            if (this.upscale === 4) {
+                x = this.lrelu.apply(this.conv_up2.apply(tf.image.resizeNearestNeighbor(x, [x.shape[1] * 2, x.shape[2] * 2])));
+            }
+            x = this.conv_last.apply(this.lrelu.apply(this.conv_hr.apply(x)));
+        } else if (this.output === 'segmentation') {
+            // Binary segmentation mask using similar logic to upscale
+            x = this.conv_before_upsample.apply(x);
+            x = this.lrelu.apply(this.conv_up1.apply(tf.image.resizeNearestNeighbor(x, [x.shape[1] * 2, x.shape[2] * 2])));
+            x = this.conv_last.apply(this.lrelu.apply(this.conv_hr.apply(x))); // Binary mask with sigmoid activation
+        } else {
+            x = this.pool.apply(x);
+            x = x.reshape([x.shape[0], -1]);
+            x = this.fc.apply(x);
+        }
+
+        return x;
+    }
+}
+
 
 function fastTransformerXXS() {
     const dims = [128, 128, 128];
