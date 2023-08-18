@@ -5,8 +5,8 @@
 // this model interleaves conv based attention model mobilevit with real attention 
 // effecient swin transformers and MobileNet2 conv blocks also seen in mobilevit
 // 
-// the swin blockd sre bissed towards the end sfter we have learned deep festures to takw advantage
-// of the more expensive large more sccurate attention blocks.
+// the swin blockd sre bissed towards the end sfter we have learned deep festures to take advantage
+// of the more expensive large more accurate attention blocks.
 //
 // we trade off some of the speed of mobilevit for a fast but deeper architecture for scaling
 // to web scale compute.
