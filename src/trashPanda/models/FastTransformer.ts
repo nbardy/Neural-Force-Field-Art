@@ -11,7 +11,8 @@
 // we trade off some of the speed of mobilevit for a fast but deeper architecture for scaling
 // to web scale compute.
 import * as tfjs from "@tfjs/core"
-import {SwinBlock} from "./swinTransformer.ts"
+import { SwinBlock } from "./models/swinTransformer"
+import { MobileViTBlock, MV2Block } from "./models/mobilevit"
 
 class FastTransformer {
     // output could be class or image or upscale
