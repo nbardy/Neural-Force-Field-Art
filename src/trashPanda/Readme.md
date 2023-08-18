@@ -45,9 +45,9 @@ Models and Layers from Research
 ### Experimental Code I came up with
 
 Embeddings:
-
+- [x] rotateEmbedding
 - [x] sphericalRotationEmbedding
-- [x] hypersphereRotationEmbedding
+- [x] octoniomRotarionalEmbeddings
 - [x] Max Embeddings(feature engineered Point Embeddings)
 
 Usage
