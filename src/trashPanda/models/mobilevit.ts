@@ -4,7 +4,7 @@ function conv1x1BN(inp, oup) {
     return tf.layers.sequential({
         layers: [
             tf.layers.conv2d({filters: oup, kernelSize: 1, strides: 1, useBias: false, inputShape: [inp, inp, inp]}),
-            tf.layers.batchNormalization(),
+            tf.layers.layerNormalization(),
             tf.layers.activation({activation: 'swish'})
         ]
     });
@@ -14,7 +14,7 @@ function convNxNBN(inp, oup, kernelSize = 3, stride = 1) {
     return tf.layers.sequential({
         layers: [
             tf.layers.conv2d({filters: oup, kernelSize: kernelSize, strides: stride, useBias: false, padding: 'same', inputShape: [inp, inp, inp]}),
-            tf.layers.batchNormalization(),
+            tf.layers.layerNormalization(),
             tf.layers.activation({activation: 'swish'})
         ]
     });
@@ -106,8 +106,9 @@ class Transformer {
 
 // MV2Block Layer
 class MV2Block {
-    constructor(inp, oup, stride = 1, expansion = 4) {
+    constructor(inp, oup, stride = 1, expansion = 4, normType = "layer") {
         this.stride = stride;
+        const norm = normType === "layer" ? tf.layers.layerNormalization : tf.layers.batchNormalization;
         assert(stride === 1 || stride === 2);
 
         let hiddenDim = Math.round(inp * expansion);
@@ -116,21 +117,21 @@ class MV2Block {
         if (expansion === 1) {
             this.conv = tf.sequential([
                 tf.layers.conv2d({filters: hiddenDim, kernelSize: 3, strides: stride, padding: 'same', useBias: false}),
-                tf.layers.batchNormalization(),
+                norm(),
                 tf.layers.activation({activation: 'relu'}),
                 tf.layers.conv2d({filters: oup, kernelSize: 1, strides: 1, useBias: false}),
-                tf.layers.batchNormalization(),
+                norm()
             ]);
         } else {
             this.conv = tf.sequential([
                 tf.layers.conv2d({filters: hiddenDim, kernelSize: 1, strides: 1, useBias: false}),
-                tf.layers.batchNormalization(),
+                norm(),
                 tf.layers.activation({activation: 'relu'}),
                 tf.layers.conv2d({filters: hiddenDim, kernelSize: 3, strides: stride, padding: 'same', useBias: false}),
-                tf.layers.batchNormalization(),
+                norm(),
                 tf.layers.activation({activation: 'relu'}),
                 tf.layers.conv2d({filters: oup, kernelSize: 1, strides: 1, useBias: false}),
-                tf.layers.batchNormalization(),
+                norm()
             ]);
         }
     }
