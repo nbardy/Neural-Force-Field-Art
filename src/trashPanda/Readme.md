@@ -4,9 +4,7 @@
 
 Trash Panda JS is a library for writing modern attention architectures in tensorflow.js
 
-It is a collection of layers, blocks, and models re-implemented in tfjs.
-
-Soon it will also contain benchmarks for preformsnce in JS.
+It is a collection of layers, blocks, and models re-implemented in tfjs. Transforming resesrch into code thst can run in the web.
 
 ### Why?
 
@@ -49,6 +47,7 @@ Models and Layers from Research
 
 Models:
 - [x] FastTransformer(combines Swin and MobileViT)
+
 Embeddings:
 - [x] rotateEmbedding
 - [x] sphericalRotationEmbedding
