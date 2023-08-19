@@ -1,4 +1,5 @@
 import * as tf from "@tensorflow/tfjs";
+import { normalize } from "../linalg";
 
 /*
  * Playing with some ideas for geometric embeddings

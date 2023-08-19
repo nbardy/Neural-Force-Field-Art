@@ -1,6 +1,8 @@
 import * as tf from "@tensorflow/tfjs";
 import { pairwiseDistanceWithDropout } from "../utils/math";
 
+const middleStrength1 = tf.scalar(2.0)
+
 export function squared_dist(A: tf.Tensor2D, B: tf.Tensor2D) {
   const norm_A = A.square().sum(1).expandDims(1); // Shape becomes [m, 1]
   const norm_B = B.square().sum(1).expandDims(0); // Shape becomes [1, n]
