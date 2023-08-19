@@ -1,23 +1,11 @@
-## Plan
+## TFJS Force Fields
 
-Version 0
+Supports multiple batches of points. 
 
-- [ ] Impliment base runtime and optimizer loops, one agent Set.
+A playground for experiments with TFJS Agents in the browser. 
 
-Version 1
+The initial agent is set of points being moved around in a force field. This
 
-- [ ] Impliment agents that models take other agents as input. (This should create predictive agents)
-- [ ] Mess with hyperparameters and see how much we can learn
-
-Version 2
-
-- [ ] Impliment many agent sets
-- [ ] Provide a playground for agents
-
-Version 3
-
-- [ ] Mint NFT set 💸💸💸💸💸💸💸💸💸💸💸💸
-
-## Ideas to explore
-
-- [] Joint vs Separate Optimization
+Also impliments two libraries that were missing to make this work:
+ * trashPanda - Modern transformer architectures for tensorflow.js
+ * quickDraw - Incredibly rendering via tfjs+webgl
