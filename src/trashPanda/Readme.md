@@ -1,8 +1,8 @@
-# TrashPanda JS
+# Transformers.js
 
 <img width="300" src="out-0.png"></img>
 
-Trash Panda JS is a library for writing modern attention architectures in tensorflow.js
+Transformers.js is a library for writing modern attention architectures in tensorflow.js
 
 It is a collection of layers, blocks, and models re-implemented in tfjs. Transforming resesrch into code thst can run in the web.
 
