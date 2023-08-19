@@ -1,0 +1,24 @@
+<html>
+  <script>
+    import { trainModel } from "../training/fastTransformer.ts"
+
+    const updateUI = (loss) => {
+       document.getElementById('loss').innerText = loss
+    }
+
+    const generate = () => {
+      let total = "";
+      executeModel("", {"mostRecent": true}).stream(image => {document.getElementById("gen").src = image})    
+    }
+    
+    trainModel({"callback": updateUI})
+
+    setInterval(generate, 10)
+    
+  </script>
+
+  <body>
+    <div>Fast Diffusion Transformer</div>
+    <img id="gen"></img>
+  </body>
+</html>
