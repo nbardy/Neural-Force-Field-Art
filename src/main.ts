@@ -12,10 +12,12 @@ import { updateParticles2 } from "./physics/updateParticles";
 
 import { drawAgents } from "./draw/draw_gpu";
 
-import { printMaxEmbeddingsImageSeries } from "./trashPanda/experimental/pointEmbeddings";
+import { printMaxEmbeddingsImageSeries } from "./trashPanda/experimental/test";
 
-console.log("testing");
-printMaxEmbeddingsImageSeries();
+import "@tensorflow/tfjs-backend-webgpu";
+
+console.log("testing max embeddings");
+// printMaxEmbeddingsImageSeries();
 
 // Print debugger
 const predictField = true;
@@ -29,7 +31,7 @@ const learningRate = 0.0001;
 
 // let currentAgents = initializeAgents();
 
-export function startLoop(canvas: HTMLCanvasElement) {
+export async function startLoop(canvas: HTMLCanvasElement) {
   // fullscreen
   const width = window.innerWidth;
   const height = window.innerHeight;
@@ -48,8 +50,10 @@ export function startLoop(canvas: HTMLCanvasElement) {
     tf.train.adam(learningRate),
   ];
 
-  function mainLoop(canvas: HTMLCanvasElement) {
+  async function mainLoop(canvas: HTMLCanvasElement) {
     let { agentPositions, agentVelocities } = agentState;
+
+    await tf.setBackend("webgpu");
 
     // Starts empty to  be filled with updated agents
     const updatedAgents: AgentBatch = {
@@ -145,7 +149,7 @@ export function startLoop(canvas: HTMLCanvasElement) {
   }
 
   console.log("starting loop");
-  mainLoop(canvas);
+  await mainLoop(canvas);
 }
 
 function pt(name, tensor) {

@@ -107,10 +107,6 @@ export function updateParticles2(
     // Forces applied with relevant magnitude
     const forcesScaled = forcesShifted.mul(tf.scalar(config.forceMagnitude));
 
-    pt("forces", forces);
-    pt("fsshift", forcesShifted);
-    pt("fscale", forcesScaled);
-
     const updatedVel = vel.add(forcesScaled).mul(tf.scalar(config.friction));
     const updatedPos = pos.add(updatedVel);
 
@@ -263,8 +259,17 @@ export function randomReset2(originalTensor, config) {
   });
 }
 
-// print tensor
-function pt(name, tensor) {
-  console.log(name);
-  tensor.print(true);
+/**
+ *
+ * @param name
+ * @param tensor
+ */
+export function pt(name: string, tensor: tf.Tensor) {
+  console.log(" ===");
+  console.log("name: ", name);
+  // print shape, dtype, rank
+
+  console.log("shape: ", tensor.shape);
+  console.log("dtype: ", tensor.dtype);
+  console.log("rank: ", tensor.rank);
 }

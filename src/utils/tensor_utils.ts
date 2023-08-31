@@ -1,4 +1,5 @@
 import * as tf from "@tensorflow/tfjs";
+import { pt } from "../physics/updateParticles";
 
 export function createTiles(
   width: number,
@@ -7,8 +8,8 @@ export function createTiles(
   centerTiles: boolean = false
 ): tf.Tensor {
   // Calculate grid density based on tile size
-  const gridDensityX = width / tileSize;
-  const gridDensityY = height / tileSize;
+  const gridDensityX = Math.floor(width / tileSize);
+  const gridDensityY = Math.floor(height / tileSize);
 
   // Create vectors for x and y coordinates
   let x = tf.linspace(0, 1, gridDensityX);
@@ -23,6 +24,9 @@ export function createTiles(
   }
 
   // Create the mesh grid using TensorFlow.js
+  pt("x", x);
+  pt("y", y);
+
   const [X, Y] = tf.meshgrid(x, y);
 
   return tf.stack([X, Y], 2); // BxWxHx2

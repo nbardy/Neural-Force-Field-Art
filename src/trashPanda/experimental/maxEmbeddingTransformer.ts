@@ -4,9 +4,9 @@ import { assertShape } from "../../utils/assert";
 import { Transformer } from "../models/clipTransformer";
 import { RotaryEmbedding } from "../embeddings/rotaryEmbeddings";
 import { RotaryTransformer } from "../models/rotaryEmbeddingTransformer";
-import { TrashPandaModel } from "../types";
+import { Module } from "../types";
 
-export class MaxEmbeddingTransformer implements TrashPandaModel {
+export class MaxEmbeddingTransformer implements Module {
   embeddingLayer: MaxPointEmbeddingLayer;
   name: string;
   transformer: Transformer | RotaryTransformer;

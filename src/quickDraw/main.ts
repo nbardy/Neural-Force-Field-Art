@@ -59,6 +59,7 @@ import * as tf from "@tensorflow/tfjs";
 import { buffer, GPUData, input } from "@tensorflow/tfjs";
 import * as twgl from "twgl.js";
 import { normalize } from "../trashPanda/linalg";
+// Use webgpu for trash panda
 
 type NumberInput = tf.Tensor | number;
 // vec3 or vec4 (Should default to no alpha)
@@ -152,7 +153,7 @@ export interface BackgroundConfig {
   radius?: number;
 }
 
-export function drawTWGL(
+export async function drawTWGL(
   gl: WebGLContextElite,
   pos: tf.Tensor,
   shape: number,
@@ -169,7 +170,11 @@ export function drawTWGL(
 
   uniforms = uniforms || {};
 
-  const posBuffer = extractBufferFromTexture(gl, pos);
+  // const posBuffer = extractBufferFromTexture(gl, pos);
+  // instead for webbgpu
+  const posBuffer = (await pos.buffer()) as any;
+
+  console.log(posBuffer);
 
   const bufferInfo: twgl.BufferInfo = {
     numElements: shape, // You might need to determine the correct value for numElements
@@ -277,7 +282,7 @@ export const getWebGL = (canvas: HTMLCanvasElement) => {
   return gl;
 };
 
-export function drawCircles(args: {
+export async function drawCircles(args: {
   canvas: HTMLCanvasElement;
   positions: tf.Tensor;
   radius: NumberInput;
@@ -312,7 +317,7 @@ export function drawCircles(args: {
   `;
 
   // Draw circles using TWGL
-  drawTWGL(gl, positions, gl.POINTS, circleFragmentShader, uniforms);
+  await drawTWGL(gl, positions, gl.POINTS, circleFragmentShader, uniforms);
 }
 
 type ColorAll = tf.Tensor | number[];
@@ -400,6 +405,17 @@ export function drawTriangles(args: {
   };
 
   // Draw triangles using TWGL
+  // debug input
+  // like a detailed pro
+  console.log("drawTriangles", {
+    positions: pos,
+    dir,
+    height,
+    baseWidth,
+    vertices,
+    uniforms,
+  });
+
   drawTWGL(gl, vertices, gl.TRIANGLES, fragmentShader, uniforms);
 }
 
@@ -413,7 +429,43 @@ export interface WebGLContextElite extends WebGLRenderingContext {
   getBufferSubData: any;
 }
 
-// This allows us to
+const quickDrawDebugMode = true;
+
+class GlTextureImpl {
+  gl_: WebGLContextElite;
+  texture_: WebGLTexture;
+  width: number;
+  height: number;
+
+  constructor(
+    gl: WebGLContextElite,
+    texture: WebGLTexture,
+    width: number,
+    height: number
+  ) {
+    this.gl_ = gl;
+    this.texture_ = texture;
+    this.width = width;
+    this.height = height;
+  }
+
+  bindTexture() {
+    this.gl_.bindTexture(this.gl_.TEXTURE_2D, this.texture_);
+  }
+}
+
+function createTexture(
+  gl: WebGLContextElite,
+  texture: WebGLTexture,
+  width: number,
+  height: number
+) {
+  return new GlTextureImpl(gl, texture, width, height);
+}
+
+// Old function to handle decompating webgl textures
+//
+// TODO: Fix for WEBGL support
 export function extractBufferFromTexture(
   glInput: WebGLRenderingContext,
   tensor: tf.Tensor
@@ -422,11 +474,20 @@ export function extractBufferFromTexture(
   // Types are old ( can remove this when types are updated)
   let gl = glInput as WebGLContextElite;
 
+  // print tensor shape
   const gpuData = tensor.dataToGPU();
+  if (quickDrawDebugMode) {
+    console.log("extractBufferFromTexture", {
+      shape: tensor.shape,
+    });
+  }
 
   if (gpuData.texture == null || gpuData.texShape == null) {
     throw new Error("GPUData texture or texShape is null");
   }
+
+  // TODO: How to size this buffer?
+  // const texture = createTexture(gpuData.texture, gpuData.texShape[0]);
 
   // Create a framebuffer and bind it
   const framebuffer = gl.createFramebuffer();

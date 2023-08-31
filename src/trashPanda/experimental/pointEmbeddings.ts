@@ -1,7 +1,7 @@
 /**
- * Experiments on point embeddings.
+ *  Experiments on point embeddings.
  *
- * I am training a neural network on batches of 2D/3D points. BxN
+ *  I am training a neural network on batches of 2D/3D points. BxN
  *
  *  We want to scale up our model, but the number of parameters is limted
  *  by the number of points in the input.
@@ -33,11 +33,11 @@ import {
 import { RotaryEmbedding } from "../embeddings/rotaryEmbeddings";
 import { Transformer } from "../models/clipTransformer";
 import { RotaryTransformer } from "../models/rotaryEmbeddingTransformer";
-import { TrashPandaModel } from "../types";
+import { Module } from "../types";
 
 //
 
-class LinearExpandDims implements TrashPandaModel {
+class LinearExpandDims implements Module {
   layer: Sequential;
   constructor(args: {
     inputDim: number;
@@ -55,8 +55,9 @@ class LinearExpandDims implements TrashPandaModel {
     }
     this.layer.add(tf.layers.dense({ units: outputDim, activation: "relu" }));
   }
-  predict(input: Tensor) {
-    return this.layer.apply(input);
+
+  predict(input: tf.Tensor) {
+    return this.layer.apply(input) as tf.Tensor;
   }
 }
 
@@ -65,7 +66,7 @@ class LinearExpandDims implements TrashPandaModel {
 //
 // A transformer with all the tricks
 export class PointEmbeddingTransformer {
-  pointEmbeddingLayer: Sequential;
+  pointEmbeddingLayer: Module;
   transformer: Transformer | RotaryTransformer;
 
   constructor(args: {
@@ -77,6 +78,7 @@ export class PointEmbeddingTransformer {
     this.transformer = args.useRotaryTransformer
       ? new RotaryTransformer(args)
       : new Transformer(args);
+
     this.pointEmbeddingLayer = new LinearExpandDims({
       inputDim: 2,
       hiddenDim: 64,

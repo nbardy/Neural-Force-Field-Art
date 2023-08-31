@@ -1,5 +1,12 @@
 import * as tf from "@tensorflow/tfjs";
 
-export interface TrashPandaModel {
-  predict(inputTensor: tf.Tensor): tf.Tensor;
+/**
+ * Base Class to inherit for all models
+ *
+ * matches nn.Module from pytorch
+ */
+export interface Module {
+  predict(...args: unknown[]): tf.Tensor;
 }
+
+export type allModels = tf.LayersModel | tf.Sequential | Module;

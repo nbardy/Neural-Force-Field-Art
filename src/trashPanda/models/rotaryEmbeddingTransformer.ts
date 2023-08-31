@@ -3,7 +3,7 @@ import { LayersModel } from "@tensorflow/tfjs";
 import { RotaryEmbedding } from "../embeddings/rotaryEmbeddings";
 
 import { MultiHeadAttention } from "../layers/multiheadattention";
-import { TrashPandaModel } from "../types";
+import { Module } from "../types";
 
 class ResidualAttentionBlock {
   attn: any; // BxCxWxH
@@ -64,7 +64,7 @@ class ResidualAttentionBlock {
 }
 
 // Decoder only transformer used for GPT/CLIP
-export class RotaryTransformer implements TrashPandaModel {
+export class RotaryTransformer implements Module {
   layers; // BxSxD
 
   constructor({

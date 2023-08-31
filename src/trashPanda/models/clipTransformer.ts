@@ -2,7 +2,7 @@ import * as tf from "@tensorflow/tfjs";
 import { LayersModel } from "@tensorflow/tfjs";
 
 import { MultiHeadAttention } from "../layers/multiheadattention";
-import { TrashPandaModel } from "../types";
+import { Module } from "../types";
 
 class ResidualAttentionBlock {
   attn: any; // BxCxWxH
@@ -56,7 +56,7 @@ class ResidualAttentionBlock {
 }
 
 // Decoder only transformer used for GPT/CLIP
-export class Transformer implements TrashPandaModel {
+export class Transformer implements Module {
   layers; // BxSxD
 
   constructor({
