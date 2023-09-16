@@ -6,12 +6,16 @@
     "build": "parcel build"
   },
   "devDependencies": {
-    "parcel": "latest"
+    "buffer": "^5.5.0||^6.0.0",
+    "parcel": "latest",
+    "process": "^0.11.10"
   },
   "dependencies": {
     "@tensorflow/tfjs": "^4.9.0",
     "@tensorflow/tfjs-backend-webgpu": "^4.10.0",
     "@tensorflow/tfjs-vis": "^1.5.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
     "twgl.js": "^5.5.3",
     "webgpu": "^0.1.16"
   }
