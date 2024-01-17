@@ -38,7 +38,7 @@ Consists of:
 
 Starting as a simple wrapper over twgl.js
 
-Example wave
+## Example
 ```typescript
 // range
 const x = tf.linspace(-1, 1, 100);
