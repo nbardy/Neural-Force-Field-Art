@@ -1,0 +1,26 @@
+<html>
+  <script>
+    import {trainModel, executeModel} from "../training/gpt.ts"
+
+    const updateUI = (loss) => {
+       document.getElementById('loss').innerText = loss
+    }
+
+    const generate = () => {
+      let total = "";
+      executeModel("", {"mostRecent": true}).stream(x => {total = total + x; document.getElementById("gen").innerText = total})    
+    }
+    
+    trainModel({"callback": updateUI})
+
+    setInterval(generate, 10)
+    
+  </script>
+
+  <body>
+    <div>GPT Live</div>
+    <div>loss</div>
+    <div id="loss"></div>
+    <div id="gen"><div>
+  </body>
+</html>
