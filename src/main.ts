@@ -12,6 +12,7 @@
  * simple constraint — it is NOT told the answer directly.
  */
 import * as tf from "@tensorflow/tfjs";
+import { createRenderer, RendererType, Renderer } from "./renderers";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -27,6 +28,7 @@ export interface ArtPieceConfig {
   learningRate: number;
   backgroundColor: [number, number, number];
   alphaBlend: number;
+  renderer: RendererType;
   createModel: () => tf.Sequential;
   computeLoss: (pos: tf.Tensor2D, w: number, h: number) => tf.Scalar;
 }
@@ -126,7 +128,7 @@ function spiralPlusCenterLoss(
 // ---------------------------------------------------------------------------
 export const GALLERY: ArtPieceConfig[] = [
   {
-    name: "Spiral · Shallow",
+    name: "Spiral · Ghost",
     particleCount: 1000,
     friction: 0.911,
     forceMagnitude: 1.2,
@@ -136,11 +138,12 @@ export const GALLERY: ArtPieceConfig[] = [
     learningRate: 0.01,
     backgroundColor: [12, 0, 34],
     alphaBlend: 0.06,
+    renderer: "alpha-fade",
     createModel: mlpShallow,
     computeLoss: spiralPlusCenterLoss(0.00005),
   },
   {
-    name: "Spiral · Deep",
+    name: "Spiral · Trails",
     particleCount: 800,
     friction: 0.85,
     forceMagnitude: 1.5,
@@ -150,11 +153,12 @@ export const GALLERY: ArtPieceConfig[] = [
     learningRate: 0.008,
     backgroundColor: [4, 0, 18],
     alphaBlend: 0.04,
+    renderer: "trail-buffer",
     createModel: mlpDeep,
     computeLoss: spiralPlusCenterLoss(0.0001),
   },
   {
-    name: "Vortex",
+    name: "Vortex · Ghost",
     particleCount: 1200,
     friction: 0.92,
     forceMagnitude: 1.0,
@@ -164,12 +168,13 @@ export const GALLERY: ArtPieceConfig[] = [
     learningRate: 0.01,
     backgroundColor: [12, 0, 34],
     alphaBlend: 0.05,
+    renderer: "alpha-fade",
     createModel: mlpShallow,
     computeLoss: (p, w, h) =>
       tf.tidy(() => centerLoss(p, w, h).mul(0.001).asScalar()),
   },
   {
-    name: "Galaxy · Wide",
+    name: "Galaxy · Clean",
     particleCount: 1500,
     friction: 0.80,
     forceMagnitude: 1.8,
@@ -179,6 +184,22 @@ export const GALLERY: ArtPieceConfig[] = [
     learningRate: 0.005,
     backgroundColor: [2, 0, 12],
     alphaBlend: 0.03,
+    renderer: "clean",
+    createModel: mlpWide,
+    computeLoss: spiralPlusCenterLoss(0.00002),
+  },
+  {
+    name: "Galaxy · Ghost",
+    particleCount: 1500,
+    friction: 0.80,
+    forceMagnitude: 1.8,
+    maxVelocity: 5.0,
+    resetRate: 0.003,
+    drawRate: 3,
+    learningRate: 0.005,
+    backgroundColor: [2, 0, 12],
+    alphaBlend: 0.03,
+    renderer: "alpha-fade",
     createModel: mlpWide,
     computeLoss: spiralPlusCenterLoss(0.00002),
   },
@@ -248,107 +269,10 @@ function randomReset(
   }) as { pos: tf.Tensor2D; vel: tf.Tensor2D };
 }
 
-// ---------------------------------------------------------------------------
-// Trail history — ring buffer of recent positions in a flat Float32Array
-//
-// Old approach: semi-transparent fillRect over entire canvas each frame.
-//   - Blends every pixel on the canvas (2M+ alpha ops at 1080p).
-//   - 8-bit alpha quantisation causes ghost artifacts that never fully fade.
-//
-// New approach: store last TRAIL_LEN frames of positions, clear canvas fully,
-//   draw trail as small rects with decreasing opacity per age.
-//   - Only touches pixels where particles actually are.
-//   - 1000 particles × 20 trail slots = 20K tiny fillRect vs 2M pixel blends.
-//   - Full clear is hardware-accelerated and free of ghosting.
-// ---------------------------------------------------------------------------
-const TRAIL_LEN = 20;
-
-function createTrailBuffer(n: number): Float32Array {
-  return new Float32Array(TRAIL_LEN * n * 2);
-}
-
-function pushTrail(
-  trail: Float32Array,
-  head: number,
-  posArr: number[][],
-  n: number
-): number {
-  const off = head * n * 2;
-  for (let i = 0; i < n; i++) {
-    trail[off + i * 2] = posArr[i][0];
-    trail[off + i * 2 + 1] = posArr[i][1];
-  }
-  return (head + 1) % TRAIL_LEN;
-}
-
-// ---------------------------------------------------------------------------
-// Renderer — ring-buffer trails + velocity-based colour
-// ---------------------------------------------------------------------------
-function render(
-  ctx: CanvasRenderingContext2D,
-  w: number,
-  h: number,
-  positions: number[][],
-  velocities: number[][],
-  cfg: ArtPieceConfig,
-  frame: number,
-  trail: Float32Array,
-  trailHead: number,
-  n: number,
-  spiralPts?: number[][]
-) {
-  const [br, bg, bb] = cfg.backgroundColor;
-
-  // Full opaque clear — hardware-accelerated, no ghost artifacts
-  ctx.fillStyle = `rgb(${br},${bg},${bb})`;
-  ctx.fillRect(0, 0, w, h);
-
-  // Spiral target (faint, always visible)
-  if (spiralPts) {
-    ctx.beginPath();
-    for (let i = 0; i < spiralPts.length; i++) {
-      if (i === 0) ctx.moveTo(spiralPts[i][0], spiralPts[i][1]);
-      else ctx.lineTo(spiralPts[i][0], spiralPts[i][1]);
-    }
-    ctx.strokeStyle = "rgba(100,60,180,0.12)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
-
-  // --- draw trail: one pass per age level (cheap globalAlpha change) ------
-  const trailFrames = Math.min(frame, TRAIL_LEN);
-  ctx.fillStyle = "rgb(140,110,220)";
-  for (let age = trailFrames - 1; age >= 0; age--) {
-    const slot = ((trailHead - 1 - age) + TRAIL_LEN * 100) % TRAIL_LEN;
-    const off = slot * n * 2;
-    ctx.globalAlpha = ((trailFrames - age) / trailFrames) * 0.35;
-    for (let i = 0; i < n; i++) {
-      const tx = trail[off + i * 2];
-      const ty = trail[off + i * 2 + 1];
-      ctx.fillRect(tx - 0.5, ty - 0.5, 1.5, 1.5);
-    }
-  }
-  ctx.globalAlpha = 1;
-
-  // --- draw current particles with velocity-based colour ------------------
-  for (let i = 0; i < positions.length; i++) {
-    const [x, y] = positions[i];
-    const [vx, vy] = velocities[i];
-    const speed = Math.sqrt(vx * vx + vy * vy);
-
-    const r = Math.min(255, 80 + Math.abs(vx) * 60);
-    const g = Math.min(255, 40 + Math.abs(vy) * 60);
-    const b = Math.min(255, 120 + speed * 40);
-
-    ctx.fillStyle = `rgb(${r | 0},${g | 0},${b | 0})`;
-    ctx.fillRect(x - 1, y - 1, 3, 3);
-  }
-
-  // HUD
-  ctx.fillStyle = "rgba(255,255,255,0.35)";
-  ctx.font = "12px monospace";
-  ctx.fillText(`${cfg.name}  frame ${frame}  particles ${n}`, 8, 16);
-}
+// Renderer is now in src/renderers.ts — three implementations:
+//   "alpha-fade"   — dual-buffer ghost trails (fast, hardware-composited)
+//   "trail-buffer" — ring buffer clean trails (precise, no ghosts)
+//   "clean"        — no trails (fastest, debug/iteration)
 
 // ---------------------------------------------------------------------------
 // Generate spiral target points in pixel coords (for overlay)
@@ -394,8 +318,7 @@ export function startLoop(
   tf.keep(vel);
 
   const spiralPts = spiralPixelPoints(w, h);
-  const trail = createTrailBuffer(cfg.particleCount);
-  let trailHead = 0;
+  const renderer = createRenderer(cfg.renderer, cfg, cfg.particleCount, spiralPts);
   let frame = 0;
 
   async function tick() {
@@ -432,8 +355,7 @@ export function startLoop(
 
     const posArr = pos.arraySync() as number[][];
     const velArr = vel.arraySync() as number[][];
-    trailHead = pushTrail(trail, trailHead, posArr, cfg.particleCount);
-    render(ctx, w, h, posArr, velArr, cfg, frame, trail, trailHead, cfg.particleCount, spiralPts);
+    renderer.render(ctx, w, h, posArr, velArr, frame);
 
     requestAnimationFrame(tick);
   }
@@ -445,6 +367,7 @@ export function startLoop(
 
   return () => {
     running = false;
+    renderer.destroy();
     pos.dispose();
     vel.dispose();
     model.dispose();
