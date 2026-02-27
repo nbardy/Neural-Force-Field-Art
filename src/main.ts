@@ -10,7 +10,7 @@ import * as tf from "@tensorflow/tfjs";
 import { AgentBatch, AgentSet } from "./types/all";
 import { updateParticles2 } from "./physics/updateParticles";
 
-import { drawAgents } from "./draw/draw_webgpu";
+import { drawAgents } from "./draw/draw_webgl";
 
 import { printMaxEmbeddingsImageSeries } from "./trashPanda/experimental/test";
 

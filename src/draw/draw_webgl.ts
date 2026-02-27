@@ -4,6 +4,7 @@ import * as tf from "@tensorflow/tfjs";
 import { labConversionFunctions, rotateAB, skewL } from "../utils/color";
 import { drawCircles, drawTriangles } from "../quickDraw/main";
 import { createTiles } from "../utils/tensor_utils";
+import { modelColorSet, pointColorSet } from "./colors";
 
 /*
  * Colors
