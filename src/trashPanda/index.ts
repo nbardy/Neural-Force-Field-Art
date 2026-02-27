@@ -1,6 +1,7 @@
 import { normalize } from "./linalg";
-import { Transformer } from "./blocks/clipTransformer";
-import { MultiHeadAttention } from "./layers/multiheadattention";
+import { Transformer } from "./models/clipTransformer";
+import { ScoreNetwork } from "./models/ScoreNetwork";
+import { MultiHeadAttention } from "./layers/MultiheadAttention";
 
 export const linalg = {
   normalize,
@@ -8,11 +9,11 @@ export const linalg = {
 
 export const models = {
   Transformer,
+  ScoreNetwork,
 };
 
 export const attention = {
   MultiHeadAttention,
 };
 
-// All model types
-export type Model = Transformer;
+export type Model = Transformer | ScoreNetwork;

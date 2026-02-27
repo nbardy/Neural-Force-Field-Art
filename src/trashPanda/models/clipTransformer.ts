@@ -1,7 +1,7 @@
 import * as tf from "@tensorflow/tfjs";
 import { LayersModel } from "@tensorflow/tfjs";
 
-import { MultiHeadAttention } from "../layers/multiheadattention";
+import { MultiHeadAttention } from "../layers/MultiheadAttention";
 import { Module } from "../types";
 
 class ResidualAttentionBlock {
