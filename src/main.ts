@@ -249,7 +249,40 @@ function randomReset(
 }
 
 // ---------------------------------------------------------------------------
-// Renderer — trails via alpha blending, velocity-based colour
+// Trail history — ring buffer of recent positions in a flat Float32Array
+//
+// Old approach: semi-transparent fillRect over entire canvas each frame.
+//   - Blends every pixel on the canvas (2M+ alpha ops at 1080p).
+//   - 8-bit alpha quantisation causes ghost artifacts that never fully fade.
+//
+// New approach: store last TRAIL_LEN frames of positions, clear canvas fully,
+//   draw trail as small rects with decreasing opacity per age.
+//   - Only touches pixels where particles actually are.
+//   - 1000 particles × 20 trail slots = 20K tiny fillRect vs 2M pixel blends.
+//   - Full clear is hardware-accelerated and free of ghosting.
+// ---------------------------------------------------------------------------
+const TRAIL_LEN = 20;
+
+function createTrailBuffer(n: number): Float32Array {
+  return new Float32Array(TRAIL_LEN * n * 2);
+}
+
+function pushTrail(
+  trail: Float32Array,
+  head: number,
+  posArr: number[][],
+  n: number
+): number {
+  const off = head * n * 2;
+  for (let i = 0; i < n; i++) {
+    trail[off + i * 2] = posArr[i][0];
+    trail[off + i * 2 + 1] = posArr[i][1];
+  }
+  return (head + 1) % TRAIL_LEN;
+}
+
+// ---------------------------------------------------------------------------
+// Renderer — ring-buffer trails + velocity-based colour
 // ---------------------------------------------------------------------------
 function render(
   ctx: CanvasRenderingContext2D,
@@ -259,29 +292,45 @@ function render(
   velocities: number[][],
   cfg: ArtPieceConfig,
   frame: number,
+  trail: Float32Array,
+  trailHead: number,
+  n: number,
   spiralPts?: number[][]
 ) {
   const [br, bg, bb] = cfg.backgroundColor;
-  ctx.fillStyle = `rgba(${br},${bg},${bb},${cfg.alphaBlend})`;
+
+  // Full opaque clear — hardware-accelerated, no ghost artifacts
+  ctx.fillStyle = `rgb(${br},${bg},${bb})`;
   ctx.fillRect(0, 0, w, h);
 
-  if (frame === 1) {
-    ctx.fillStyle = `rgb(${br},${bg},${bb})`;
-    ctx.fillRect(0, 0, w, h);
-  }
-
-  // Spiral target (faint)
-  if (spiralPts && frame < 3) {
+  // Spiral target (faint, always visible)
+  if (spiralPts) {
     ctx.beginPath();
     for (let i = 0; i < spiralPts.length; i++) {
       if (i === 0) ctx.moveTo(spiralPts[i][0], spiralPts[i][1]);
       else ctx.lineTo(spiralPts[i][0], spiralPts[i][1]);
     }
-    ctx.strokeStyle = "rgba(100,60,180,0.15)";
+    ctx.strokeStyle = "rgba(100,60,180,0.12)";
     ctx.lineWidth = 1;
     ctx.stroke();
   }
 
+  // --- draw trail: one pass per age level (cheap globalAlpha change) ------
+  const trailFrames = Math.min(frame, TRAIL_LEN);
+  ctx.fillStyle = "rgb(140,110,220)";
+  for (let age = trailFrames - 1; age >= 0; age--) {
+    const slot = ((trailHead - 1 - age) + TRAIL_LEN * 100) % TRAIL_LEN;
+    const off = slot * n * 2;
+    ctx.globalAlpha = ((trailFrames - age) / trailFrames) * 0.35;
+    for (let i = 0; i < n; i++) {
+      const tx = trail[off + i * 2];
+      const ty = trail[off + i * 2 + 1];
+      ctx.fillRect(tx - 0.5, ty - 0.5, 1.5, 1.5);
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  // --- draw current particles with velocity-based colour ------------------
   for (let i = 0; i < positions.length; i++) {
     const [x, y] = positions[i];
     const [vx, vy] = velocities[i];
@@ -291,16 +340,14 @@ function render(
     const g = Math.min(255, 40 + Math.abs(vy) * 60);
     const b = Math.min(255, 120 + speed * 40);
 
-    ctx.beginPath();
-    ctx.arc(x, y, 1.8, 0, Math.PI * 2);
     ctx.fillStyle = `rgb(${r | 0},${g | 0},${b | 0})`;
-    ctx.fill();
+    ctx.fillRect(x - 1, y - 1, 3, 3);
   }
 
   // HUD
   ctx.fillStyle = "rgba(255,255,255,0.35)";
   ctx.font = "12px monospace";
-  ctx.fillText(`${cfg.name}  frame ${frame}`, 8, 16);
+  ctx.fillText(`${cfg.name}  frame ${frame}  particles ${n}`, 8, 16);
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +394,8 @@ export function startLoop(
   tf.keep(vel);
 
   const spiralPts = spiralPixelPoints(w, h);
+  const trail = createTrailBuffer(cfg.particleCount);
+  let trailHead = 0;
   let frame = 0;
 
   async function tick() {
@@ -369,7 +418,6 @@ export function startLoop(
       const oldPos = pos;
       const oldVel = vel;
 
-      // Random reset
       const reset = randomReset(newPos!, newVel!, cfg.resetRate, w, h);
       pos = reset.pos;
       vel = reset.vel;
@@ -382,10 +430,10 @@ export function startLoop(
       newVel!.dispose();
     }
 
-    // Render
     const posArr = pos.arraySync() as number[][];
     const velArr = vel.arraySync() as number[][];
-    render(ctx, w, h, posArr, velArr, cfg, frame, spiralPts);
+    trailHead = pushTrail(trail, trailHead, posArr, cfg.particleCount);
+    render(ctx, w, h, posArr, velArr, cfg, frame, trail, trailHead, cfg.particleCount, spiralPts);
 
     requestAnimationFrame(tick);
   }
