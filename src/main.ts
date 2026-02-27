@@ -1,22 +1,43 @@
 /**
- * Diffusion score-matching learner for an Archimedes spiral force field.
+ * Neural Force Field Art — Gallery Engine
  *
- * A ScoreNetwork (trashPanda Module) learns the score function ∇log p(x)
- * for a distribution concentrated on an Archimedes spiral. The learned
- * vector field is applied as a force to a particle system, so particles
- * gradually converge from a random cloud into the spiral shape.
+ * Core algorithm:
+ *   1. Neural network predicts force vectors from particle positions
+ *   2. Forces are applied as acceleration to particles (velocity + position update)
+ *   3. Loss is computed on the resulting positions (spiral distance, center distance)
+ *   4. Gradients flow back through the entire physics chain to update model weights
+ *   5. Random reset keeps particles exploring instead of collapsing
+ *
+ * The model DISCOVERS how to move particles creatively while minimising a
+ * simple constraint — it is NOT told the answer directly.
  */
 import * as tf from "@tensorflow/tfjs";
-import { ScoreNetwork } from "./trashPanda/models/ScoreNetwork";
-import { drawSpiralScene } from "./draw/draw_canvas2d";
 
 // ---------------------------------------------------------------------------
-// Backend init with graceful fallback
+// Types
+// ---------------------------------------------------------------------------
+export interface ArtPieceConfig {
+  name: string;
+  particleCount: number;
+  friction: number;
+  forceMagnitude: number;
+  maxVelocity: number;
+  resetRate: number;
+  drawRate: number;
+  learningRate: number;
+  backgroundColor: [number, number, number];
+  alphaBlend: number;
+  createModel: () => tf.Sequential;
+  computeLoss: (pos: tf.Tensor2D, w: number, h: number) => tf.Scalar;
+}
+
+// ---------------------------------------------------------------------------
+// Backend
 // ---------------------------------------------------------------------------
 async function initBackend() {
-  for (const backend of ["webgpu", "webgl", "cpu"]) {
+  for (const b of ["webgpu", "webgl", "cpu"]) {
     try {
-      if (await tf.setBackend(backend)) {
+      if (await tf.setBackend(b)) {
         await tf.ready();
         console.log(`TF.js backend: ${tf.getBackend()}`);
         return;
@@ -27,168 +48,357 @@ async function initBackend() {
 }
 
 // ---------------------------------------------------------------------------
-// Archimedes spiral   r = b·θ   centred at (0.5, 0.5) in [0,1]²
+// Model factories
+// ---------------------------------------------------------------------------
+function mlpShallow(): tf.Sequential {
+  const m = tf.sequential();
+  m.add(tf.layers.dense({ units: 32, activation: "selu", inputShape: [2] }));
+  m.add(tf.layers.dense({ units: 64, activation: "selu" }));
+  m.add(tf.layers.dense({ units: 2, activation: "sigmoid" }));
+  return m;
+}
+
+function mlpDeep(): tf.Sequential {
+  const m = tf.sequential();
+  m.add(tf.layers.dense({ units: 64, activation: "selu", inputShape: [2] }));
+  m.add(tf.layers.dense({ units: 128, activation: "selu" }));
+  m.add(tf.layers.dense({ units: 128, activation: "selu" }));
+  m.add(tf.layers.dense({ units: 64, activation: "selu" }));
+  m.add(tf.layers.dense({ units: 2, activation: "sigmoid" }));
+  return m;
+}
+
+function mlpWide(): tf.Sequential {
+  const m = tf.sequential();
+  m.add(tf.layers.dense({ units: 256, activation: "selu", inputShape: [2] }));
+  m.add(tf.layers.dense({ units: 2, activation: "sigmoid" }));
+  return m;
+}
+
+// ---------------------------------------------------------------------------
+// Loss functions  (all differentiable through the physics chain)
 // ---------------------------------------------------------------------------
 const SPIRAL_TURNS = 3;
 const SPIRAL_MAX_THETA = SPIRAL_TURNS * 2 * Math.PI;
-const SPIRAL_B = 0.38 / SPIRAL_MAX_THETA;
 
-function generateSpiralPoints(n: number): number[][] {
+function spiralLoss(pos: tf.Tensor2D, w: number, h: number): tf.Scalar {
+  return tf.tidy(() => {
+    const cx = w / 2;
+    const cy = h / 2;
+    const maxR = Math.min(w, h) * 0.38;
+    const b = maxR / SPIRAL_MAX_THETA;
+
+    const dx = pos.slice([0, 0], [-1, 1]).sub(cx);
+    const dy = pos.slice([0, 1], [-1, 1]).sub(cy);
+    const r = dx.square().add(dy.square()).add(1e-4).sqrt();
+    const phi = tf.atan2(dy, dx);
+
+    let best = tf.fill(r.shape, 1e8) as tf.Tensor;
+    for (let k = 0; k <= SPIRAL_TURNS + 1; k++) {
+      const theta = phi.add(2 * Math.PI * k);
+      const rSpiral = theta.relu().mul(b);
+      best = tf.minimum(best, r.sub(rSpiral).square());
+    }
+    return best.mean().asScalar();
+  });
+}
+
+function centerLoss(pos: tf.Tensor2D, w: number, h: number): tf.Scalar {
+  return tf.tidy(() => {
+    const center = tf.tensor2d([[w / 2, h / 2]]);
+    return pos.sub(center).square().sum(1).mean().asScalar();
+  });
+}
+
+function spiralPlusCenterLoss(
+  centerWeight: number
+): (pos: tf.Tensor2D, w: number, h: number) => tf.Scalar {
+  return (pos, w, h) =>
+    tf.tidy(() => {
+      const sL = spiralLoss(pos, w, h);
+      const cL = centerLoss(pos, w, h);
+      return sL.add(cL.mul(centerWeight)).asScalar();
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Gallery
+// ---------------------------------------------------------------------------
+export const GALLERY: ArtPieceConfig[] = [
+  {
+    name: "Spiral · Shallow",
+    particleCount: 1000,
+    friction: 0.911,
+    forceMagnitude: 1.2,
+    maxVelocity: 3.0,
+    resetRate: 0.0008,
+    drawRate: 2,
+    learningRate: 0.01,
+    backgroundColor: [12, 0, 34],
+    alphaBlend: 0.06,
+    createModel: mlpShallow,
+    computeLoss: spiralPlusCenterLoss(0.00005),
+  },
+  {
+    name: "Spiral · Deep",
+    particleCount: 800,
+    friction: 0.85,
+    forceMagnitude: 1.5,
+    maxVelocity: 4.0,
+    resetRate: 0.001,
+    drawRate: 2,
+    learningRate: 0.008,
+    backgroundColor: [4, 0, 18],
+    alphaBlend: 0.04,
+    createModel: mlpDeep,
+    computeLoss: spiralPlusCenterLoss(0.0001),
+  },
+  {
+    name: "Vortex",
+    particleCount: 1200,
+    friction: 0.92,
+    forceMagnitude: 1.0,
+    maxVelocity: 2.5,
+    resetRate: 0.002,
+    drawRate: 1,
+    learningRate: 0.01,
+    backgroundColor: [12, 0, 34],
+    alphaBlend: 0.05,
+    createModel: mlpShallow,
+    computeLoss: (p, w, h) =>
+      tf.tidy(() => centerLoss(p, w, h).mul(0.001).asScalar()),
+  },
+  {
+    name: "Galaxy · Wide",
+    particleCount: 1500,
+    friction: 0.80,
+    forceMagnitude: 1.8,
+    maxVelocity: 5.0,
+    resetRate: 0.003,
+    drawRate: 3,
+    learningRate: 0.005,
+    backgroundColor: [2, 0, 12],
+    alphaBlend: 0.03,
+    createModel: mlpWide,
+    computeLoss: spiralPlusCenterLoss(0.00002),
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Physics step (inside optimizer.minimize — gradients flow through)
+// ---------------------------------------------------------------------------
+function physicsForward(
+  pos: tf.Tensor2D,
+  vel: tf.Tensor2D,
+  model: tf.Sequential,
+  cfg: ArtPieceConfig,
+  w: number,
+  h: number
+): { newPos: tf.Tensor2D; newVel: tf.Tensor2D } {
+  const posNorm = pos.div(tf.tensor2d([[w, h]]));
+  const raw = model.predict(posNorm) as tf.Tensor2D;
+  const forces = raw.sub(0.5).mul(cfg.forceMagnitude);
+
+  const updVel = vel.add(forces).mul(cfg.friction);
+
+  const vx = updVel
+    .slice([0, 0], [-1, 1])
+    .clipByValue(-cfg.maxVelocity, cfg.maxVelocity);
+  const vy = updVel
+    .slice([0, 1], [-1, 1])
+    .clipByValue(-cfg.maxVelocity, cfg.maxVelocity);
+  const clippedVel = vx.concat(vy, 1) as tf.Tensor2D;
+
+  const updPos = pos.add(clippedVel);
+  const px = updPos.slice([0, 0], [-1, 1]).mod(tf.scalar(w));
+  const py = updPos.slice([0, 1], [-1, 1]).mod(tf.scalar(h));
+  const wrappedPos = px.concat(py, 1) as tf.Tensor2D;
+
+  return { newPos: wrappedPos, newVel: clippedVel };
+}
+
+// ---------------------------------------------------------------------------
+// Random reset — respawn fraction of particles at random positions
+// ---------------------------------------------------------------------------
+function randomReset(
+  pos: tf.Tensor2D,
+  vel: tf.Tensor2D,
+  rate: number,
+  w: number,
+  h: number
+): { pos: tf.Tensor2D; vel: tf.Tensor2D } {
+  return tf.tidy(() => {
+    const n = pos.shape[0];
+    const keep = tf.less(tf.randomUniform([n, 1]), tf.scalar(1 - rate));
+
+    const rx = tf.randomUniform([n, 1], 0, w);
+    const ry = tf.randomUniform([n, 1], 0, h);
+
+    const posX = pos.slice([0, 0], [-1, 1]);
+    const posY = pos.slice([0, 1], [-1, 1]);
+
+    const newX = tf.where(keep, posX, rx);
+    const newY = tf.where(keep, posY, ry);
+    const newPos = newX.concat(newY, 1) as tf.Tensor2D;
+
+    const zeroVel = tf.zeros([n, 2]);
+    const newVel = tf.where(keep.tile([1, 2]), vel, zeroVel) as tf.Tensor2D;
+
+    return { pos: newPos, vel: newVel };
+  }) as { pos: tf.Tensor2D; vel: tf.Tensor2D };
+}
+
+// ---------------------------------------------------------------------------
+// Renderer — trails via alpha blending, velocity-based colour
+// ---------------------------------------------------------------------------
+function render(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  positions: number[][],
+  velocities: number[][],
+  cfg: ArtPieceConfig,
+  frame: number,
+  spiralPts?: number[][]
+) {
+  const [br, bg, bb] = cfg.backgroundColor;
+  ctx.fillStyle = `rgba(${br},${bg},${bb},${cfg.alphaBlend})`;
+  ctx.fillRect(0, 0, w, h);
+
+  if (frame === 1) {
+    ctx.fillStyle = `rgb(${br},${bg},${bb})`;
+    ctx.fillRect(0, 0, w, h);
+  }
+
+  // Spiral target (faint)
+  if (spiralPts && frame < 3) {
+    ctx.beginPath();
+    for (let i = 0; i < spiralPts.length; i++) {
+      if (i === 0) ctx.moveTo(spiralPts[i][0], spiralPts[i][1]);
+      else ctx.lineTo(spiralPts[i][0], spiralPts[i][1]);
+    }
+    ctx.strokeStyle = "rgba(100,60,180,0.15)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  for (let i = 0; i < positions.length; i++) {
+    const [x, y] = positions[i];
+    const [vx, vy] = velocities[i];
+    const speed = Math.sqrt(vx * vx + vy * vy);
+
+    const r = Math.min(255, 80 + Math.abs(vx) * 60);
+    const g = Math.min(255, 40 + Math.abs(vy) * 60);
+    const b = Math.min(255, 120 + speed * 40);
+
+    ctx.beginPath();
+    ctx.arc(x, y, 1.8, 0, Math.PI * 2);
+    ctx.fillStyle = `rgb(${r | 0},${g | 0},${b | 0})`;
+    ctx.fill();
+  }
+
+  // HUD
+  ctx.fillStyle = "rgba(255,255,255,0.35)";
+  ctx.font = "12px monospace";
+  ctx.fillText(`${cfg.name}  frame ${frame}`, 8, 16);
+}
+
+// ---------------------------------------------------------------------------
+// Generate spiral target points in pixel coords (for overlay)
+// ---------------------------------------------------------------------------
+function spiralPixelPoints(w: number, h: number, n = 600): number[][] {
+  const cx = w / 2;
+  const cy = h / 2;
+  const maxR = Math.min(w, h) * 0.38;
+  const b = maxR / SPIRAL_MAX_THETA;
   const pts: number[][] = [];
   for (let i = 0; i < n; i++) {
     const theta = (i / n) * SPIRAL_MAX_THETA;
-    const r = SPIRAL_B * theta;
-    pts.push([0.5 + r * Math.cos(theta), 0.5 + r * Math.sin(theta)]);
+    const r = b * theta;
+    pts.push([cx + r * Math.cos(theta), cy + r * Math.sin(theta)]);
   }
   return pts;
 }
 
 // ---------------------------------------------------------------------------
-// Nearest-point score target: direction + magnitude toward spiral
+// Main simulation loop
 // ---------------------------------------------------------------------------
-function nearestSpiralTarget(
-  px: number,
-  py: number,
-  spiralDense: number[][]
-): [number, number] {
-  let bestD2 = Infinity;
-  let bx = px,
-    by = py;
-  for (let i = 0; i < spiralDense.length; i++) {
-    const dx = spiralDense[i][0] - px;
-    const dy = spiralDense[i][1] - py;
-    const d2 = dx * dx + dy * dy;
-    if (d2 < bestD2) {
-      bestD2 = d2;
-      bx = spiralDense[i][0];
-      by = spiralDense[i][1];
-    }
-  }
-  const dx = bx - px;
-  const dy = by - py;
-  const dist = Math.sqrt(bestD2);
-  if (dist < 1e-6) return [0, 0];
-  const mag = 1 - Math.exp(-dist * 10);
-  return [(dx / dist) * mag, (dy / dist) * mag];
-}
+export function startLoop(
+  canvas: HTMLCanvasElement,
+  configIndex: number
+): () => void {
+  let running = true;
+  const cfg = GALLERY[configIndex];
+  const ctx = canvas.getContext("2d")!;
 
-// ---------------------------------------------------------------------------
-// Build one training batch: random positions + noisy spiral positions
-// ---------------------------------------------------------------------------
-function buildBatch(spiralDense: number[][], nRand: number, nNear: number) {
-  const positions: number[][] = [];
-  const targets: number[][] = [];
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  canvas.width = w;
+  canvas.height = h;
 
-  for (let i = 0; i < nRand; i++) {
-    const px = Math.random();
-    const py = Math.random();
-    positions.push([px, py]);
-    targets.push(nearestSpiralTarget(px, py, spiralDense));
-  }
+  const model = cfg.createModel();
+  const optimizer = tf.train.adam(cfg.learningRate);
 
-  for (let i = 0; i < nNear; i++) {
-    const sp = spiralDense[(Math.random() * spiralDense.length) | 0];
-    const sigma = 0.005 + Math.random() * 0.12;
-    const px = sp[0] + (Math.random() - 0.5) * 2 * sigma;
-    const py = sp[1] + (Math.random() - 0.5) * 2 * sigma;
-    positions.push([px, py]);
-    targets.push(nearestSpiralTarget(px, py, spiralDense));
-  }
+  let pos = tf.randomUniform([cfg.particleCount, 2], 0, 1).mul(
+    tf.tensor2d([[w, h]])
+  ) as tf.Tensor2D;
+  let vel = tf.zeros([cfg.particleCount, 2]) as tf.Tensor2D;
+  tf.keep(pos);
+  tf.keep(vel);
 
-  return { positions, targets };
-}
-
-// ---------------------------------------------------------------------------
-// Main loop
-// ---------------------------------------------------------------------------
-export async function startLoop(canvas: HTMLCanvasElement) {
-  await initBackend();
-
-  const width = window.innerWidth;
-  const height = window.innerHeight;
-  canvas.width = width;
-  canvas.height = height;
-
-  const model = new ScoreNetwork({ hiddenUnits: [32, 64, 32] });
-  const optimizer = tf.train.adam(0.005);
-
-  const spiralPoints = generateSpiralPoints(1000);
-
-  const PARTICLE_COUNT = 400;
-  const pos = tf.variable(tf.randomUniform([PARTICLE_COUNT, 2], 0.08, 0.92));
-  const vel = tf.variable(tf.zeros([PARTICLE_COUNT, 2]) as tf.Tensor2D);
-
+  const spiralPts = spiralPixelPoints(w, h);
   let frame = 0;
-  let cachedField: { pos: number[][]; vec: number[][] } | undefined;
 
-  function tick() {
+  async function tick() {
+    if (!running) return;
     frame++;
 
-    // --- train ----------------------------------------------------------
-    const steps = frame < 60 ? 3 : 1;
-    for (let s = 0; s < steps; s++) {
-      const { positions, targets } = buildBatch(spiralPoints, 150, 100);
-      optimizer.minimize(() =>
-        tf.tidy(() => {
-          const pT = tf.tensor2d(positions);
-          const tT = tf.tensor2d(targets);
-          return (model.predict(pT) as tf.Tensor2D)
-            .sub(tT)
-            .square()
-            .mean()
-            .asScalar();
-        })
-      );
+    for (let d = 0; d < cfg.drawRate; d++) {
+      let newPos: tf.Tensor2D | null = null;
+      let newVel: tf.Tensor2D | null = null;
+
+      optimizer.minimize(() => {
+        const result = physicsForward(pos, vel, model, cfg, w, h);
+        newPos = result.newPos;
+        newVel = result.newVel;
+        tf.keep(newPos);
+        tf.keep(newVel);
+        return cfg.computeLoss(newPos, w, h);
+      });
+
+      const oldPos = pos;
+      const oldVel = vel;
+
+      // Random reset
+      const reset = randomReset(newPos!, newVel!, cfg.resetRate, w, h);
+      pos = reset.pos;
+      vel = reset.vel;
+      tf.keep(pos);
+      tf.keep(vel);
+
+      oldPos.dispose();
+      oldVel.dispose();
+      newPos!.dispose();
+      newVel!.dispose();
     }
 
-    // --- simulate (Langevin dynamics) ------------------------------------
-    tf.tidy(() => {
-      const forces = model.predict(pos) as tf.Tensor2D;
-      const ramp = Math.min(1, frame / 40);
-      const forceMag = 0.003 * ramp;
-      const friction = 0.93;
-      const noiseMag = 0.0012;
-
-      const noise = tf.randomNormal([PARTICLE_COUNT, 2]).mul(noiseMag);
-      const nv = vel
-        .add(forces.mul(forceMag))
-        .add(noise)
-        .mul(friction) as tf.Tensor2D;
-      const np = pos.add(nv).clipByValue(0.002, 0.998) as tf.Tensor2D;
-      vel.assign(nv);
-      pos.assign(np);
-    });
-
-    // --- draw -----------------------------------------------------------
+    // Render
     const posArr = pos.arraySync() as number[][];
     const velArr = vel.arraySync() as number[][];
-
-    if (frame % 6 === 1) {
-      const G = 16;
-      const gp: number[][] = [];
-      for (let gy = 0; gy < G; gy++)
-        for (let gx = 0; gx < G; gx++)
-          gp.push([(gx + 0.5) / G, (gy + 0.5) / G]);
-      const gT = tf.tensor2d(gp);
-      const gF = (model.predict(gT) as tf.Tensor2D).arraySync() as number[][];
-      gT.dispose();
-      cachedField = { pos: gp, vec: gF };
-    }
-
-    drawSpiralScene(
-      canvas,
-      posArr,
-      velArr,
-      spiralPoints,
-      width,
-      height,
-      frame,
-      cachedField
-    );
+    render(ctx, w, h, posArr, velArr, cfg, frame, spiralPts);
 
     requestAnimationFrame(tick);
   }
 
-  console.log("starting spiral diffusion loop");
-  tick();
+  initBackend().then(() => {
+    console.log(`starting: ${cfg.name}`);
+    tick();
+  });
+
+  return () => {
+    running = false;
+    pos.dispose();
+    vel.dispose();
+    model.dispose();
+  };
 }
