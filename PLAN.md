@@ -301,3 +301,15 @@ We get a richer parameter space without adding model size, and the α slider giv
 - **Multi-agent**: Ensemble of Helmholtz fields competing (game-theoretic loss).
 - **Video codec**: Real-time encode to H.264, stream to browser for recording.
 - **Interpretability**: Visualize φ and ψ fields separately (via 2D heatmaps overlaid).
+
+---
+
+## ⚠️ Build gotcha (verified 2026-07-05)
+
+`parcel build` with **scope-hoisting** (the default for production) crashes tfjs at runtime with
+`ReferenceError: $<hash>$exports is not defined` — tfjs-layers initializers (`VarianceScaling` /
+`GlorotUniform`) reference `tf.serialization` (tfjs-core's exports) before scope-hoisting defines it.
+The blank-page symptom: React never mounts. **Fix (in the `build` script): `parcel build --no-scope-hoist`.**
+The `parcel` dev server (`npm start`) is unaffected (it doesn't scope-hoist). Trade-off: larger bundle
+(~3.6 MB vs ~2.2 MB) but correct. Runtime-verified in headless Chrome: app mounts, "Helmholtz · Chaos"
+trains with no errors, and the α slider drives a visible order→chaos transition.
