@@ -1,69 +1,61 @@
 /**
- * Helmholtz decomposition force field.
+ * Neural force field — two direct-vector heads (FIRST-ORDER).
  * ===================================================================
  *
- * The Helmholtz (Hodge) decomposition states that any sufficiently smooth
- * 2D vector field F can be written as the sum of a CURL-FREE part and a
- * DIVERGENCE-FREE part:
+ * We keep the Helmholtz *intuition* — a force field is a blend of a
+ * curl-free "order" lane and a divergence-free "chaos" lane — but we no
+ * longer DERIVE the two lanes as an analytic gradient / curl of scalar
+ * potentials. Instead each lane is a small MLP that outputs its 2D force
+ * vector DIRECTLY:
  *
- *     F = ∇φ            +          (∂ψ/∂y, -∂ψ/∂x)
- *         └─ gradient ─┘          └──── curl of stream function ────┘
- *          curl-free                    divergence-free
- *         (potential)                  (solenoidal / area-preserving)
+ *     g(posNorm) : R^2 -> R^2   "gradient / attracting"  — ORDER lane
+ *     r(posNorm) : R^2 -> R^2   "rotational / mixing"    — CHAOS lane
  *
- * We learn the two SCALAR potentials φ and ψ with small neural nets and
- * DERIVE the vector field from them. This buys two structural guarantees
- * *by construction* (not by training luck):
+ *     forces = (1 - alpha) * g(posNorm)  +  alpha * r(posNorm)
  *
- *   1. ∇φ is irrotational (curl(∇φ) ≡ 0). It has sources/sinks, so it
- *      pulls particles toward basins of φ — the PREDICTABLE / ORDER lane.
- *
- *   2. curl(ψ) = (∂ψ/∂y, -∂ψ/∂x) is divergence-free (div(curl ψ) ≡ 0).
- *      A divergence-free flow is AREA-PRESERVING: particles swirl and mix
- *      but never collapse — the UNPREDICTABLE / CHAOS lane.
- *
- * The mix knob `alpha ∈ [0,1]` slides between the two:
- *
- *     forces = (1 - alpha) * ∇φ  +  alpha * curl(ψ)
- *
- * so alpha = 0 is pure gradient (order) and alpha = 1 is pure solenoidal
- * (mixing). It is a live, mutable field — an order↔chaos slider.
+ * The mix knob `alpha ∈ [0,1]` slides between them (0 = pure `g` / order,
+ * 1 = pure `r` / chaos). It is a live, mutable field — an order↔chaos slider.
  *
  * ─────────────────────────────────────────────────────────────────────
- * CRITICAL: 2D CURL SIGN CONVENTION
+ * WHY DIRECT VECTORS INSTEAD OF grad(φ) / curl(ψ)  (the whole point)
  * ─────────────────────────────────────────────────────────────────────
- * In 2D a "curl" of a scalar stream function ψ(x, y) is the vector
+ * The previous design built the force as F = ∇φ + curl(ψ), computing each
+ * lane with `tf.grad` of a scalar net w.r.t. the INPUT position. That gave
+ * an EXACT divergence-free chaos lane by construction — but at a fatal cost:
+ * because `forces()` itself called `tf.grad`, training (optimizer.minimize
+ * differentiates the loss w.r.t. the WEIGHTS) had to differentiate THROUGH
+ * that inner gradient. That is SECOND-ORDER autograd, measured at
+ * ~800–1700 ms/frame — roughly 10x too slow, and it also forced tanh-only
+ * hidden layers (SELU/ELU have no registered 2nd-order gradient in tfjs).
  *
- *     curl(ψ) = ( +∂ψ/∂y , -∂ψ/∂x )
- *
- * The SECOND component is NEGATED. tf.grad(sum(ψ)) returns the raw
- * gradient [∂ψ/∂x, ∂ψ/∂y]; we must (a) SWAP the two components AND
- * (b) NEGATE the (new) second one. Getting the sign wrong flips the
- * rotation direction and, more importantly, no longer yields a
- * divergence-free field — silently breaking the whole "area-preserving"
- * guarantee. Do not "simplify" this.
+ * TRADEOFF (deliberate): we drop the *exact* divergence-free guarantee and
+ * instead encourage it SOFTLY. `main.ts`'s `divergencePenalty` loss term
+ * measures ∇·F by forward-only finite differences and penalises its square,
+ * nudging `r` toward area-preserving mixing during training. In return,
+ * `forces()` is a plain FORWARD pass — no `tf.grad` inside — so training is a
+ * single FIRST-order backward, identical in cost to the fast MLP pieces
+ * (~10x faster). Approximate-and-cheap beats exact-and-unusable here.
  *
  * ─────────────────────────────────────────────────────────────────────
  * DIFFERENTIABILITY
  * ─────────────────────────────────────────────────────────────────────
- * `forces()` computes the fields via `tf.grad` (differentiation w.r.t.
- * the INPUT position). `tf.grad` is itself differentiable in tfjs, so
- * when the integrator runs the physics step inside `optimizer.minimize`,
- * second-order gradients flow from the loss, through the derived vector
- * field, and into φ's / ψ's weights. Nothing here detaches the tape.
+ * `forces()` only runs `net.predict` (a forward pass) wrapped in `tf.tidy`.
+ * Nothing detaches the tape: when the integrator runs the physics step
+ * inside `optimizer.minimize`, a single first-order gradient flows from the
+ * loss, through the two heads' outputs, into `g`'s and `r`'s weights.
  *
  * ─────────────────────────────────────────────────────────────────────
  * INTEGRATOR NOTE
  * ─────────────────────────────────────────────────────────────────────
- * Output is a RAW vector field (roughly O(1) magnitude, can be negative).
- * Unlike the sigmoid MLPs in main.ts, do NOT apply the `(raw - 0.5)`
- * shift — that shift only re-centers a [0,1] sigmoid output. Feed this
- * vector straight into the physics and let `forceMagnitude` scale it:
+ * Each head ends in a `tanh` layer, so the raw force is bounded ~O(1) (and
+ * can be negative). Like the sigmoid MLPs in main.ts this is a RAW signed
+ * vector, but do NOT apply the `(raw - 0.5)` shift — that only re-centers a
+ * [0,1] sigmoid. Feed the vector straight in and let `forceMagnitude` scale:
  *
  *     const forces = field.forces(posNorm).mul(cfg.forceMagnitude);
  *
- * `trainableWeights` exposes the underlying `tf.Variable`s so the
- * integrator may pass them as the `varList` to `optimizer.minimize`.
+ * `trainableWeights` exposes the underlying `tf.Variable`s so the integrator
+ * may pass them as the `varList` to `optimizer.minimize`.
  */
 
 import * as tf from "@tensorflow/tfjs";
@@ -87,82 +79,66 @@ export interface ForceField {
 /** Config for {@link HelmholtzField}. */
 export interface HelmholtzFieldConfig {
   /**
-   * Order↔chaos mix in `[0,1]`. `0` = pure gradient ∇φ (predictable),
-   * `1` = pure solenoidal curl(ψ) (mixing). Mutable at runtime.
+   * Order↔chaos mix in `[0,1]`. `0` = pure `g` (attracting / predictable),
+   * `1` = pure `r` (rotational / mixing). Mutable at runtime.
    */
   alpha: number;
-  /** Hidden layer widths for BOTH scalar nets. Default `[32, 32]`. */
+  /** Hidden layer widths for BOTH vector heads. Default `[32, 32]`. */
   hiddenUnits?: number[];
 }
 
 /**
- * Build a scalar potential net R^2 -> R: tanh hidden stack -> linear dense(1).
- * Linear output head is essential — a scalar potential must be unbounded so
- * its gradient can point in any direction with any magnitude.
+ * Build a vector head R^2 -> R^2: SELU hidden stack -> tanh dense(2).
  *
- * The hidden activation MUST be twice-differentiable: the live training path
- * takes a SECOND-ORDER gradient (optimizer.minimize differentiates a loss that
- * itself depends on tf.grad(net) w.r.t. the input, back into the net weights).
- * SELU/ELU throw on the 2nd-order pass — SELU's gradient uses the `Greater` op
- * (no registered gradient), ELU fails on `EluGrad` — so the whole Helmholtz
- * piece dies on frame 1. tanh is smooth everywhere and gives a well-behaved
- * (non-degenerate) potential; relu would also run but its zero second
- * derivative yields a degenerate curl/gradient field. Do NOT switch to selu/elu.
+ * SELU hidden layers are fine now that training is first-order only — the
+ * previous design banned SELU because its gradient uses the `Greater` op,
+ * which has no registered SECOND-order gradient in tfjs and killed the old
+ * `tf.grad`-based path. The final `tanh` bounds the output to ~O(1) per
+ * component so the raw force magnitude matches the old grad/curl scale and
+ * existing `forceMagnitude` configs still read correctly.
  */
-function makeScalarNet(hiddenUnits: number[]): tf.Sequential {
+function makeVectorNet(hiddenUnits: number[]): tf.Sequential {
   const net = tf.sequential();
   hiddenUnits.forEach((units, i) => {
-    const cfg: any = { units, activation: "tanh" };
+    const cfg: any = { units, activation: "selu" };
     if (i === 0) cfg.inputShape = [2];
     net.add(tf.layers.dense(cfg));
   });
-  net.add(tf.layers.dense({ units: 1, activation: "linear" }));
+  net.add(tf.layers.dense({ units: 2, activation: "tanh" }));
   return net;
 }
 
 /**
- * Gradient of the scalar field `net` w.r.t. its input, evaluated at `x`.
+ * Direct-vector neural force field.
  *
- * Because rows of `x` are independent, `∂/∂x Σ_i net(x_i) = [∇net(x_i)]_i`,
- * so summing the scalar outputs and differentiating once yields the per-row
- * gradient `[N,2]` in a single pass. `tf.grad` keeps this differentiable
- * w.r.t. the net's weights (higher-order autodiff).
- */
-function scalarGradient(net: tf.Sequential, x: tf.Tensor2D): tf.Tensor2D {
-  const sumScalar = (xx: tf.Tensor): tf.Tensor =>
-    (net.predict(xx as tf.Tensor2D) as tf.Tensor).sum();
-  return tf.grad(sumScalar)(x) as tf.Tensor2D;
-}
-
-/**
- * Helmholtz-decomposed neural force field.
- *
- * Learns two scalar potentials and derives a vector field that is an
- * explicit blend of its curl-free (gradient) and divergence-free (curl)
- * parts. See the file header for the full math and sign convention.
+ * Two small MLP heads output the order lane (`g`) and chaos lane (`r`) as
+ * 2D vectors directly; `forces()` blends them by `alpha`. The chaos lane's
+ * divergence-free character is encouraged SOFTLY by the `divergencePenalty`
+ * loss rather than constructed exactly — see the file header for why (the
+ * win is single first-order autograd, ~10x faster than the old grad/curl).
  */
 export class HelmholtzField implements ForceField {
   /** Order↔chaos slider in `[0,1]`; mutate freely at runtime. */
   alpha: number;
 
-  /** Scalar potential φ: R^2 -> R. Its gradient is the curl-free lane. */
-  private readonly phi: tf.Sequential;
-  /** Stream function ψ: R^2 -> R. Its curl is the divergence-free lane. */
-  private readonly psi: tf.Sequential;
+  /** Order lane: R^2 -> R^2 direct "gradient / attracting" vector. */
+  private readonly g: tf.Sequential;
+  /** Chaos lane: R^2 -> R^2 direct "rotational / mixing" vector. */
+  private readonly r: tf.Sequential;
 
   private readonly weights: tf.Variable[];
 
   constructor({ alpha, hiddenUnits = [32, 32] }: HelmholtzFieldConfig) {
     this.alpha = alpha;
-    this.phi = makeScalarNet(hiddenUnits);
-    this.psi = makeScalarNet(hiddenUnits);
+    this.g = makeVectorNet(hiddenUnits);
+    this.r = makeVectorNet(hiddenUnits);
 
     // LayerVariable.val is the underlying tf.Variable (protected in the
     // typings). We expose the real Variables so the integrator can hand
     // them to optimizer.minimize as an explicit varList.
     const collect = (net: tf.Sequential): tf.Variable[] =>
       net.trainableWeights.map((w) => (w as any).val as tf.Variable);
-    this.weights = [...collect(this.phi), ...collect(this.psi)];
+    this.weights = [...collect(this.g), ...collect(this.r)];
   }
 
   get trainableWeights(): tf.Variable[] {
@@ -172,32 +148,26 @@ export class HelmholtzField implements ForceField {
   /**
    * Raw force vectors `[N,2]` at the given normalized positions `[N,2]`.
    *
-   *   gradPhi = ∇φ                         (curl-free)
-   *   curlPsi = (∂ψ/∂y, -∂ψ/∂x)            (divergence-free — SEE SIGN NOTE)
-   *   forces  = (1 - alpha) * gradPhi + alpha * curlPsi
+   *   g       = order  lane vector (attracting)  — head `g`
+   *   r       = chaos  lane vector (rotational)   — head `r`
+   *   forces  = (1 - alpha) * g + alpha * r
    *
-   * Differentiable w.r.t. {@link trainableWeights}. Wrapped in `tf.tidy`
-   * to free intermediates; the tape retains what backprop needs.
+   * A plain FORWARD pass (no `tf.grad`): differentiable w.r.t.
+   * {@link trainableWeights} in a SINGLE first-order backward. Wrapped in
+   * `tf.tidy` to free intermediates; the tape retains what backprop needs.
    */
   forces(posNorm: tf.Tensor2D): tf.Tensor2D {
     return tf.tidy(() => {
-      // Curl-free lane: raw gradient IS the force.
-      const gradPhi = scalarGradient(this.phi, posNorm); // [N,2]
-
-      // Divergence-free lane. gradPsi = [∂ψ/∂x, ∂ψ/∂y].
-      const gradPsi = scalarGradient(this.psi, posNorm); // [N,2]
-      const dPsi_dx = gradPsi.slice([0, 0], [-1, 1]); // ∂ψ/∂x
-      const dPsi_dy = gradPsi.slice([0, 1], [-1, 1]); // ∂ψ/∂y
-      // 2D curl of a stream function: (+∂ψ/∂y, -∂ψ/∂x). NEGATE 2nd comp.
-      const curlPsi = tf.concat([dPsi_dy, dPsi_dx.neg()], 1) as tf.Tensor2D;
+      const gVec = this.g.predict(posNorm) as tf.Tensor2D; // order lane [N,2]
+      const rVec = this.r.predict(posNorm) as tf.Tensor2D; // chaos lane [N,2]
 
       const a = this.alpha;
-      return gradPhi.mul(1 - a).add(curlPsi.mul(a)) as tf.Tensor2D;
+      return gVec.mul(1 - a).add(rVec.mul(a)) as tf.Tensor2D;
     });
   }
 
   dispose(): void {
-    this.phi.dispose();
-    this.psi.dispose();
+    this.g.dispose();
+    this.r.dispose();
   }
 }

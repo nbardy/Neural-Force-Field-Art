@@ -38,20 +38,58 @@ export interface Renderer {
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
+
+// Default dot radius in px. Overridable per-piece via cfg.pointSize.
+const DEFAULT_POINT_SIZE = 1.3;
+
+// Multiplier for the soft-glow disc drawn under each core dot, and its alpha.
+// Cheap 2-pass round splat — a larger, low-alpha arc under a crisp core arc.
+// No per-particle gradient objects (those allocate + are slow); just two fills.
+const GLOW_RADIUS_MULT = 2.1;
+const GLOW_ALPHA = 0.22;
+
+/**
+ * Resolve the dot radius for a piece. `pointSize` is an OPTIONAL knob that is
+ * not declared on {@link ArtPieceConfig} (renderers.ts must not edit main.ts),
+ * so we read it through a narrow structural cast. Absent → DEFAULT_POINT_SIZE.
+ */
+function pointRadius(cfg: ArtPieceConfig): number {
+  const size = (cfg as { pointSize?: number }).pointSize;
+  return typeof size === "number" && size > 0 ? size : DEFAULT_POINT_SIZE;
+}
+
+// Draw particles as small round soft dots. Velocity → colour (unchanged).
+// Each dot = a low-alpha glow disc + a crisp core disc, both round arcs.
 function drawParticles(
   ctx: CanvasRenderingContext2D,
   positions: number[][],
-  velocities: number[][]
+  velocities: number[][],
+  radius: number
 ) {
+  const TAU = Math.PI * 2;
+  const glowR = radius * GLOW_RADIUS_MULT;
   for (let i = 0; i < positions.length; i++) {
+    const x = positions[i][0];
+    const y = positions[i][1];
     const vx = velocities[i][0];
     const vy = velocities[i][1];
     const speed = Math.sqrt(vx * vx + vy * vy);
-    const r = Math.min(255, 80 + Math.abs(vx) * 60);
-    const g = Math.min(255, 40 + Math.abs(vy) * 60);
-    const b = Math.min(255, 120 + speed * 40);
-    ctx.fillStyle = `rgb(${r | 0},${g | 0},${b | 0})`;
-    ctx.fillRect(positions[i][0] - 1, positions[i][1] - 1, 3, 3);
+    const r = Math.min(255, 80 + Math.abs(vx) * 60) | 0;
+    const g = Math.min(255, 40 + Math.abs(vy) * 60) | 0;
+    const b = Math.min(255, 120 + speed * 40) | 0;
+
+    // Soft glow: larger, low-alpha disc underneath (baked into the colour so we
+    // never touch globalAlpha — one less state write per particle).
+    ctx.fillStyle = `rgba(${r},${g},${b},${GLOW_ALPHA})`;
+    ctx.beginPath();
+    ctx.arc(x, y, glowR, 0, TAU);
+    ctx.fill();
+
+    // Crisp core dot on top.
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, TAU);
+    ctx.fill();
   }
 }
 
@@ -130,7 +168,7 @@ class AlphaFadeRenderer implements Renderer {
     ctx.fillStyle = this.fadeStr;
     ctx.fillRect(0, 0, w, h);
 
-    drawParticles(ctx, positions, velocities);
+    drawParticles(ctx, positions, velocities, pointRadius(this.cfg));
     drawHUD(ctx, this.cfg.name, frame, positions.length);
   }
 
@@ -205,7 +243,7 @@ class TrailBufferRenderer implements Renderer {
     }
     ctx.globalAlpha = 1;
 
-    drawParticles(ctx, positions, velocities);
+    drawParticles(ctx, positions, velocities, pointRadius(this.cfg));
     drawHUD(ctx, this.cfg.name, frame, positions.length);
   }
 
@@ -240,7 +278,7 @@ class CleanRenderer implements Renderer {
     ctx.fillStyle = this.bgStr;
     ctx.fillRect(0, 0, w, h);
     if (this.spiralPts) drawSpiralOverlay(ctx, this.spiralPts);
-    drawParticles(ctx, positions, velocities);
+    drawParticles(ctx, positions, velocities, pointRadius(this.cfg));
     drawHUD(ctx, this.cfg.name, frame, positions.length);
   }
 

@@ -420,12 +420,28 @@ export function startLoop(
 ): () => void {
   let running = true;
   const cfg = GALLERY[configIndex];
-  const ctx = canvas.getContext("2d")!;
 
   const w = window.innerWidth;
   const h = window.innerHeight;
   canvas.width = w;
   canvas.height = h;
+
+  // Render path: GPU-resident (WebGL2 + tfjs dataToGPU, ZERO per-frame readback)
+  // by default; Canvas2D fallback. A canvas commits to ONE context type, so we
+  // decide up front: gl !== null => GPU path (ctx stays null), else Canvas2D.
+  // `?gpu=0` forces the Canvas2D fallback (escape hatch if the WebGL renderer
+  // misbehaves on a given machine); otherwise GPU is the default.
+  const gpuParam = new URLSearchParams(location.search).get("gpu");
+  const wantGpu = gpuParam === "0" ? false : cfg.gpu !== false;
+  let gl: WebGL2RenderingContext | null = null;
+  if (wantGpu) {
+    try {
+      gl = GpuPointRenderer.registerCanvasWithTf(canvas);
+    } catch (_) {
+      gl = null;
+    }
+  }
+  const ctx = gl ? null : canvas.getContext("2d");
 
   // Either a ForceField (new path) or a sigmoid MLP (legacy). Exactly one is
   // constructed per preset; the other stays null and drives the dispatch in
@@ -444,17 +460,9 @@ export function startLoop(
 
   const optimizer = tf.train.adam(cfg.learningRate);
 
-  // OPTIONAL zero-copy GPU renderer (off by default; see cfg.gpu docs). Must
-  // register the on-screen canvas with tfjs BEFORE backend init so the
-  // dataToGPU() texture is drawable. The instance itself is built after the
-  // backend is ready (it reads tf.backend().gpgpu.gl).
+  // Constructed after backend init (needs the ready webgl context). The canvas
+  // was already registered with tfjs above when gl !== null.
   let gpuRenderer: GpuPointRenderer | null = null;
-  if (cfg.gpu === true) {
-    // The zero-copy renderer needs an UNPACKED WebGL float texture layout;
-    // tfjs's default 2x2 packing would scramble the texelFetch indexing.
-    tf.env().set("WEBGL_PACK", false);
-    GpuPointRenderer.registerCanvasWithTf(canvas);
-  }
 
   let pos = tf.randomUniform([cfg.particleCount, 2], 0, 1).mul(
     tf.tensor2d([[w, h]])
@@ -464,7 +472,9 @@ export function startLoop(
   tf.keep(vel);
 
   const spiralPts = spiralPixelPoints(w, h);
-  const renderer = createRenderer(cfg.renderer, cfg, cfg.particleCount, spiralPts);
+  const renderer = gl
+    ? null
+    : createRenderer(cfg.renderer, cfg, cfg.particleCount, spiralPts);
   let frame = 0;
 
   // --- Telemetry HUD: FPS + per-stage timing so the bottleneck is visible ----
@@ -544,7 +554,7 @@ export function startLoop(
       const r0 = performance.now();
       const posArr = pos.arraySync() as number[][];
       const velArr = vel.arraySync() as number[][];
-      renderer.render(ctx, w, h, posArr, velArr, frame);
+      renderer!.render(ctx!, w, h, posArr, velArr, frame);
       renderMs = performance.now() - r0;
     }
 
@@ -568,29 +578,31 @@ export function startLoop(
     requestAnimationFrame(tick);
   }
 
-  initBackend(cfg.gpu === true ? "webgl" : undefined).then(() => {
-    // GpuPointRenderer.render() requires the 'webgl' backend (dataToGPU texture
-    // path). initBackend() may resolve to 'webgpu'; if so, fail SAFE to Canvas2D
-    // instead of hard-crashing. Fully enabling the GPU lane means forcing webgl
-    // (TODO: browser QA) — no shipped preset sets cfg.gpu, so this stays latent.
-    if (cfg.gpu === true && tf.getBackend() === "webgl") {
+  initBackend(gl ? "webgl" : undefined).then(() => {
+    // GPU-resident path: build the renderer now that the webgl backend + context
+    // are ready. registerCanvasWithTf already bound our on-screen gl to tfjs, so
+    // dataToGPU() textures live in the same context we draw with (zero readback).
+    if (gl && tf.getBackend() === "webgl") {
       gpuRenderer = new GpuPointRenderer(canvas, {
-        pointSize: 2,
+        pointSize: (cfg as { pointSize?: number }).pointSize ?? 2,
         background: cfg.backgroundColor,
+        alphaBlend: cfg.alphaBlend,
       });
-    } else if (cfg.gpu === true) {
-      console.warn(
-        `[gpu] backend is '${tf.getBackend()}', not 'webgl'; using Canvas2D. ` +
-          `Force the webgl backend to enable the zero-copy renderer.`
+    } else if (gl) {
+      console.error(
+        `[gpu] backend '${tf.getBackend()}' != webgl; a webgl canvas cannot ` +
+          `fall back to Canvas2D on the same element.`
       );
     }
-    console.log(`starting: ${cfg.name}`);
+    console.log(
+      `starting: ${cfg.name} (backend ${tf.getBackend()}, ${gl ? "gpu" : "canvas2d"})`
+    );
     tick();
   });
 
   return () => {
     running = false;
-    renderer.destroy();
+    if (renderer) renderer.destroy();
     if (gpuRenderer) gpuRenderer.destroy();
     tele.remove();
     wh.dispose();
