@@ -227,10 +227,10 @@ export const GALLERY: ArtPieceConfig[] = [
   {
     name: "Spiral · Ghost",
     particleCount: 1000,
-    friction: 0.911,
-    forceMagnitude: 1.2,
-    maxVelocity: 3.0,
-    resetRate: 0.0008,
+    friction: 0.985,
+    forceMagnitude: 3.0,
+    maxVelocity: 22,
+    resetRate: 0.012,
     drawRate: 2,
     learningRate: 0.01,
     backgroundColor: [12, 0, 34],
@@ -242,10 +242,10 @@ export const GALLERY: ArtPieceConfig[] = [
   {
     name: "Spiral · Trails",
     particleCount: 800,
-    friction: 0.85,
-    forceMagnitude: 1.5,
-    maxVelocity: 4.0,
-    resetRate: 0.001,
+    friction: 0.99,
+    forceMagnitude: 3.5,
+    maxVelocity: 28,
+    resetRate: 0.008,
     drawRate: 2,
     learningRate: 0.008,
     backgroundColor: [4, 0, 18],
@@ -257,10 +257,10 @@ export const GALLERY: ArtPieceConfig[] = [
   {
     name: "Vortex · Ghost",
     particleCount: 1200,
-    friction: 0.92,
-    forceMagnitude: 1.0,
-    maxVelocity: 2.5,
-    resetRate: 0.002,
+    friction: 0.985,
+    forceMagnitude: 3.0,
+    maxVelocity: 20,
+    resetRate: 0.015,
     drawRate: 1,
     learningRate: 0.01,
     backgroundColor: [12, 0, 34],
@@ -273,10 +273,10 @@ export const GALLERY: ArtPieceConfig[] = [
   {
     name: "Galaxy · Clean",
     particleCount: 1500,
-    friction: 0.80,
-    forceMagnitude: 1.8,
-    maxVelocity: 5.0,
-    resetRate: 0.003,
+    friction: 0.975,
+    forceMagnitude: 4.0,
+    maxVelocity: 30,
+    resetRate: 0.01,
     drawRate: 3,
     learningRate: 0.005,
     backgroundColor: [2, 0, 12],
@@ -288,10 +288,10 @@ export const GALLERY: ArtPieceConfig[] = [
   {
     name: "Galaxy · Ghost",
     particleCount: 1500,
-    friction: 0.80,
-    forceMagnitude: 1.8,
-    maxVelocity: 5.0,
-    resetRate: 0.003,
+    friction: 0.975,
+    forceMagnitude: 4.0,
+    maxVelocity: 30,
+    resetRate: 0.01,
     drawRate: 3,
     learningRate: 0.005,
     backgroundColor: [2, 0, 12],
@@ -306,10 +306,10 @@ export const GALLERY: ArtPieceConfig[] = [
     // chaos (curl ψ) live; alpha starts biased toward mixing.
     name: "Helmholtz · Chaos",
     particleCount: 1200,
-    friction: 0.90,
-    forceMagnitude: 2.0,
-    maxVelocity: 4.0,
-    resetRate: 0.002,
+    friction: 0.99,
+    forceMagnitude: 3.5,
+    maxVelocity: 26,
+    resetRate: 0.01,
     drawRate: 2,
     learningRate: 0.01,
     backgroundColor: [6, 2, 20],
@@ -478,82 +478,91 @@ export function startLoop(
     prev === 0 ? x : prev * (1 - a) + x * a;
   let emaFrame = 0,
     emaTrain = 0,
-    emaRead = 0,
+    emaSim = 0,
     emaRender = 0,
     lastT = performance.now();
+
+  // Learning is DECOUPLED from motion: we train the field on a small random
+  // batch each frame (real-time, cheap) and advect ALL visible particles
+  // forward-only (no gradient tape, no per-frame readback stall). This is what
+  // kept the old build "real-time and fast" — the expensive autograd graph
+  // never gates the render loop.
+  const TRAIN_BATCH = 256;
+  const wh = tf.tensor2d([[w, h]]);
+  tf.keep(wh);
 
   async function tick() {
     if (!running) return;
     frame++;
 
+    // (1) LEARN — one gradient step on a SMALL random batch. This is the only
+    //     place the second-order autograd graph runs; it's tiny and does not
+    //     block the motion below.
     const trainStart = performance.now();
-    for (let d = 0; d < cfg.drawRate; d++) {
-      let newPos: tf.Tensor2D | null = null;
-      let newVel: tf.Tensor2D | null = null;
-
-      optimizer.minimize(
-        () => {
-          const result = physicsForward(pos, vel, model, field, cfg, w, h);
-          newPos = result.newPos;
-          newVel = result.newVel;
-          tf.keep(newPos);
-          tf.keep(newVel);
-          // Pass the per-step force tensor + live field so field-based losses
-          // (isotropy/chaos/divergence) reuse the field without recomputing it.
-          return cfg.computeLoss(newPos, w, h, { force: result.force, field });
-        },
-        false,
-        varList
-      );
-
-      const oldPos = pos;
-      const oldVel = vel;
-
-      const reset = randomReset(newPos!, newVel!, cfg.resetRate, w, h);
-      pos = reset.pos;
-      vel = reset.vel;
-      tf.keep(pos);
-      tf.keep(vel);
-
-      oldPos.dispose();
-      oldVel.dispose();
-      newPos!.dispose();
-      newVel!.dispose();
-    }
+    optimizer.minimize(
+      () =>
+        tf.tidy(() => {
+          const tp = tf.randomUniform([TRAIN_BATCH, 2], 0, 1).mul(
+            wh
+          ) as tf.Tensor2D;
+          const tv = tf.zeros([TRAIN_BATCH, 2]) as tf.Tensor2D;
+          const r = physicsForward(tp, tv, model, field, cfg, w, h);
+          return cfg.computeLoss(r.newPos, w, h, { force: r.force, field });
+        }),
+      false,
+      varList
+    );
     const trainMs = performance.now() - trainStart;
 
-    let readMs = 0;
+    // (2) ADVECT — move ALL visible particles forward-only (NO gradient tape).
+    //     Cheap enough to render many points every frame.
+    const simStart = performance.now();
+    const stepped = tf.tidy(() => {
+      const r = physicsForward(pos, vel, model, field, cfg, w, h);
+      return [r.newPos, r.newVel] as [tf.Tensor2D, tf.Tensor2D];
+    });
+    const oldPos = pos;
+    const oldVel = vel;
+    const reset = randomReset(stepped[0], stepped[1], cfg.resetRate, w, h);
+    pos = reset.pos;
+    vel = reset.vel;
+    tf.keep(pos);
+    tf.keep(vel);
+    oldPos.dispose();
+    oldVel.dispose();
+    stepped[0].dispose();
+    stepped[1].dispose();
+    const simMs = performance.now() - simStart;
+
+    // (3) RENDER
     let renderMs = 0;
     if (gpuRenderer) {
-      // Zero-copy path: positions/velocities never leave the GPU.
       const r0 = performance.now();
       gpuRenderer.render(pos, vel, w, h, frame);
       renderMs = performance.now() - r0;
     } else {
       const r0 = performance.now();
-      const posArr = pos.arraySync() as number[][]; // GPU->CPU readback (~free on cpu)
+      const posArr = pos.arraySync() as number[][];
       const velArr = vel.arraySync() as number[][];
-      readMs = performance.now() - r0;
-      const r1 = performance.now();
       renderer.render(ctx, w, h, posArr, velArr, frame);
-      renderMs = performance.now() - r1;
+      renderMs = performance.now() - r0;
     }
 
     const now = performance.now();
     emaFrame = ema(emaFrame, now - lastT);
     lastT = now;
     emaTrain = ema(emaTrain, trainMs);
-    emaRead = ema(emaRead, readMs);
+    emaSim = ema(emaSim, simMs);
     emaRender = ema(emaRender, renderMs);
     if (frame % 6 === 0) {
       tele.textContent =
         `${cfg.name}\n` +
-        `backend  ${tf.getBackend()}   n=${cfg.particleCount}\n` +
-        `FPS      ${(1000 / emaFrame).toFixed(1)}  (${emaFrame.toFixed(1)} ms)\n` +
-        `train    ${emaTrain.toFixed(1)} ms  ×${cfg.drawRate}\n` +
-        `readback ${emaRead.toFixed(1)} ms\n` +
-        `render   ${emaRender.toFixed(1)} ms\n` +
-        `tensors  ${tf.memory().numTensors}`;
+        `backend ${tf.getBackend()}  render=${cfg.particleCount} train=${TRAIN_BATCH}\n` +
+        `FPS     ${(1000 / emaFrame).toFixed(1)}  (${emaFrame.toFixed(1)} ms)\n` +
+        `learn   ${emaTrain.toFixed(1)} ms\n` +
+        `advect  ${emaSim.toFixed(1)} ms\n` +
+        `render  ${emaRender.toFixed(1)} ms\n` +
+        `tensors ${tf.memory().numTensors}`;
     }
 
     requestAnimationFrame(tick);
@@ -584,6 +593,7 @@ export function startLoop(
     renderer.destroy();
     if (gpuRenderer) gpuRenderer.destroy();
     tele.remove();
+    wh.dispose();
     pos.dispose();
     vel.dispose();
     if (model) model.dispose();
