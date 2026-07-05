@@ -13,10 +13,34 @@
  */
 import * as tf from "@tensorflow/tfjs";
 import { createRenderer, RendererType, Renderer } from "./renderers";
+import { ForceField, HelmholtzField } from "./core/field/helmholtz";
+import {
+  isotropyLoss,
+  divergencePenalty,
+  chaosLoss,
+} from "./core/losses";
+// OPTIONAL zero-copy GPU renderer (perf lane). Imported so it compiles and is
+// ready, but only used when a preset sets `gpu: true` (none do by default — it
+// needs browser QA). See src/render/gpuPoints.ts.
+import { GpuPointRenderer } from "./render/gpuPoints";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+/**
+ * Extra context handed to {@link ArtPieceConfig.computeLoss} on each step.
+ * `force` is the per-step force tensor `[N,2]` (already scaled by
+ * `forceMagnitude`) that produced the current positions — reused so
+ * force-based losses (isotropy) do not recompute the field. `field`, when
+ * present, is the live {@link ForceField} so field-sampling losses (chaos,
+ * divergence) can probe it at arbitrary positions. Both are `undefined` for
+ * the legacy MLP pieces, which ignore this argument entirely.
+ */
+export interface LossContext {
+  force?: tf.Tensor2D;
+  field?: ForceField | null;
+}
+
 export interface ArtPieceConfig {
   name: string;
   particleCount: number;
@@ -29,8 +53,29 @@ export interface ArtPieceConfig {
   backgroundColor: [number, number, number];
   alphaBlend: number;
   renderer: RendererType;
-  createModel: () => tf.Sequential;
-  computeLoss: (pos: tf.Tensor2D, w: number, h: number) => tf.Scalar;
+  /**
+   * Legacy path: a sigmoid MLP whose `[0,1]` output is re-centered by
+   * `(raw - 0.5)`. Mutually exclusive with {@link createField}.
+   */
+  createModel?: () => tf.Sequential;
+  /**
+   * Field path: a {@link ForceField} (e.g. {@link HelmholtzField}) whose raw
+   * signed output is used directly (NO `-0.5` shift). Its `trainableWeights`
+   * become the optimizer varList. Takes precedence over {@link createModel}.
+   */
+  createField?: () => ForceField;
+  /**
+   * OPTIONAL: route rendering through the zero-copy {@link GpuPointRenderer}
+   * instead of the Canvas2D renderers. Off by default (needs browser QA); no
+   * shipped preset sets it.
+   */
+  gpu?: boolean;
+  computeLoss: (
+    pos: tf.Tensor2D,
+    w: number,
+    h: number,
+    ctx?: LossContext
+  ) => tf.Scalar;
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +168,47 @@ function spiralPlusCenterLoss(
     });
 }
 
+/**
+ * Composite loss for the Helmholtz field piece: mostly chaos + isotropy, held
+ * together by a faint spiral so the mixing has a ghost of structure.
+ *
+ *   loss = W_CHAOS·chaos + W_ISO·isotropy + W_DIV·divergence + W_SPIRAL·spiral
+ *
+ * - chaos      maximises local sensitivity (returns −log separation).
+ * - isotropy   keeps force energy directionally balanced (reads the SAME
+ *              per-step force tensor via {@link LossContext.force}).
+ * - divergence lightly pins the flow toward area-preserving.
+ * - spiral     a tiny structural anchor (pixel-scale MSE → small weight).
+ *
+ * Requires `ctx.field` and `ctx.force` (the field piece always supplies them).
+ * Weights are artistic knobs — tune freely.
+ */
+function helmholtzChaosLoss(): ArtPieceConfig["computeLoss"] {
+  const W_CHAOS = 1.0;
+  const W_ISO = 1.0;
+  const W_DIV = 0.5;
+  const W_SPIRAL = 0.00002;
+  return (pos, w, h, ctx) =>
+    tf.tidy(() => {
+      const field = ctx!.field!;
+      const force = ctx!.force!;
+      const posNorm = pos.div(tf.tensor2d([[w, h]])) as tf.Tensor2D;
+      const fieldFn = (p: tf.Tensor2D): tf.Tensor2D => field.forces(p);
+
+      const chaos = chaosLoss(fieldFn, posNorm);
+      const iso = isotropyLoss(force);
+      const div = divergencePenalty(fieldFn, posNorm);
+      const spiral = spiralLoss(pos, w, h);
+
+      return chaos
+        .mul(W_CHAOS)
+        .add(iso.mul(W_ISO))
+        .add(div.mul(W_DIV))
+        .add(spiral.mul(W_SPIRAL))
+        .asScalar();
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Gallery
 // ---------------------------------------------------------------------------
@@ -203,6 +289,24 @@ export const GALLERY: ArtPieceConfig[] = [
     createModel: mlpWide,
     computeLoss: spiralPlusCenterLoss(0.00002),
   },
+  {
+    // Helmholtz-decomposed field driven by a GAN-style chaos objective. The
+    // alpha slider (see index.tsx) slides the field between order (∇φ) and
+    // chaos (curl ψ) live; alpha starts biased toward mixing.
+    name: "Helmholtz · Chaos",
+    particleCount: 1200,
+    friction: 0.90,
+    forceMagnitude: 2.0,
+    maxVelocity: 4.0,
+    resetRate: 0.002,
+    drawRate: 2,
+    learningRate: 0.01,
+    backgroundColor: [6, 2, 20],
+    alphaBlend: 0.05,
+    renderer: "alpha-fade",
+    createField: () => new HelmholtzField({ alpha: 0.7 }),
+    computeLoss: helmholtzChaosLoss(),
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -211,14 +315,18 @@ export const GALLERY: ArtPieceConfig[] = [
 function physicsForward(
   pos: tf.Tensor2D,
   vel: tf.Tensor2D,
-  model: tf.Sequential,
+  model: tf.Sequential | null,
+  field: ForceField | null,
   cfg: ArtPieceConfig,
   w: number,
   h: number
-): { newPos: tf.Tensor2D; newVel: tf.Tensor2D } {
-  const posNorm = pos.div(tf.tensor2d([[w, h]]));
-  const raw = model.predict(posNorm) as tf.Tensor2D;
-  const forces = raw.sub(0.5).mul(cfg.forceMagnitude);
+): { newPos: tf.Tensor2D; newVel: tf.Tensor2D; force: tf.Tensor2D } {
+  const posNorm = pos.div(tf.tensor2d([[w, h]])) as tf.Tensor2D;
+  // Field path: raw signed output used directly (NO -0.5 shift).
+  // MLP path (legacy): sigmoid output re-centered by (raw - 0.5).
+  const forces = field
+    ? (field.forces(posNorm).mul(cfg.forceMagnitude) as tf.Tensor2D)
+    : ((model!.predict(posNorm) as tf.Tensor2D).sub(0.5).mul(cfg.forceMagnitude) as tf.Tensor2D);
 
   const updVel = vel.add(forces).mul(cfg.friction);
 
@@ -235,7 +343,7 @@ function physicsForward(
   const py = updPos.slice([0, 1], [-1, 1]).mod(tf.scalar(h));
   const wrappedPos = px.concat(py, 1) as tf.Tensor2D;
 
-  return { newPos: wrappedPos, newVel: clippedVel };
+  return { newPos: wrappedPos, newVel: clippedVel, force: forces };
 }
 
 // ---------------------------------------------------------------------------
@@ -296,7 +404,8 @@ function spiralPixelPoints(w: number, h: number, n = 600): number[][] {
 // ---------------------------------------------------------------------------
 export function startLoop(
   canvas: HTMLCanvasElement,
-  configIndex: number
+  configIndex: number,
+  onField?: (field: HelmholtzField | null) => void
 ): () => void {
   let running = true;
   const cfg = GALLERY[configIndex];
@@ -307,8 +416,29 @@ export function startLoop(
   canvas.width = w;
   canvas.height = h;
 
-  const model = cfg.createModel();
+  // Either a ForceField (new path) or a sigmoid MLP (legacy). Exactly one is
+  // constructed per preset; the other stays null and drives the dispatch in
+  // physicsForward and the optimizer varList below.
+  const field: ForceField | null = cfg.createField ? cfg.createField() : null;
+  const model: tf.Sequential | null =
+    !field && cfg.createModel ? cfg.createModel() : null;
+
+  // Hand the live field to the caller so a UI control can mutate `alpha`.
+  if (onField) onField(field ? (field as HelmholtzField) : null);
+
+  // When using a field, restrict the optimizer to the field's own weights.
+  const varList: tf.Variable[] | undefined = field
+    ? field.trainableWeights
+    : undefined;
+
   const optimizer = tf.train.adam(cfg.learningRate);
+
+  // OPTIONAL zero-copy GPU renderer (off by default; see cfg.gpu docs). Must
+  // register the on-screen canvas with tfjs BEFORE backend init so the
+  // dataToGPU() texture is drawable. The instance itself is built after the
+  // backend is ready (it reads tf.backend().gpgpu.gl).
+  let gpuRenderer: GpuPointRenderer | null = null;
+  if (cfg.gpu === true) GpuPointRenderer.registerCanvasWithTf(canvas);
 
   let pos = tf.randomUniform([cfg.particleCount, 2], 0, 1).mul(
     tf.tensor2d([[w, h]])
@@ -329,14 +459,20 @@ export function startLoop(
       let newPos: tf.Tensor2D | null = null;
       let newVel: tf.Tensor2D | null = null;
 
-      optimizer.minimize(() => {
-        const result = physicsForward(pos, vel, model, cfg, w, h);
-        newPos = result.newPos;
-        newVel = result.newVel;
-        tf.keep(newPos);
-        tf.keep(newVel);
-        return cfg.computeLoss(newPos, w, h);
-      });
+      optimizer.minimize(
+        () => {
+          const result = physicsForward(pos, vel, model, field, cfg, w, h);
+          newPos = result.newPos;
+          newVel = result.newVel;
+          tf.keep(newPos);
+          tf.keep(newVel);
+          // Pass the per-step force tensor + live field so field-based losses
+          // (isotropy/chaos/divergence) reuse the field without recomputing it.
+          return cfg.computeLoss(newPos, w, h, { force: result.force, field });
+        },
+        false,
+        varList
+      );
 
       const oldPos = pos;
       const oldVel = vel;
@@ -353,14 +489,25 @@ export function startLoop(
       newVel!.dispose();
     }
 
-    const posArr = pos.arraySync() as number[][];
-    const velArr = vel.arraySync() as number[][];
-    renderer.render(ctx, w, h, posArr, velArr, frame);
+    if (gpuRenderer) {
+      // Zero-copy path: positions/velocities never leave the GPU.
+      gpuRenderer.render(pos, vel, w, h, frame);
+    } else {
+      const posArr = pos.arraySync() as number[][];
+      const velArr = vel.arraySync() as number[][];
+      renderer.render(ctx, w, h, posArr, velArr, frame);
+    }
 
     requestAnimationFrame(tick);
   }
 
   initBackend().then(() => {
+    if (cfg.gpu === true) {
+      gpuRenderer = new GpuPointRenderer(canvas, {
+        pointSize: 2,
+        background: cfg.backgroundColor,
+      });
+    }
     console.log(`starting: ${cfg.name}`);
     tick();
   });
@@ -368,8 +515,10 @@ export function startLoop(
   return () => {
     running = false;
     renderer.destroy();
+    if (gpuRenderer) gpuRenderer.destroy();
     pos.dispose();
     vel.dispose();
-    model.dispose();
+    if (model) model.dispose();
+    if (field) field.dispose();
   };
 }
