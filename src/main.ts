@@ -81,8 +81,19 @@ export interface ArtPieceConfig {
 // ---------------------------------------------------------------------------
 // Backend
 // ---------------------------------------------------------------------------
-async function initBackend() {
-  for (const b of ["webgpu", "webgl", "cpu"]) {
+async function initBackend(preferred?: string) {
+  // WHY cpu-first: the model is TINY (2->..->2) evaluated per-point over a big
+  // batch. That workload is DISPATCH-bound, not compute-bound — on webgl/webgpu
+  // every op is a separate GPU kernel dispatch, and the per-frame arraySync()
+  // forces a GPU->CPU readback (a full pipeline flush on webgpu). CPU runs the
+  // tiny matmuls inline with zero dispatch/readback and is dramatically faster
+  // here (measured: webgpu ~3-15 FPS vs cpu many×). Override with ?backend=webgl.
+  const override =
+    new URLSearchParams(location.search).get("backend") || preferred;
+  const order = override
+    ? [override, "cpu", "webgl", "webgpu"]
+    : ["cpu", "webgl", "webgpu"];
+  for (const b of order) {
     try {
       if (await tf.setBackend(b)) {
         await tf.ready();
@@ -456,10 +467,26 @@ export function startLoop(
   const renderer = createRenderer(cfg.renderer, cfg, cfg.particleCount, spiralPts);
   let frame = 0;
 
+  // --- Telemetry HUD: FPS + per-stage timing so the bottleneck is visible ----
+  const tele = document.createElement("div");
+  tele.style.cssText =
+    "position:fixed;top:8px;right:8px;z-index:9999;font:11px/1.45 ui-monospace," +
+    "monospace;color:#8f8;background:rgba(0,0,0,.6);padding:6px 9px;border-radius:" +
+    "5px;white-space:pre;pointer-events:none;letter-spacing:.02em";
+  document.body.appendChild(tele);
+  const ema = (prev: number, x: number, a = 0.12) =>
+    prev === 0 ? x : prev * (1 - a) + x * a;
+  let emaFrame = 0,
+    emaTrain = 0,
+    emaRead = 0,
+    emaRender = 0,
+    lastT = performance.now();
+
   async function tick() {
     if (!running) return;
     frame++;
 
+    const trainStart = performance.now();
     for (let d = 0; d < cfg.drawRate; d++) {
       let newPos: tf.Tensor2D | null = null;
       let newVel: tf.Tensor2D | null = null;
@@ -493,20 +520,46 @@ export function startLoop(
       newPos!.dispose();
       newVel!.dispose();
     }
+    const trainMs = performance.now() - trainStart;
 
+    let readMs = 0;
+    let renderMs = 0;
     if (gpuRenderer) {
       // Zero-copy path: positions/velocities never leave the GPU.
+      const r0 = performance.now();
       gpuRenderer.render(pos, vel, w, h, frame);
+      renderMs = performance.now() - r0;
     } else {
-      const posArr = pos.arraySync() as number[][];
+      const r0 = performance.now();
+      const posArr = pos.arraySync() as number[][]; // GPU->CPU readback (~free on cpu)
       const velArr = vel.arraySync() as number[][];
+      readMs = performance.now() - r0;
+      const r1 = performance.now();
       renderer.render(ctx, w, h, posArr, velArr, frame);
+      renderMs = performance.now() - r1;
+    }
+
+    const now = performance.now();
+    emaFrame = ema(emaFrame, now - lastT);
+    lastT = now;
+    emaTrain = ema(emaTrain, trainMs);
+    emaRead = ema(emaRead, readMs);
+    emaRender = ema(emaRender, renderMs);
+    if (frame % 6 === 0) {
+      tele.textContent =
+        `${cfg.name}\n` +
+        `backend  ${tf.getBackend()}   n=${cfg.particleCount}\n` +
+        `FPS      ${(1000 / emaFrame).toFixed(1)}  (${emaFrame.toFixed(1)} ms)\n` +
+        `train    ${emaTrain.toFixed(1)} ms  ×${cfg.drawRate}\n` +
+        `readback ${emaRead.toFixed(1)} ms\n` +
+        `render   ${emaRender.toFixed(1)} ms\n` +
+        `tensors  ${tf.memory().numTensors}`;
     }
 
     requestAnimationFrame(tick);
   }
 
-  initBackend().then(() => {
+  initBackend(cfg.gpu === true ? "webgl" : undefined).then(() => {
     // GpuPointRenderer.render() requires the 'webgl' backend (dataToGPU texture
     // path). initBackend() may resolve to 'webgpu'; if so, fail SAFE to Canvas2D
     // instead of hard-crashing. Fully enabling the GPU lane means forcing webgl
@@ -530,6 +583,7 @@ export function startLoop(
     running = false;
     renderer.destroy();
     if (gpuRenderer) gpuRenderer.destroy();
+    tele.remove();
     pos.dispose();
     vel.dispose();
     if (model) model.dispose();
