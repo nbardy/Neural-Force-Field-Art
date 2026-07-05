@@ -65,7 +65,7 @@ function App() {
             max={1}
             step={0.01}
             value={alpha}
-            onChange={(e) => {
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
               const v = parseFloat(e.target.value);
               setAlpha(v);
               // Mutate the live field directly — the render loop reads it next frame.

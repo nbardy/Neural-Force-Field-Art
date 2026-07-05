@@ -129,8 +129,8 @@ function makeScalarNet(hiddenUnits: number[]): tf.Sequential {
  * w.r.t. the net's weights (higher-order autodiff).
  */
 function scalarGradient(net: tf.Sequential, x: tf.Tensor2D): tf.Tensor2D {
-  const sumScalar = (xx: tf.Tensor2D): tf.Scalar =>
-    (net.predict(xx) as tf.Tensor).sum() as tf.Scalar;
+  const sumScalar = (xx: tf.Tensor): tf.Tensor =>
+    (net.predict(xx as tf.Tensor2D) as tf.Tensor).sum();
   return tf.grad(sumScalar)(x) as tf.Tensor2D;
 }
 

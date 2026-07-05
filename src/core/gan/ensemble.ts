@@ -107,13 +107,18 @@ export class PredictorEnsemble {
     let total = 0;
     for (let i = 0; i < this.k; i++) {
       const net = this.predictors[i];
+      // Restrict the update to THIS predictor's own weights so the separation
+      // promised in the class JSDoc is enforced structurally, not left to
+      // accidental tape-pruning (mirrors the generator's field-only varList).
+      const varList = net.trainableWeights.map((wv) => (wv as any).val);
       const cost = this.optimizers[i].minimize(
         () =>
           tf.tidy(() => {
             const pred = net.predict(pos) as tf.Tensor2D;
             return tf.losses.meanSquaredError(target, pred).asScalar();
           }),
-        true
+        true,
+        varList
       ) as tf.Scalar;
 
       total += cost.dataSync()[0];

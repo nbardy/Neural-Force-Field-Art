@@ -12,7 +12,7 @@
  * simple constraint — it is NOT told the answer directly.
  */
 import * as tf from "@tensorflow/tfjs";
-import { createRenderer, RendererType, Renderer } from "./renderers";
+import { createRenderer, RendererType } from "./renderers";
 import { ForceField, HelmholtzField } from "./core/field/helmholtz";
 import {
   isotropyLoss,
@@ -438,7 +438,12 @@ export function startLoop(
   // dataToGPU() texture is drawable. The instance itself is built after the
   // backend is ready (it reads tf.backend().gpgpu.gl).
   let gpuRenderer: GpuPointRenderer | null = null;
-  if (cfg.gpu === true) GpuPointRenderer.registerCanvasWithTf(canvas);
+  if (cfg.gpu === true) {
+    // The zero-copy renderer needs an UNPACKED WebGL float texture layout;
+    // tfjs's default 2x2 packing would scramble the texelFetch indexing.
+    tf.env().set("WEBGL_PACK", false);
+    GpuPointRenderer.registerCanvasWithTf(canvas);
+  }
 
   let pos = tf.randomUniform([cfg.particleCount, 2], 0, 1).mul(
     tf.tensor2d([[w, h]])
@@ -502,11 +507,20 @@ export function startLoop(
   }
 
   initBackend().then(() => {
-    if (cfg.gpu === true) {
+    // GpuPointRenderer.render() requires the 'webgl' backend (dataToGPU texture
+    // path). initBackend() may resolve to 'webgpu'; if so, fail SAFE to Canvas2D
+    // instead of hard-crashing. Fully enabling the GPU lane means forcing webgl
+    // (TODO: browser QA) — no shipped preset sets cfg.gpu, so this stays latent.
+    if (cfg.gpu === true && tf.getBackend() === "webgl") {
       gpuRenderer = new GpuPointRenderer(canvas, {
         pointSize: 2,
         background: cfg.backgroundColor,
       });
+    } else if (cfg.gpu === true) {
+      console.warn(
+        `[gpu] backend is '${tf.getBackend()}', not 'webgl'; using Canvas2D. ` +
+          `Force the webgl backend to enable the zero-copy renderer.`
+      );
     }
     console.log(`starting: ${cfg.name}`);
     tick();
