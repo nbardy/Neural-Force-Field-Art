@@ -23,6 +23,7 @@ import {
 // ready, but only used when a preset sets `gpu: true` (none do by default — it
 // needs browser QA). See src/render/gpuPoints.ts.
 import { GpuPointRenderer } from "./render/gpuPoints";
+import { GpuPointRendererWebGPU } from "./render/webgpu/points";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -413,6 +414,30 @@ function spiralPixelPoints(w: number, h: number, n = 600): number[][] {
 // ---------------------------------------------------------------------------
 // Main simulation loop
 // ---------------------------------------------------------------------------
+/** Full-screen "needs WebGPU" notice. There is NO Canvas2D/WebGL fallback — by
+ *  design (we're WebGPU-only). Shown when the browser has no WebGPU. */
+function showWebGPUWarning(): void {
+  document.documentElement.style.margin = "0";
+  document.body.style.margin = "0";
+  const o = document.createElement("div");
+  o.style.cssText =
+    "position:fixed;inset:0;z-index:10000;display:flex;align-items:center;" +
+    "justify-content:center;background:#05010f;color:#cbd5ff;text-align:center;" +
+    "font:16px/1.6 ui-monospace,monospace;padding:24px";
+  o.innerHTML =
+    '<div style="max-width:560px">' +
+    '<div style="font-size:44px;margin-bottom:12px">⚡</div>' +
+    '<div style="font-size:20px;margin-bottom:10px;color:#fff">This needs WebGPU</div>' +
+    '<div style="margin-bottom:16px;color:#94a0c8">Neural Force Field Art runs ' +
+    "entirely on the GPU (zero-copy tfjs → WebGPU). Your browser doesn't have " +
+    "WebGPU enabled.</div>" +
+    '<div><a href="https://caniuse.com/webgpu" target="_blank" ' +
+    'style="color:#8ab4ff">Go get WebGPU working →</a> ' +
+    '<span style="color:#5b6890">(Chrome / Edge / Safari 18+ / Firefox, latest)</span></div>' +
+    "</div>";
+  document.body.appendChild(o);
+}
+
 export function startLoop(
   canvas: HTMLCanvasElement,
   configIndex: number,
@@ -421,43 +446,21 @@ export function startLoop(
   let running = true;
   const cfg = GALLERY[configIndex];
 
+  // WebGPU-only — no Canvas2D/WebGL fallback (by design). Warn + bail if absent.
+  if (!GpuPointRendererWebGPU.isSupported()) {
+    showWebGPUWarning();
+    return () => {};
+  }
+
   const w = window.innerWidth;
   const h = window.innerHeight;
   canvas.width = w;
   canvas.height = h;
 
-  // Render path: GPU-resident (WebGL2 + tfjs dataToGPU, ZERO per-frame readback)
-  // by default; Canvas2D fallback. A canvas commits to ONE context type, so we
-  // decide up front: gl !== null => GPU path (ctx stays null), else Canvas2D.
-  // Full-screen, no scroll. (canvas is inline by default -> descender gap ->
-  // scrollbar; position:fixed + block + zeroed body margins fixes it.)
+  // Full-screen, no scroll (canvas is inline by default -> descender gap).
   canvas.style.cssText = "display:block;position:fixed;inset:0";
   document.documentElement.style.margin = "0";
   document.body.style.cssText = "margin:0;overflow:hidden;background:#000";
-
-  // Canvas2D (round dots) is the DEFAULT, verified path. The GPU-resident WebGL
-  // renderer is OPT-IN via ?gpu=1 (still needs real-browser QA). IMPORTANT: a
-  // canvas commits to ONE context type the first time getContext() succeeds, and
-  // registerCanvasWithTf() can commit the canvas to webgl2 and THEN throw — after
-  // which getContext('2d') returns null. So we only ever touch webgl2 when the
-  // user explicitly opts in; the default path never risks poisoning the canvas.
-  const gpuParam = new URLSearchParams(location.search).get("gpu");
-  // Default to the GPU-resident renderer WHEN safely supported. isSupported()
-  // probes WebGL2 on a THROWAWAY canvas and checks the tfjs API exists, so it
-  // can't poison this canvas. ?gpu=0 forces Canvas2D. If the GPU path later
-  // renders blank (a bug we can't verify headless), the tick() self-check below
-  // auto-reloads into ?gpu=0 — so a broken GPU path can never strand a black
-  // screen. gl !== null => GPU path (ctx stays null); else Canvas2D.
-  const wantGpu = gpuParam === "0" ? false : GpuPointRenderer.isSupported();
-  let gl: WebGL2RenderingContext | null = null;
-  if (wantGpu) {
-    try {
-      gl = GpuPointRenderer.registerCanvasWithTf(canvas);
-    } catch (_) {
-      gl = null;
-    }
-  }
-  const ctx = gl ? null : canvas.getContext("2d");
 
   // Either a ForceField (new path) or a sigmoid MLP (legacy). Exactly one is
   // constructed per preset; the other stays null and drives the dispatch in
@@ -476,9 +479,8 @@ export function startLoop(
 
   const optimizer = tf.train.adam(cfg.learningRate);
 
-  // Constructed after backend init (needs the ready webgl context). The canvas
-  // was already registered with tfjs above when gl !== null.
-  let gpuRenderer: GpuPointRenderer | null = null;
+  // WebGPU renderer, constructed after the webgpu backend is ready.
+  let renderer: GpuPointRendererWebGPU | null = null;
 
   let pos = tf.randomUniform([cfg.particleCount, 2], 0, 1).mul(
     tf.tensor2d([[w, h]])
@@ -487,10 +489,6 @@ export function startLoop(
   tf.keep(pos);
   tf.keep(vel);
 
-  const spiralPts = spiralPixelPoints(w, h);
-  const renderer = gl
-    ? null
-    : createRenderer(cfg.renderer, cfg, cfg.particleCount, spiralPts);
   let frame = 0;
 
   // --- Telemetry HUD: FPS + per-stage timing so the bottleneck is visible ----
@@ -560,55 +558,12 @@ export function startLoop(
     stepped[1].dispose();
     const simMs = performance.now() - simStart;
 
-    // (3) RENDER
+    // (3) RENDER — WebGPU, positions read straight from GPU memory (no readback).
     let renderMs = 0;
-    if (gpuRenderer) {
+    if (renderer) {
       const r0 = performance.now();
-      gpuRenderer.render(pos, vel, w, h, frame);
+      renderer.render(pos, vel, w, h, frame);
       renderMs = performance.now() - r0;
-    } else if (renderer && ctx) {
-      const r0 = performance.now();
-      const posArr = pos.arraySync() as number[][];
-      const velArr = vel.arraySync() as number[][];
-      renderer.render(ctx, w, h, posArr, velArr, frame);
-      renderMs = performance.now() - r0;
-    }
-
-    // GPU render self-check (once, at frame 60): if the GPU path produced a
-    // fully blank frame — a dataToGPU/shader bug that can't be verified in a
-    // headless sandbox — auto-fall back to Canvas2D by reloading with ?gpu=0, so
-    // a broken GPU path can never strand a black screen. sessionStorage guards
-    // against a reload loop.
-    if (gl && gpuRenderer && frame === 60) {
-      try {
-        if (!sessionStorage.getItem("nffa-gpu-fellback")) {
-          const sw = Math.min(256, w);
-          const sh = Math.min(256, h);
-          const px = new Uint8Array(sw * sh * 4);
-          gl.readPixels(
-            Math.floor((w - sw) / 2),
-            Math.floor((h - sh) / 2),
-            sw,
-            sh,
-            gl.RGBA,
-            gl.UNSIGNED_BYTE,
-            px
-          );
-          let lit = 0;
-          for (let i = 0; i < px.length; i += 4) {
-            if (px[i] > 40 || px[i + 1] > 40 || px[i + 2] > 60) lit++;
-          }
-          if (lit === 0) {
-            console.warn("[gpu] blank render — falling back to Canvas2D (?gpu=0)");
-            sessionStorage.setItem("nffa-gpu-fellback", "1");
-            const u = new URL(location.href);
-            u.searchParams.set("gpu", "0");
-            location.replace(u.toString());
-            return;
-          }
-          console.log("[gpu] render self-check OK");
-        }
-      } catch (_) {}
     }
 
     const now = performance.now();
@@ -631,32 +586,38 @@ export function startLoop(
     requestAnimationFrame(tick);
   }
 
-  initBackend(gl ? "webgl" : undefined).then(() => {
-    // GPU-resident path: build the renderer now that the webgl backend + context
-    // are ready. registerCanvasWithTf already bound our on-screen gl to tfjs, so
-    // dataToGPU() textures live in the same context we draw with (zero readback).
-    if (gl && tf.getBackend() === "webgl") {
-      gpuRenderer = new GpuPointRenderer(canvas, {
-        pointSize: (cfg as { pointSize?: number }).pointSize ?? 2,
-        background: cfg.backgroundColor,
-        alphaBlend: cfg.alphaBlend,
-      });
-    } else if (gl) {
-      console.error(
-        `[gpu] backend '${tf.getBackend()}' != webgl; a webgl canvas cannot ` +
-          `fall back to Canvas2D on the same element.`
-      );
+  (async () => {
+    // WebGPU backend so tfjs tensors live in GPUBuffers we can render from with
+    // zero copy (same GPUDevice). No fallback — warn and bail if it won't init.
+    try {
+      await tf.setBackend("webgpu");
+      await tf.ready();
+    } catch (e) {
+      console.error("[webgpu] backend init failed", e);
     }
-    console.log(
-      `starting: ${cfg.name} (backend ${tf.getBackend()}, ${gl ? "gpu" : "canvas2d"})`
-    );
+    if (!running) return;
+    if (tf.getBackend() !== "webgpu") {
+      showWebGPUWarning();
+      return;
+    }
+    try {
+      renderer = new GpuPointRendererWebGPU(canvas, {
+        pointSize: (cfg as { pointSize?: number }).pointSize ?? 2.5,
+        background: cfg.backgroundColor,
+        maxSpeed: cfg.maxVelocity,
+      });
+    } catch (e) {
+      console.error("[webgpu] renderer init failed", e);
+      showWebGPUWarning();
+      return;
+    }
+    console.log(`starting: ${cfg.name} (webgpu)`);
     tick();
-  });
+  })();
 
   return () => {
     running = false;
     if (renderer) renderer.destroy();
-    if (gpuRenderer) gpuRenderer.destroy();
     tele.remove();
     wh.dispose();
     pos.dispose();
