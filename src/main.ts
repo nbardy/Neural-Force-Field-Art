@@ -12,6 +12,10 @@
  * simple constraint — it is NOT told the answer directly.
  */
 import * as tf from "@tensorflow/tfjs";
+// Registers the 'webgpu' backend with tfjs. The @tensorflow/tfjs union package
+// ships only cpu + webgl backends; without this import tf.setBackend('webgpu')
+// throws "Backend name 'webgpu' not found in registry".
+import "@tensorflow/tfjs-backend-webgpu";
 import { createRenderer, RendererType } from "./renderers";
 import { ForceField, HelmholtzField } from "./core/field/helmholtz";
 import {
