@@ -265,9 +265,44 @@ export class GpuPointRenderer {
    *
    * @returns the WebGL2 context now owned by both tfjs and this renderer.
    */
+  /** tfjs 4.x exports setWebGLContext at top level (`tf.setWebGLContext`) via
+   *  `export * from '@tensorflow/tfjs-backend-webgl'`. Some builds also expose a
+   *  `tf.webgl` namespace. Resolve whichever exists (the old code assumed
+   *  `tf.webgl.setWebGLContext`, which is undefined in this build → it threw
+   *  AFTER getContext('webgl2') had already committed the canvas, poisoning it). */
+  private static resolveSetWebGLContext():
+    | ((v: number, gl: WebGLRenderingContext) => void)
+    | null {
+    const t = tf as any;
+    const fn = t.setWebGLContext || (t.webgl && t.webgl.setWebGLContext);
+    return typeof fn === "function" ? fn : null;
+  }
+
+  /**
+   * True iff the GPU path can be attempted WITHOUT risk of poisoning the real
+   * canvas: WebGL2 is creatable (probed on a THROWAWAY canvas) and tfjs exposes
+   * setWebGLContext. Call this before registerCanvasWithTf so a failed setup
+   * never commits — and thus never black-screens — the on-screen canvas.
+   */
+  static isSupported(): boolean {
+    try {
+      if (!GpuPointRenderer.resolveSetWebGLContext()) return false;
+      const probe = document.createElement("canvas").getContext("webgl2");
+      return !!probe;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static registerCanvasWithTf(
     canvas: HTMLCanvasElement
   ): WebGL2RenderingContext {
+    // Resolve the tfjs API FIRST, before touching the real canvas, so we never
+    // commit it to webgl2 and then throw (the original poisoning bug).
+    const setWebGLContext = GpuPointRenderer.resolveSetWebGLContext();
+    if (!setWebGLContext) {
+      throw new Error("GpuPointRenderer: tfjs setWebGLContext() not available");
+    }
     const gl = canvas.getContext("webgl2", {
       alpha: false, // opaque canvas: no page-composite premultiply headaches
       antialias: false, // AA comes from the frag dot, not MSAA
@@ -283,7 +318,7 @@ export class GpuPointRenderer {
     // Simple unpacked (stride-1) float textures so the shader can index densely.
     (tf as any).env().set("WEBGL_PACK", false);
     // Hand this exact context to tfjs so dataToGPU() textures live here.
-    (tf as any).webgl.setWebGLContext(2, gl);
+    setWebGLContext(2, gl);
     return gl;
   }
 

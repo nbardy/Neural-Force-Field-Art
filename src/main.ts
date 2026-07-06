@@ -442,7 +442,13 @@ export function startLoop(
   // which getContext('2d') returns null. So we only ever touch webgl2 when the
   // user explicitly opts in; the default path never risks poisoning the canvas.
   const gpuParam = new URLSearchParams(location.search).get("gpu");
-  const wantGpu = gpuParam === "1" || (gpuParam !== "0" && cfg.gpu === true);
+  // Default to the GPU-resident renderer WHEN safely supported. isSupported()
+  // probes WebGL2 on a THROWAWAY canvas and checks the tfjs API exists, so it
+  // can't poison this canvas. ?gpu=0 forces Canvas2D. If the GPU path later
+  // renders blank (a bug we can't verify headless), the tick() self-check below
+  // auto-reloads into ?gpu=0 — so a broken GPU path can never strand a black
+  // screen. gl !== null => GPU path (ctx stays null); else Canvas2D.
+  const wantGpu = gpuParam === "0" ? false : GpuPointRenderer.isSupported();
   let gl: WebGL2RenderingContext | null = null;
   if (wantGpu) {
     try {
@@ -566,6 +572,43 @@ export function startLoop(
       const velArr = vel.arraySync() as number[][];
       renderer.render(ctx, w, h, posArr, velArr, frame);
       renderMs = performance.now() - r0;
+    }
+
+    // GPU render self-check (once, at frame 60): if the GPU path produced a
+    // fully blank frame — a dataToGPU/shader bug that can't be verified in a
+    // headless sandbox — auto-fall back to Canvas2D by reloading with ?gpu=0, so
+    // a broken GPU path can never strand a black screen. sessionStorage guards
+    // against a reload loop.
+    if (gl && gpuRenderer && frame === 60) {
+      try {
+        if (!sessionStorage.getItem("nffa-gpu-fellback")) {
+          const sw = Math.min(256, w);
+          const sh = Math.min(256, h);
+          const px = new Uint8Array(sw * sh * 4);
+          gl.readPixels(
+            Math.floor((w - sw) / 2),
+            Math.floor((h - sh) / 2),
+            sw,
+            sh,
+            gl.RGBA,
+            gl.UNSIGNED_BYTE,
+            px
+          );
+          let lit = 0;
+          for (let i = 0; i < px.length; i += 4) {
+            if (px[i] > 40 || px[i + 1] > 40 || px[i + 2] > 60) lit++;
+          }
+          if (lit === 0) {
+            console.warn("[gpu] blank render — falling back to Canvas2D (?gpu=0)");
+            sessionStorage.setItem("nffa-gpu-fellback", "1");
+            const u = new URL(location.href);
+            u.searchParams.set("gpu", "0");
+            location.replace(u.toString());
+            return;
+          }
+          console.log("[gpu] render self-check OK");
+        }
+      } catch (_) {}
     }
 
     const now = performance.now();
