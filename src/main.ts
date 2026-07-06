@@ -217,16 +217,34 @@ function helmholtzChaosLoss(): ArtPieceConfig["computeLoss"] {
   const W_ISO = 1.0;
   const W_DIV = 0.5;
   const W_SPIRAL = 0.00002;
+  const HH = 1e-2; // finite-diff / jitter step (normalized coords)
   return (pos, w, h, ctx) =>
     tf.tidy(() => {
       const field = ctx!.field!;
       const force = ctx!.force!;
       const posNorm = pos.div(tf.tensor2d([[w, h]])) as tf.Tensor2D;
-      const fieldFn = (p: tf.Tensor2D): tf.Tensor2D => field.forces(p);
 
-      const chaos = chaosLoss(fieldFn, posNorm);
+      // PERF: evaluate the field just 3× — a shared centre f0 plus one +x and one
+      // +y neighbour — and reuse them for BOTH the chaos (Lyapunov) and the
+      // divergence terms. (Was 7 evals: chaos 2 + divergence 4 + physics 1, each
+      // = 2 MLP heads. On the dispatch-bound webgpu backend those tiny ops are
+      // the dominant cost of this piece; sharing the centre roughly halves it.)
+      const f0 = field.forces(posNorm);
+      const fx = field.forces(posNorm.add(tf.tensor2d([[HH, 0]])) as tf.Tensor2D);
+      const fy = field.forces(posNorm.add(tf.tensor2d([[0, HH]])) as tf.Tensor2D);
+
+      // chaos: local sensitivity — how much F changes for a small +x/+y nudge.
+      const sepx = fx.sub(f0).square().sum(1);
+      const sepy = fy.sub(f0).square().sum(1);
+      const sep = sepx.add(sepy).add(1e-12).sqrt().div(HH * 1.4142 + 1e-9);
+      const chaos = sep.add(1e-6).log().mean().neg();
+
+      // forward-difference divergence sharing the centre: ∂Fx/∂x + ∂Fy/∂y.
+      const dFxdx = fx.slice([0, 0], [-1, 1]).sub(f0.slice([0, 0], [-1, 1])).div(HH);
+      const dFydy = fy.slice([0, 1], [-1, 1]).sub(f0.slice([0, 1], [-1, 1])).div(HH);
+      const div = dFxdx.add(dFydy).square().mean();
+
       const iso = isotropyLoss(force);
-      const div = divergencePenalty(fieldFn, posNorm);
       const spiral = spiralLoss(pos, w, h);
 
       return chaos
@@ -455,13 +473,23 @@ function showWebGPUWarning(): void {
   document.body.appendChild(o);
 }
 
+export interface LoopHandle {
+  field: HelmholtzField | null;
+  getParticleCount(): number;
+  setParticleCount(n: number): void;
+  getSampleRate(): number;
+  setSampleRate(n: number): void;
+}
+
 export function startLoop(
   canvas: HTMLCanvasElement,
   configIndex: number,
-  onField?: (field: HelmholtzField | null) => void
+  onReady?: (handle: LoopHandle) => void
 ): () => void {
   let running = true;
   const cfg = GALLERY[configIndex];
+  let particleCount = cfg.particleCount; // rendered/advected particles (live)
+  let sampleRate = 256; // points the field trains on per frame (live)
 
   // WebGPU-only — no Canvas2D/WebGL fallback (by design). Warn + bail if absent.
   if (!GpuPointRendererWebGPU.isSupported()) {
@@ -513,8 +541,6 @@ export function startLoop(
   // forward-only (no gradient tape, no per-frame readback stall). This is what
   // kept the old build "real-time and fast" — the expensive autograd graph
   // never gates the render loop.
-  const TRAIN_BATCH = 256;
-
   async function tick() {
     if (!running || !optimizer || !pos || !vel || !wh) return;
     frame++;
@@ -526,10 +552,10 @@ export function startLoop(
     optimizer.minimize(
       () =>
         tf.tidy(() => {
-          const tp = tf.randomUniform([TRAIN_BATCH, 2], 0, 1).mul(
-            wh
+          const tp = tf.randomUniform([sampleRate, 2], 0, 1).mul(
+            wh!
           ) as tf.Tensor2D;
-          const tv = tf.zeros([TRAIN_BATCH, 2]) as tf.Tensor2D;
+          const tv = tf.zeros([sampleRate, 2]) as tf.Tensor2D;
           const r = physicsForward(tp, tv, model, field, cfg, w, h);
           return cfg.computeLoss(r.newPos, w, h, { force: r.force, field });
         }),
@@ -575,7 +601,7 @@ export function startLoop(
     if (frame % 6 === 0) {
       tele.textContent =
         `${cfg.name}\n` +
-        `backend ${tf.getBackend()}  render=${cfg.particleCount} train=${TRAIN_BATCH}\n` +
+        `backend ${tf.getBackend()}  render=${particleCount} train=${sampleRate}\n` +
         `FPS     ${(1000 / emaFrame).toFixed(1)}  (${emaFrame.toFixed(1)} ms)\n` +
         `learn   ${emaTrain.toFixed(1)} ms\n` +
         `advect  ${emaSim.toFixed(1)} ms\n` +
@@ -604,17 +630,41 @@ export function startLoop(
     // Backend is ready — NOW safe to build models/tensors.
     field = cfg.createField ? cfg.createField() : null;
     model = !field && cfg.createModel ? cfg.createModel() : null;
-    if (onField) onField(field ? (field as HelmholtzField) : null);
     varList = field ? field.trainableWeights : undefined;
     optimizer = tf.train.adam(cfg.learningRate);
-    pos = tf.randomUniform([cfg.particleCount, 2], 0, 1).mul(
+    pos = tf.randomUniform([particleCount, 2], 0, 1).mul(
       tf.tensor2d([[w, h]])
     ) as tf.Tensor2D;
-    vel = tf.zeros([cfg.particleCount, 2]) as tf.Tensor2D;
+    vel = tf.zeros([particleCount, 2]) as tf.Tensor2D;
     wh = tf.tensor2d([[w, h]]);
     tf.keep(pos);
     tf.keep(vel);
     tf.keep(wh);
+
+    // Live controls for the UI: particle count (resizes pos/vel) + sample rate.
+    if (onReady) {
+      onReady({
+        field: field ? (field as HelmholtzField) : null,
+        getParticleCount: () => particleCount,
+        setParticleCount: (n: number) => {
+          particleCount = Math.max(1, Math.round(n));
+          const oldP = pos;
+          const oldV = vel;
+          pos = tf.randomUniform([particleCount, 2], 0, 1).mul(
+            tf.tensor2d([[w, h]])
+          ) as tf.Tensor2D;
+          vel = tf.zeros([particleCount, 2]) as tf.Tensor2D;
+          tf.keep(pos);
+          tf.keep(vel);
+          if (oldP) oldP.dispose();
+          if (oldV) oldV.dispose();
+        },
+        getSampleRate: () => sampleRate,
+        setSampleRate: (n: number) => {
+          sampleRate = Math.max(1, Math.round(n));
+        },
+      });
+    }
 
     try {
       renderer = new GpuPointRendererWebGPU(canvas, {
@@ -635,6 +685,7 @@ export function startLoop(
     running = false;
     if (renderer) renderer.destroy();
     tele.remove();
+    if (optimizer) optimizer.dispose(); // frees Adam accumulators (leaked on tab switch)
     if (wh) wh.dispose();
     if (pos) pos.dispose();
     if (vel) vel.dispose();
