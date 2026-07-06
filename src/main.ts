@@ -29,6 +29,19 @@ import {
 import { GpuPointRenderer } from "./render/gpuPoints";
 import { GpuPointRendererWebGPU } from "./render/webgpu/points";
 
+// tfjs-backend-webgpu 4.10 calls adapter.requestAdapterInfo(), which current
+// Chrome removed in favour of the synchronous `adapter.info` property — without
+// this shim the webgpu backend fails to init ("requestAdapterInfo is not a
+// function"). Safe no-op where WebGPU is absent (GPUAdapter undefined).
+{
+  const GA = (globalThis as any).GPUAdapter;
+  if (GA && !GA.prototype.requestAdapterInfo) {
+    GA.prototype.requestAdapterInfo = function () {
+      return Promise.resolve((this as any).info ?? {});
+    };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -466,32 +479,17 @@ export function startLoop(
   document.documentElement.style.margin = "0";
   document.body.style.cssText = "margin:0;overflow:hidden;background:#000";
 
-  // Either a ForceField (new path) or a sigmoid MLP (legacy). Exactly one is
-  // constructed per preset; the other stays null and drives the dispatch in
-  // physicsForward and the optimizer varList below.
-  const field: ForceField | null = cfg.createField ? cfg.createField() : null;
-  const model: tf.Sequential | null =
-    !field && cfg.createModel ? cfg.createModel() : null;
-
-  // Hand the live field to the caller so a UI control can mutate `alpha`.
-  if (onField) onField(field ? (field as HelmholtzField) : null);
-
-  // When using a field, restrict the optimizer to the field's own weights.
-  const varList: tf.Variable[] | undefined = field
-    ? field.trainableWeights
-    : undefined;
-
-  const optimizer = tf.train.adam(cfg.learningRate);
-
-  // WebGPU renderer, constructed after the webgpu backend is ready.
+  // ALL tensor/model creation is DEFERRED to the async init below: tfjs throws
+  // if you build tensors/models before the highest-priority backend (webgpu)
+  // has finished initializing (needs await tf.ready()). Assigned there.
+  let field: ForceField | null = null;
+  let model: tf.Sequential | null = null;
+  let varList: tf.Variable[] | undefined = undefined;
+  let optimizer: tf.Optimizer | null = null;
+  let pos: tf.Tensor2D | null = null;
+  let vel: tf.Tensor2D | null = null;
+  let wh: tf.Tensor2D | null = null;
   let renderer: GpuPointRendererWebGPU | null = null;
-
-  let pos = tf.randomUniform([cfg.particleCount, 2], 0, 1).mul(
-    tf.tensor2d([[w, h]])
-  ) as tf.Tensor2D;
-  let vel = tf.zeros([cfg.particleCount, 2]) as tf.Tensor2D;
-  tf.keep(pos);
-  tf.keep(vel);
 
   let frame = 0;
 
@@ -516,11 +514,9 @@ export function startLoop(
   // kept the old build "real-time and fast" — the expensive autograd graph
   // never gates the render loop.
   const TRAIN_BATCH = 256;
-  const wh = tf.tensor2d([[w, h]]);
-  tf.keep(wh);
 
   async function tick() {
-    if (!running) return;
+    if (!running || !optimizer || !pos || !vel || !wh) return;
     frame++;
 
     // (1) LEARN — one gradient step on a SMALL random batch. This is the only
@@ -604,6 +600,22 @@ export function startLoop(
       showWebGPUWarning();
       return;
     }
+
+    // Backend is ready — NOW safe to build models/tensors.
+    field = cfg.createField ? cfg.createField() : null;
+    model = !field && cfg.createModel ? cfg.createModel() : null;
+    if (onField) onField(field ? (field as HelmholtzField) : null);
+    varList = field ? field.trainableWeights : undefined;
+    optimizer = tf.train.adam(cfg.learningRate);
+    pos = tf.randomUniform([cfg.particleCount, 2], 0, 1).mul(
+      tf.tensor2d([[w, h]])
+    ) as tf.Tensor2D;
+    vel = tf.zeros([cfg.particleCount, 2]) as tf.Tensor2D;
+    wh = tf.tensor2d([[w, h]]);
+    tf.keep(pos);
+    tf.keep(vel);
+    tf.keep(wh);
+
     try {
       renderer = new GpuPointRendererWebGPU(canvas, {
         pointSize: (cfg as { pointSize?: number }).pointSize ?? 2.5,
@@ -623,9 +635,9 @@ export function startLoop(
     running = false;
     if (renderer) renderer.destroy();
     tele.remove();
-    wh.dispose();
-    pos.dispose();
-    vel.dispose();
+    if (wh) wh.dispose();
+    if (pos) pos.dispose();
+    if (vel) vel.dispose();
     if (model) model.dispose();
     if (field) field.dispose();
   };
