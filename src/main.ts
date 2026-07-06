@@ -429,10 +429,20 @@ export function startLoop(
   // Render path: GPU-resident (WebGL2 + tfjs dataToGPU, ZERO per-frame readback)
   // by default; Canvas2D fallback. A canvas commits to ONE context type, so we
   // decide up front: gl !== null => GPU path (ctx stays null), else Canvas2D.
-  // `?gpu=0` forces the Canvas2D fallback (escape hatch if the WebGL renderer
-  // misbehaves on a given machine); otherwise GPU is the default.
+  // Full-screen, no scroll. (canvas is inline by default -> descender gap ->
+  // scrollbar; position:fixed + block + zeroed body margins fixes it.)
+  canvas.style.cssText = "display:block;position:fixed;inset:0";
+  document.documentElement.style.margin = "0";
+  document.body.style.cssText = "margin:0;overflow:hidden;background:#000";
+
+  // Canvas2D (round dots) is the DEFAULT, verified path. The GPU-resident WebGL
+  // renderer is OPT-IN via ?gpu=1 (still needs real-browser QA). IMPORTANT: a
+  // canvas commits to ONE context type the first time getContext() succeeds, and
+  // registerCanvasWithTf() can commit the canvas to webgl2 and THEN throw — after
+  // which getContext('2d') returns null. So we only ever touch webgl2 when the
+  // user explicitly opts in; the default path never risks poisoning the canvas.
   const gpuParam = new URLSearchParams(location.search).get("gpu");
-  const wantGpu = gpuParam === "0" ? false : cfg.gpu !== false;
+  const wantGpu = gpuParam === "1" || (gpuParam !== "0" && cfg.gpu === true);
   let gl: WebGL2RenderingContext | null = null;
   if (wantGpu) {
     try {
@@ -550,11 +560,11 @@ export function startLoop(
       const r0 = performance.now();
       gpuRenderer.render(pos, vel, w, h, frame);
       renderMs = performance.now() - r0;
-    } else {
+    } else if (renderer && ctx) {
       const r0 = performance.now();
       const posArr = pos.arraySync() as number[][];
       const velArr = vel.arraySync() as number[][];
-      renderer!.render(ctx!, w, h, posArr, velArr, frame);
+      renderer.render(ctx, w, h, posArr, velArr, frame);
       renderMs = performance.now() - r0;
     }
 
