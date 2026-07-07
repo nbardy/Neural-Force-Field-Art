@@ -4,3 +4,4 @@ node_modules
 yarn-error.log
 .parcel-cache
 dist_verify
+dist_deploy/
