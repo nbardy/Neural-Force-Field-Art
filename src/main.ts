@@ -229,9 +229,23 @@ function helmholtzChaosLoss(): ArtPieceConfig["computeLoss"] {
       // divergence terms. (Was 7 evals: chaos 2 + divergence 4 + physics 1, each
       // = 2 MLP heads. On the dispatch-bound webgpu backend those tiny ops are
       // the dominant cost of this piece; sharing the centre roughly halves it.)
-      const f0 = field.forces(posNorm);
-      const fx = field.forces(posNorm.add(tf.tensor2d([[HH, 0]])) as tf.Tensor2D);
-      const fy = field.forces(posNorm.add(tf.tensor2d([[0, HH]])) as tf.Tensor2D);
+      // SINGLE (sharded) forward: batch the 3 sample sets — centre, +x, +y —
+      // into one [3N,2] tensor so the field runs ONCE (1 set of GPU dispatches
+      // instead of 3), then slice. Same math, ~1/3 the dispatch overhead, still
+      // one backward pass over the whole graph (first-order autograd).
+      const N = posNorm.shape[0];
+      const allPos = tf.concat(
+        [
+          posNorm,
+          posNorm.add(tf.tensor2d([[HH, 0]])),
+          posNorm.add(tf.tensor2d([[0, HH]])),
+        ],
+        0
+      ) as tf.Tensor2D;
+      const allF = field.forces(allPos);
+      const f0 = allF.slice([0, 0], [N, -1]);
+      const fx = allF.slice([N, 0], [N, -1]);
+      const fy = allF.slice([2 * N, 0], [N, -1]);
 
       // chaos: local sensitivity — how much F changes for a small +x/+y nudge.
       const sepx = fx.sub(f0).square().sum(1);
@@ -647,17 +661,30 @@ export function startLoop(
         field: field ? (field as HelmholtzField) : null,
         getParticleCount: () => particleCount,
         setParticleCount: (n: number) => {
-          particleCount = Math.max(1, Math.round(n));
+          const nn = Math.max(1, Math.round(n));
+          if (nn === particleCount || !pos || !vel || !wh) return;
           const oldP = pos;
           const oldV = vel;
-          pos = tf.randomUniform([particleCount, 2], 0, 1).mul(
-            tf.tensor2d([[w, h]])
-          ) as tf.Tensor2D;
-          vel = tf.zeros([particleCount, 2]) as tf.Tensor2D;
+          // PRESERVE STATE: grow by APPENDING fresh random particles to the
+          // existing cloud; shrink by SLICING off the tail. The current pattern
+          // is kept — you're not resetting the sim, just resizing it.
+          if (nn > particleCount) {
+            const extra = nn - particleCount;
+            const ap = tf.randomUniform([extra, 2], 0, 1).mul(wh) as tf.Tensor2D;
+            const av = tf.zeros([extra, 2]) as tf.Tensor2D;
+            pos = tf.concat([oldP, ap], 0) as tf.Tensor2D;
+            vel = tf.concat([oldV, av], 0) as tf.Tensor2D;
+            ap.dispose();
+            av.dispose();
+          } else {
+            pos = oldP.slice([0, 0], [nn, -1]) as tf.Tensor2D;
+            vel = oldV.slice([0, 0], [nn, -1]) as tf.Tensor2D;
+          }
           tf.keep(pos);
           tf.keep(vel);
-          if (oldP) oldP.dispose();
-          if (oldV) oldV.dispose();
+          oldP.dispose();
+          oldV.dispose();
+          particleCount = nn;
         },
         getSampleRate: () => sampleRate,
         setSampleRate: (n: number) => {
