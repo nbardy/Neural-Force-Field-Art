@@ -68,6 +68,7 @@ const status: Status = {
 const canvas = document.getElementById("splat") as HTMLCanvasElement;
 const promptInput = document.getElementById("prompt") as HTMLInputElement;
 const optimizeBtn = document.getElementById("optimize") as HTMLButtonElement;
+const nudgeBtn = document.getElementById("nudge") as HTMLButtonElement;
 const resetBtn = document.getElementById("reset") as HTMLButtonElement;
 const readoutEl = document.getElementById("readout") as HTMLDivElement;
 const noticeEl = document.getElementById("notice") as HTMLDivElement;
@@ -228,9 +229,10 @@ async function encodePrompt(text: string): Promise<Float32Array> {
 let promptEmbed: Float32Array | null = null;
 let stepsSinceReadout = 0;
 let cosBusy = false;
+let nudgeBusy = false;
 
 async function updateCos(): Promise<void> {
-  if (!promptEmbed || cosBusy) return;
+  if (!promptEmbed || cosBusy || nudgeBusy) return;
   cosBusy = true;
   try {
     const emb = await opt.currentEmbedding();
@@ -309,11 +311,41 @@ async function onReset(): Promise<void> {
   renderReadout();
 }
 
+async function onNudge(): Promise<void> {
+  if (!status.ready || nudgeBusy) return;
+  nudgeBusy = true;
+  const resume = status.running;
+  status.running = false;
+  status.phase = "nudge";
+  nudgeBtn.disabled = true;
+  seed += 1;
+  renderReadout();
+  try {
+    await opt.nudge({ seed });
+    await opt.renderImage();
+    stepsSinceReadout = 0;
+    if (promptEmbed) {
+      const emb = await opt.currentEmbedding();
+      status.cos = cosine(emb, promptEmbed);
+    }
+    status.phase = resume && promptEmbed ? "run" : "idle";
+    status.running = resume && !!promptEmbed;
+    setNotice("");
+    renderReadout();
+  } catch (e: any) {
+    fail(`nudge failed: ${e?.message ?? e}`);
+  } finally {
+    nudgeBusy = false;
+    nudgeBtn.disabled = false;
+  }
+}
+
 // ── Boot ─────────────────────────────────────────────────────────────────────
 async function boot(): Promise<void> {
   if (!navigator.gpu) {
     fail("this page needs WebGPU (no navigator.gpu) — use Chrome/Edge with WebGPU enabled.");
     optimizeBtn.disabled = true;
+    nudgeBtn.disabled = true;
     resetBtn.disabled = true;
     return;
   }
@@ -334,13 +366,22 @@ async function boot(): Promise<void> {
   ctx.configure({ device, format: canvasFormat, alphaMode: "opaque" });
 
   status.phase = "weights";
-  readoutEl.textContent = "fetching CLIP vision weights (82 MB)…";
+  // Prod (GitHub Pages) fetches the packed weights from the HF Hub: GitHub
+  // release assets send no CORS header, HF does — same host the text model
+  // loads from (upload via tools/splat/upload_weights.py). Local dev uses the
+  // fast same-origin static server (tools/splat/serve.mjs) so iteration
+  // doesn't re-pull 82 MB over the network.
+  const isLocal = ["localhost", "127.0.0.1"].includes(location.hostname);
+  const MODEL_BASE = isLocal
+    ? "/models/mobileclip_s0/"
+    : "https://huggingface.co/Nbardy/nff-clip-splat-weights/resolve/main/";
+  readoutEl.textContent = `fetching CLIP vision weights (82 MB)${isLocal ? "" : " from HF"}…`;
   const [planRes, wRes] = await Promise.all([
-    fetch("/models/mobileclip_s0/plan_train.json"),
-    fetch("/models/mobileclip_s0/weights_train.bin"),
+    fetch(MODEL_BASE + "plan_train.json"),
+    fetch(MODEL_BASE + "weights_train.bin"),
   ]);
-  if (!planRes.ok) return fail(`plan_train.json fetch ${planRes.status} — is the static server serving the repo root? (node tools/splat/serve.mjs)`);
-  if (!wRes.ok) return fail(`weights_train.bin fetch ${wRes.status} — did you run compile_plan.py --train?`);
+  if (!planRes.ok) return fail(`plan_train.json fetch ${planRes.status} from ${MODEL_BASE}`);
+  if (!wRes.ok) return fail(`weights_train.bin fetch ${wRes.status} from ${MODEL_BASE}`);
   plan = (await planRes.json()) as TrainPlan;
   weights = new Float32Array(await wRes.arrayBuffer());
 
@@ -354,6 +395,7 @@ async function boot(): Promise<void> {
   status.ready = true;
   status.phase = "idle";
   optimizeBtn.disabled = false;
+  nudgeBtn.disabled = false;
   resetBtn.disabled = false;
   setNotice("");
   renderReadout();
@@ -361,6 +403,7 @@ async function boot(): Promise<void> {
 }
 
 optimizeBtn.addEventListener("click", () => void onOptimize());
+nudgeBtn.addEventListener("click", () => void onNudge());
 resetBtn.addEventListener("click", () => void onReset());
 promptInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") void onOptimize();

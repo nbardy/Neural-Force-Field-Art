@@ -7,3 +7,5 @@ dist_verify
 dist_deploy/
 dist_ship/
 models/
+.env
+.env.*
