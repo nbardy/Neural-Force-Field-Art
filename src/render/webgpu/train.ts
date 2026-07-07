@@ -20,6 +20,7 @@ import {
   trainPassAShader,
   trainPassBShader,
   scratchBytes,
+  TRAIN_WG,
   TRAIN_WG_B,
   MAX_BATCH,
 } from "./train_wgsl";
@@ -67,7 +68,15 @@ export class FusedTrainer {
   private readonly weightsShared: boolean;
 
   private readonly device: GPUDevice;
-  private readonly pipeA: GPUComputePipeline;
+  // Pass A is now THREE dispatches sharing one explicit bind-group layout:
+  // fwd (multi-workgroup forward + per-workgroup partial), finalize (combine
+  // partials → dC), bwd (multi-workgroup backward). This vectorizes the batch
+  // across the GPU instead of a single workgroup on one core.
+  private readonly pipeFwd: GPUComputePipeline;
+  private readonly pipeFinalize: GPUComputePipeline;
+  private readonly pipeBwd: GPUComputePipeline;
+  private readonly bglA: GPUBindGroupLayout;
+  private readonly partialsBuf: GPUBuffer;
   private readonly pipeB: GPUComputePipeline;
   private readonly batchBuf: GPUBuffer;
   private readonly scratchBuf: GPUBuffer;
@@ -106,15 +115,42 @@ export class FusedTrainer {
     this.batchCap = Math.min(opts.batchCap ?? MAX_BATCH, MAX_BATCH);
     this.kSteps = opts.kSteps ?? 1;
 
-    const mkPipe = (code: string) => {
-      const module = device.createShaderModule({ code });
-      return device.createComputePipeline({
-        layout: "auto",
-        compute: { module, entryPoint: "main" },
-      });
-    };
-    this.pipeA = mkPipe(trainPassAShader(layout, { kSteps: this.kSteps }));
-    this.pipeB = mkPipe(trainPassBShader(layout, { kSteps: this.kSteps }));
+    // Pass A: one module, three entry points (fwd/finalize/bwd), one EXPLICIT
+    // bind-group layout so all three share a single bind group (their `auto`
+    // layouts would differ — each uses a different subset of bindings).
+    const COMPUTE = 4; // GPUShaderStage.COMPUTE (literal — not shimmed in bun)
+    const ro = { type: "read-only-storage" as const };
+    const rw = { type: "storage" as const };
+    this.bglA = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: COMPUTE, buffer: { type: "uniform" as const } },
+        { binding: 1, visibility: COMPUTE, buffer: ro }, // weights
+        { binding: 2, visibility: COMPUTE, buffer: rw }, // batch
+        { binding: 3, visibility: COMPUTE, buffer: rw }, // scratch
+        { binding: 4, visibility: COMPUTE, buffer: rw }, // lossOut/dC
+        { binding: 5, visibility: COMPUTE, buffer: ro }, // partPos
+        { binding: 6, visibility: COMPUTE, buffer: ro }, // partVel
+        { binding: 7, visibility: COMPUTE, buffer: rw }, // partials
+      ],
+    });
+    const plA = device.createPipelineLayout({ bindGroupLayouts: [this.bglA] });
+    const moduleA = device.createShaderModule({
+      code: trainPassAShader(layout, { kSteps: this.kSteps }),
+    });
+    const mkA = (entryPoint: string) =>
+      device.createComputePipeline({ layout: plA, compute: { module: moduleA, entryPoint } });
+    this.pipeFwd = mkA("fwd");
+    this.pipeFinalize = mkA("finalize");
+    this.pipeBwd = mkA("bwd");
+    this.pipeB = device.createComputePipeline({
+      layout: "auto",
+      compute: {
+        module: device.createShaderModule({
+          code: trainPassBShader(layout, { kSteps: this.kSteps }),
+        }),
+        entryPoint: "main",
+      },
+    });
 
     const mkStorage = (bytes: number) =>
       device.createBuffer({
@@ -133,6 +169,8 @@ export class FusedTrainer {
     this.gradsBuf = mkStorage(layout.totalFloats * 4);
     this.adamM = mkStorage(layout.totalFloats * 4); // zero-init by spec
     this.adamV = mkStorage(layout.totalFloats * 4);
+    // one vec4 partial per fwd workgroup; ceil(batchCap / TRAIN_WG) of them.
+    this.partialsBuf = mkStorage(Math.ceil(this.batchCap / TRAIN_WG) * 16);
     this.uniA = device.createBuffer({
       size: 64,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -161,10 +199,11 @@ export class FusedTrainer {
   }
 
   private makeBindA(): GPUBindGroup {
-    // bindings 5/6 must always be bound (layout 'auto' sees them referenced);
-    // a dedicated dummy stands in until real particle buffers are provided.
+    // ONE bind group shared by fwd/finalize/bwd via the explicit bglA layout.
+    // bindings 5/6 must always be bound; a dedicated dummy stands in until real
+    // particle buffers are provided (must NOT alias batchBuf — usage conflict).
     return this.device.createBindGroup({
-      layout: this.pipeA.getBindGroupLayout(0),
+      layout: this.bglA,
       entries: [
         { binding: 0, resource: { buffer: this.uniA } },
         { binding: 1, resource: { buffer: this.weightsBuf } },
@@ -173,6 +212,7 @@ export class FusedTrainer {
         { binding: 4, resource: { buffer: this.lossBuf } },
         { binding: 5, resource: { buffer: this.partPos ?? this.partDummy } },
         { binding: 6, resource: { buffer: this.partVel ?? this.partDummy } },
+        { binding: 7, resource: { buffer: this.partialsBuf } },
       ],
     });
   }
@@ -206,7 +246,8 @@ export class FusedTrainer {
     this.device.queue.writeBuffer(this.batchBuf, 0, b as unknown as BufferSource);
   }
 
-  /** One fused training step: 2 dispatches, 1 submit. (Self-submitting — tests
+  /** One fused training step: 4 dispatches (fwd/finalize/bwd/adam), 1 submit.
+   *  (Self-submitting — tests
    *  and the tfjs-legacy path use this; the fused hot path uses encodeStep.) */
   step(phys: TrainPhysics, o: TrainStepOpts): void {
     const enc = this.device.createCommandEncoder();
@@ -262,6 +303,8 @@ export class FusedTrainer {
     uA[10] = source === "uploaded" ? 0 : source === "random" ? 1 : 2;
     uA[11] = this.kSteps; // informational — K is compiled into the WGSL
     uA[12] = Math.round(Math.max(0, Math.min(1, o.mixRandom ?? 0)) * o.n);
+    const wgA = Math.ceil(o.n / TRAIN_WG); // fwd/bwd workgroups this step
+    uA[13] = wgA;
     this.device.queue.writeBuffer(this.uniA, 0, this.uniAData);
 
     const fB = new Float32Array(this.uniBData);
@@ -275,15 +318,37 @@ export class FusedTrainer {
     uB[6] = o.n;
     this.device.queue.writeBuffer(this.uniB, 0, this.uniBData);
 
-    // @webgpu/types 0.1.30 predates the object-form timestampWrites; the live
-    // runtime uses it, so cast the descriptor (see gputime.ts).
-    const pa = encoder.beginComputePass(
-      (tsA ? { timestampWrites: tsA } : undefined) as GPUComputePassDescriptor
+    // PASS A = three dispatches sharing this.bindA: fwd (wgA workgroups —
+    // full GPU) → finalize (1 workgroup, combines partials) → bwd (wgA). The
+    // dispatch boundaries insert the barriers fwd→finalize→bwd need (bwd reads
+    // the batch-wide dC that finalize computes from all fwd partials).
+    // @webgpu/types 0.1.30 predates object-form timestampWrites; cast (gputime).
+    // Span the whole pass A: begin on fwd, end on bwd (like splat's decay→tone).
+    const fwdTs = tsA
+      ? { querySet: tsA.querySet, beginningOfPassWriteIndex: tsA.beginningOfPassWriteIndex }
+      : undefined;
+    const bwdTs = tsA
+      ? { querySet: tsA.querySet, endOfPassWriteIndex: tsA.endOfPassWriteIndex }
+      : undefined;
+    const pFwd = encoder.beginComputePass(
+      (fwdTs ? { timestampWrites: fwdTs } : undefined) as GPUComputePassDescriptor
     );
-    pa.setPipeline(this.pipeA);
-    pa.setBindGroup(0, this.bindA);
-    pa.dispatchWorkgroups(1); // ONE workgroup owns the batch (see train_wgsl)
-    pa.end();
+    pFwd.setPipeline(this.pipeFwd);
+    pFwd.setBindGroup(0, this.bindA);
+    pFwd.dispatchWorkgroups(wgA);
+    pFwd.end();
+    const pFin = encoder.beginComputePass();
+    pFin.setPipeline(this.pipeFinalize);
+    pFin.setBindGroup(0, this.bindA);
+    pFin.dispatchWorkgroups(1);
+    pFin.end();
+    const pBwd = encoder.beginComputePass(
+      (bwdTs ? { timestampWrites: bwdTs } : undefined) as GPUComputePassDescriptor
+    );
+    pBwd.setPipeline(this.pipeBwd);
+    pBwd.setBindGroup(0, this.bindA);
+    pBwd.dispatchWorkgroups(wgA);
+    pBwd.end();
     const pb = encoder.beginComputePass(
       (tsB ? { timestampWrites: tsB } : undefined) as GPUComputePassDescriptor
     );

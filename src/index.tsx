@@ -99,7 +99,7 @@ function App() {
         <input
           type="range"
           min={16}
-          max={1024}
+          max={4096}
           step={16}
           value={samples}
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
