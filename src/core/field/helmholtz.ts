@@ -85,6 +85,15 @@ export interface HelmholtzFieldConfig {
   alpha: number;
   /** Hidden layer widths for BOTH vector heads. Default `[32, 32]`. */
   hiddenUnits?: number[];
+  /**
+   * Multi-species class count C (default 0 = classless). When C > 0 the
+   * CHAOS head `r` takes `[pos, onehot(class)]` (2+C inputs) while the order
+   * head `g` stays class-blind. Class-aware fields are FUSED-KERNEL-ONLY:
+   * {@link forces} throws, because the tfjs path has no class to feed —
+   * training and advection both run in the WGSL kernels (which derive class
+   * from the particle index hash).
+   */
+  classes?: number;
 }
 
 /**
@@ -97,11 +106,11 @@ export interface HelmholtzFieldConfig {
  * component so the raw force magnitude matches the old grad/curl scale and
  * existing `forceMagnitude` configs still read correctly.
  */
-function makeVectorNet(hiddenUnits: number[]): tf.Sequential {
+function makeVectorNet(hiddenUnits: number[], inputDim = 2): tf.Sequential {
   const net = tf.sequential();
   hiddenUnits.forEach((units, i) => {
     const cfg: any = { units, activation: "selu" };
-    if (i === 0) cfg.inputShape = [2];
+    if (i === 0) cfg.inputShape = [inputDim];
     net.add(tf.layers.dense(cfg));
   });
   net.add(tf.layers.dense({ units: 2, activation: "tanh" }));
@@ -120,6 +129,8 @@ function makeVectorNet(hiddenUnits: number[]): tf.Sequential {
 export class HelmholtzField implements ForceField {
   /** Order↔chaos slider in `[0,1]`; mutate freely at runtime. */
   alpha: number;
+  /** Multi-species class count (0 = classless). Immutable. */
+  readonly classes: number;
 
   /** Order lane: R^2 -> R^2 direct "gradient / attracting" vector. */
   private readonly g: tf.Sequential;
@@ -128,10 +139,11 @@ export class HelmholtzField implements ForceField {
 
   private readonly weights: tf.Variable[];
 
-  constructor({ alpha, hiddenUnits = [32, 32] }: HelmholtzFieldConfig) {
+  constructor({ alpha, hiddenUnits = [32, 32], classes = 0 }: HelmholtzFieldConfig) {
     this.alpha = alpha;
-    this.g = makeVectorNet(hiddenUnits);
-    this.r = makeVectorNet(hiddenUnits);
+    this.classes = classes;
+    this.g = makeVectorNet(hiddenUnits, 2);
+    this.r = makeVectorNet(hiddenUnits, 2 + classes);
 
     // LayerVariable.val is the underlying tf.Variable (protected in the
     // typings). We expose the real Variables so the integrator can hand
@@ -146,6 +158,15 @@ export class HelmholtzField implements ForceField {
   }
 
   /**
+   * The two vector heads `[g, r]` — read-only structural access so the fused
+   * advect kernel (src/render/webgpu/advect.ts) can generate WGSL matching
+   * the live architecture instead of hardcoding dims.
+   */
+  get heads(): [tf.Sequential, tf.Sequential] {
+    return [this.g, this.r];
+  }
+
+  /**
    * Raw force vectors `[N,2]` at the given normalized positions `[N,2]`.
    *
    *   g       = order  lane vector (attracting)  — head `g`
@@ -157,6 +178,13 @@ export class HelmholtzField implements ForceField {
    * `tf.tidy` to free intermediates; the tape retains what backprop needs.
    */
   forces(posNorm: tf.Tensor2D): tf.Tensor2D {
+    if (this.classes > 0) {
+      throw new Error(
+        "HelmholtzField.forces: class-aware fields are fused-kernel-only " +
+          "(the tfjs path has no class input) — do not use ?train=tfjs with " +
+          "a classes>0 piece."
+      );
+    }
     return tf.tidy(() => {
       const gVec = this.g.predict(posNorm) as tf.Tensor2D; // order lane [N,2]
       const rVec = this.r.predict(posNorm) as tf.Tensor2D; // chaos lane [N,2]

@@ -28,6 +28,8 @@ import {
 // needs browser QA). See src/render/gpuPoints.ts.
 import { GpuPointRenderer } from "./render/gpuPoints";
 import { GpuPointRendererWebGPU } from "./render/webgpu/points";
+import { AdvectKernel } from "./render/webgpu/advect";
+import { FusedTrainer } from "./render/webgpu/train";
 
 // tfjs-backend-webgpu 4.10 calls adapter.requestAdapterInfo(), which current
 // Chrome removed in favour of the synchronous `adapter.info` property — without
@@ -354,8 +356,10 @@ export const GALLERY: ArtPieceConfig[] = [
     // Helmholtz-decomposed field driven by a GAN-style chaos objective. The
     // alpha slider (see index.tsx) slides the field between order (∇φ) and
     // chaos (curl ψ) live; alpha starts biased toward mixing.
+    // particleCount is 200k (slider to 1M): advection is a single fused WGSL
+    // dispatch (see render/webgpu/advect.ts), so count no longer gates FPS.
     name: "Helmholtz · Chaos",
-    particleCount: 1200,
+    particleCount: 200000,
     friction: 0.99,
     forceMagnitude: 3.5,
     maxVelocity: 26,
@@ -366,6 +370,26 @@ export const GALLERY: ArtPieceConfig[] = [
     alphaBlend: 0.05,
     renderer: "alpha-fade",
     createField: () => new HelmholtzField({ alpha: 0.7 }),
+    computeLoss: helmholtzChaosLoss(),
+  },
+  {
+    // MULTI-SPECIES: 3 particle classes. The chaos lane r(pos, onehot(class))
+    // mixes each species differently; the order lane g(pos) and the isotropy
+    // pressure are class-blind. Class = hash of particle index (stable,
+    // storage-free); renderer colours by species. FUSED-ONLY (tfjs has no
+    // class input — ?train=tfjs is ignored for this piece).
+    name: "Helmholtz · Species",
+    particleCount: 200000,
+    friction: 0.99,
+    forceMagnitude: 3.5,
+    maxVelocity: 26,
+    resetRate: 0.01,
+    drawRate: 2,
+    learningRate: 0.01,
+    backgroundColor: [4, 2, 16],
+    alphaBlend: 0.05,
+    renderer: "alpha-fade",
+    createField: () => new HelmholtzField({ alpha: 0.7, classes: 3 }),
     computeLoss: helmholtzChaosLoss(),
   },
 ];
@@ -406,36 +430,10 @@ function physicsForward(
   return { newPos: wrappedPos, newVel: clippedVel, force: forces };
 }
 
-// ---------------------------------------------------------------------------
-// Random reset — respawn fraction of particles at random positions
-// ---------------------------------------------------------------------------
-function randomReset(
-  pos: tf.Tensor2D,
-  vel: tf.Tensor2D,
-  rate: number,
-  w: number,
-  h: number
-): { pos: tf.Tensor2D; vel: tf.Tensor2D } {
-  return tf.tidy(() => {
-    const n = pos.shape[0];
-    const keep = tf.less(tf.randomUniform([n, 1]), tf.scalar(1 - rate));
-
-    const rx = tf.randomUniform([n, 1], 0, w);
-    const ry = tf.randomUniform([n, 1], 0, h);
-
-    const posX = pos.slice([0, 0], [-1, 1]);
-    const posY = pos.slice([0, 1], [-1, 1]);
-
-    const newX = tf.where(keep, posX, rx);
-    const newY = tf.where(keep, posY, ry);
-    const newPos = newX.concat(newY, 1) as tf.Tensor2D;
-
-    const zeroVel = tf.zeros([n, 2]);
-    const newVel = tf.where(keep.tile([1, 2]), vel, zeroVel) as tf.Tensor2D;
-
-    return { pos: newPos, vel: newVel };
-  }) as { pos: tf.Tensor2D; vel: tf.Tensor2D };
-}
+// Random reset now lives INSIDE the fused advect kernel (PCG hash per
+// particle+frame) — see src/render/webgpu/advect_wgsl.ts. The old tfjs
+// randomReset (~10 dispatches/frame) is gone with the rest of the tfjs
+// advect stage.
 
 // Renderer is now in src/renderers.ts — three implementations:
 //   "alpha-fade"   — dual-buffer ghost trails (fast, hardware-composited)
@@ -492,6 +490,10 @@ export interface LoopHandle {
   setParticleCount(n: number): void;
   getSampleRate(): number;
   setSampleRate(n: number): void;
+  /** Live respawn fraction — with particle-sourced training this is also the
+   *  exploration dial (resets feed fresh uniform states into the batch). */
+  getResetRate(): number;
+  setResetRate(r: number): void;
 }
 
 export function startLoop(
@@ -503,6 +505,26 @@ export function startLoop(
   const cfg = GALLERY[configIndex];
   let particleCount = cfg.particleCount; // rendered/advected particles (live)
   let sampleRate = 256; // points the field trains on per frame (live)
+  let resetRate = cfg.resetRate; // respawn fraction (live — see setResetRate)
+  // `?window=K` (1..16): trajectory-window training — sets BOTH rollout=K and
+  // trainEvery=K. tools/window_test.ts proves the K-step imagined rollout from
+  // live particle states IS the next K real frames (maxΔ ≈ 6e-5 px at K=6), so
+  // this is true window training with zero recording machinery. 0 = not set.
+  const windowK = Math.max(
+    0,
+    Math.min(
+      16,
+      parseInt(new URLSearchParams(location.search).get("window") ?? "0", 10) || 0
+    )
+  );
+  // `?trainEvery=N` (default 1): run the fused train step every Nth frame.
+  const trainEvery =
+    windowK > 0
+      ? windowK
+      : Math.max(
+          1,
+          parseInt(new URLSearchParams(location.search).get("trainEvery") ?? "1", 10) || 1
+        );
 
   // WebGPU-only — no Canvas2D/WebGL fallback (by design). Warn + bail if absent.
   if (!GpuPointRendererWebGPU.isSupported()) {
@@ -527,8 +549,18 @@ export function startLoop(
   let model: tf.Sequential | null = null;
   let varList: tf.Variable[] | undefined = undefined;
   let optimizer: tf.Optimizer | null = null;
-  let pos: tf.Tensor2D | null = null;
-  let vel: tf.Tensor2D | null = null;
+  // Particle state lives in the fused kernel's GPUBuffers, NOT tfjs tensors —
+  // training samples random points, so tfjs never touches the particles.
+  let advect: AdvectKernel | null = null;
+  // Fused trainer (field pieces): analytic backward + Adam in 2 WGSL
+  // dispatches, updating the advect kernel's weights buffer IN PLACE — the
+  // whole hot path is then GPU-only, tfjs idle. Gradients verified against
+  // tfjs autograd (cos=1.0000000) by tools/train_test.ts. `?train=tfjs`
+  // falls back to the tfjs optimizer path for A/B comparison.
+  let trainer: FusedTrainer | null = null;
+  let trainSource: "particles" | "random" = "particles";
+  let mixRandom = 0;
+  let hudLoss = NaN;
   let wh: tf.Tensor2D | null = null;
   let renderer: GpuPointRendererWebGPU | null = null;
 
@@ -545,63 +577,84 @@ export function startLoop(
     prev === 0 ? x : prev * (1 - a) + x * a;
   let emaFrame = 0,
     emaTrain = 0,
-    emaSim = 0,
     emaRender = 0,
     lastT = performance.now();
 
   // Learning is DECOUPLED from motion: we train the field on a small random
-  // batch each frame (real-time, cheap) and advect ALL visible particles
-  // forward-only (no gradient tape, no per-frame readback stall). This is what
-  // kept the old build "real-time and fast" — the expensive autograd graph
-  // never gates the render loop.
+  // batch each frame (real-time, cheap) while the FUSED WGSL KERNEL advects
+  // ALL particles in ONE compute dispatch (MLP forward + integrate + clip +
+  // wrap + random reset — was ~40 tfjs dispatches). Weights flow tfjs→kernel
+  // as ~10KB of GPU→GPU copies per frame; particle state never touches tfjs,
+  // so particle count scales to 1M+ without touching the train cost.
   async function tick() {
-    if (!running || !optimizer || !pos || !vel || !wh) return;
+    if (!running || !(optimizer || trainer) || !advect || !wh) return;
     frame++;
 
-    // (1) LEARN — one gradient step on a SMALL random batch. This is the only
-    //     place the second-order autograd graph runs; it's tiny and does not
-    //     block the motion below.
+    // (1) LEARN — one gradient step on a SMALL random batch.
+    //     Fused path (field pieces): 2 WGSL dispatches (analytic backward +
+    //     Adam) writing the shared weights buffer in place — no tfjs, no
+    //     readback; trainMs is just CPU encode time.
+    //     tfjs path (legacy MLP pieces / ?train=tfjs): optimizer.minimize.
     const trainStart = performance.now();
-    optimizer.minimize(
-      () =>
-        tf.tidy(() => {
-          const tp = tf.randomUniform([sampleRate, 2], 0, 1).mul(
-            wh!
-          ) as tf.Tensor2D;
-          const tv = tf.zeros([sampleRate, 2]) as tf.Tensor2D;
-          const r = physicsForward(tp, tv, model, field, cfg, w, h);
-          return cfg.computeLoss(r.newPos, w, h, { force: r.force, field });
-        }),
-      false,
-      varList
-    );
+    if (trainer && frame % trainEvery !== 0) {
+      // `?trainEvery=N`: amortize training — the rollout batch is an imagined
+      // trajectory, so skipping frames loses nothing but update frequency.
+    } else if (trainer) {
+      trainer.step(
+        {
+          width: w,
+          height: h,
+          forceMagnitude: cfg.forceMagnitude,
+          friction: cfg.friction,
+          maxVelocity: cfg.maxVelocity,
+        },
+        {
+          n: sampleRate,
+          alpha: (field as HelmholtzField).alpha,
+          lr: cfg.learningRate,
+          seed: frame,
+          source: trainSource,
+          mixRandom,
+        }
+      );
+      if (frame % 30 === 0) {
+        trainer
+          .readLoss()
+          .then((l) => (hudLoss = l.loss))
+          .catch(() => {});
+      }
+    } else {
+      optimizer!.minimize(
+        () =>
+          tf.tidy(() => {
+            const tp = tf.randomUniform([sampleRate, 2], 0, 1).mul(
+              wh!
+            ) as tf.Tensor2D;
+            const tv = tf.zeros([sampleRate, 2]) as tf.Tensor2D;
+            const r = physicsForward(tp, tv, model, field, cfg, w, h);
+            return cfg.computeLoss(r.newPos, w, h, { force: r.force, field });
+          }),
+        false,
+        varList
+      );
+    }
     const trainMs = performance.now() - trainStart;
 
-    // (2) ADVECT — move ALL visible particles forward-only (NO gradient tape).
-    //     Cheap enough to render many points every frame.
-    const simStart = performance.now();
-    const stepped = tf.tidy(() => {
-      const r = physicsForward(pos, vel, model, field, cfg, w, h);
-      return [r.newPos, r.newVel] as [tf.Tensor2D, tf.Tensor2D];
-    });
-    const oldPos = pos;
-    const oldVel = vel;
-    const reset = randomReset(stepped[0], stepped[1], cfg.resetRate, w, h);
-    pos = reset.pos;
-    vel = reset.vel;
-    tf.keep(pos);
-    tf.keep(vel);
-    oldPos.dispose();
-    oldVel.dispose();
-    stepped[0].dispose();
-    stepped[1].dispose();
-    const simMs = performance.now() - simStart;
+    // (2) ADVECT — ONE fused dispatch over ALL particles (async on the GPU;
+    //     CPU cost here is just encoding, so no HUD line for it).
+    advect.step(frame, field ? (field as HelmholtzField).alpha : 0);
 
-    // (3) RENDER — WebGPU, positions read straight from GPU memory (no readback).
+    // (3) RENDER — dots drawn straight from the kernel's particle buffers.
     let renderMs = 0;
     if (renderer) {
       const r0 = performance.now();
-      renderer.render(pos, vel, w, h, frame);
+      renderer.renderFromBuffers(
+        advect.posBuffer,
+        advect.velBuffer,
+        advect.count,
+        w,
+        h
+      );
       renderMs = performance.now() - r0;
     }
 
@@ -609,15 +662,15 @@ export function startLoop(
     emaFrame = ema(emaFrame, now - lastT);
     lastT = now;
     emaTrain = ema(emaTrain, trainMs);
-    emaSim = ema(emaSim, simMs);
     emaRender = ema(emaRender, renderMs);
     if (frame % 6 === 0) {
       tele.textContent =
         `${cfg.name}\n` +
         `backend ${tf.getBackend()}  render=${particleCount} train=${sampleRate}\n` +
         `FPS     ${(1000 / emaFrame).toFixed(1)}  (${emaFrame.toFixed(1)} ms)\n` +
-        `learn   ${emaTrain.toFixed(1)} ms\n` +
-        `advect  ${emaSim.toFixed(1)} ms\n` +
+        `learn   ${emaTrain.toFixed(1)} ms${
+          trainer ? `  (fused)  loss ${hudLoss.toFixed(3)}` : ""
+        }\n` +
         `render  ${emaRender.toFixed(1)} ms\n` +
         `tensors ${tf.memory().numTensors}`;
     }
@@ -640,50 +693,120 @@ export function startLoop(
       return;
     }
 
+    // `?handoff=N`: override tfjs's small-tensor CPU forwarding threshold
+    // (WEBGPU_CPU_HANDOFF_SIZE_THRESHOLD; 0 = force every op onto the GPU).
+    // Only affects the tfjs learn path (legacy pieces / ?train=tfjs) — pair
+    // with the HUD's learn line to A/B it on real hardware.
+    const handoff = new URLSearchParams(location.search).get("handoff");
+    if (handoff !== null) {
+      tf.env().set("WEBGPU_CPU_HANDOFF_SIZE_THRESHOLD", parseInt(handoff, 10) || 0);
+      console.log(`[tfjs] CPU handoff threshold -> ${parseInt(handoff, 10) || 0}`);
+    }
+
     // Backend is ready — NOW safe to build models/tensors.
     field = cfg.createField ? cfg.createField() : null;
     model = !field && cfg.createModel ? cfg.createModel() : null;
     varList = field ? field.trainableWeights : undefined;
     optimizer = tf.train.adam(cfg.learningRate);
-    pos = tf.randomUniform([particleCount, 2], 0, 1).mul(
-      tf.tensor2d([[w, h]])
-    ) as tf.Tensor2D;
-    vel = tf.zeros([particleCount, 2]) as tf.Tensor2D;
     wh = tf.tensor2d([[w, h]]);
-    tf.keep(pos);
-    tf.keep(vel);
     tf.keep(wh);
 
-    // Live controls for the UI: particle count (resizes pos/vel) + sample rate.
+    // Fused advect kernel: WGSL is GENERATED from the live model's layer dims
+    // (see advect_wgsl.ts) — works for both the field and legacy MLP pieces.
+    // Owns pos/vel as raw GPUBuffers; construction throws loudly on any
+    // unsupported architecture instead of silently falling back.
+    const physics = {
+      width: w,
+      height: h,
+      forceMagnitude: cfg.forceMagnitude,
+      friction: cfg.friction,
+      maxVelocity: cfg.maxVelocity,
+      resetRate: cfg.resetRate,
+    };
+    advect = field
+      ? AdvectKernel.fromField(field as HelmholtzField, physics, particleCount)
+      : AdvectKernel.fromModel(model!, physics, particleCount);
+
+    // Field pieces train FUSED by default: the trainer co-owns the advect
+    // kernel's weights buffer and Adam-updates it in place — weights never
+    // leave the GPU. tfjs remains only as the (idle) blueprint. Legacy MLP
+    // pieces keep the tfjs optimizer (their losses aren't in the kernel yet).
+    let wantTfjsTrainer =
+      new URLSearchParams(location.search).get("train") === "tfjs";
+    const fieldClasses = field ? (field as HelmholtzField).classes ?? 0 : 0;
+    if (wantTfjsTrainer && fieldClasses > 0) {
+      console.warn(
+        "[train] ?train=tfjs ignored: class-aware fields are fused-only " +
+          "(tfjs has no class input)"
+      );
+      wantTfjsTrainer = false;
+    }
+    if (field && !wantTfjsTrainer) {
+      const device = (tf.backend() as unknown as { device: GPUDevice }).device;
+      // `?rollout=K` (1..16, default 1): K-step BPTT rollout — the loss sees
+      // how particles FLOW through the field (evolving pos+vel), not just one
+      // step. K is compiled into the trainer's WGSL. K=1 ≡ the tfjs loss.
+      // `?window=K` overrides this (and trainEvery) — see windowK above.
+      const rollout =
+        windowK > 0
+          ? windowK
+          : Math.max(
+              1,
+              Math.min(
+                16,
+                parseInt(new URLSearchParams(location.search).get("rollout") ?? "1", 10) || 1
+              )
+            );
+      // Training states come from the LIVE PARTICLE CLOUD by default: real
+      // positions AND velocities, denser where the attractors are (that's
+      // where the art lives). Coverage/exploration is the reset slider's job —
+      // resets continuously inject fresh uniform vel-0 states into the cloud,
+      // hence into the batch. `?batch=random` restores the old uniform source.
+      if (new URLSearchParams(location.search).get("batch") === "random") {
+        trainSource = "random";
+      }
+      // `?mix=F` (0..1): coverage floor — fraction of the particle-sourced
+      // batch replaced by fresh uniform random points each step.
+      mixRandom = Math.max(
+        0,
+        Math.min(
+          1,
+          parseFloat(new URLSearchParams(location.search).get("mix") ?? "0") || 0
+        )
+      );
+      trainer = new FusedTrainer(device, advect.layout, {
+        weightsBuffer: advect.weightsBuffer,
+        batchCap: 1024,
+        kSteps: rollout,
+      });
+      trainer.uploadWeights(advect.packCurrentWeights());
+      trainer.setParticleBuffers(advect.posBuffer, advect.velBuffer, advect.count);
+      advect.syncFromTfjs = false;
+      console.log(
+        `[train] fused trainer active (2 dispatches/step, tfjs idle, ` +
+        `batch=${trainSource}, rollout=${rollout})`
+      );
+    }
+
+    // Live controls for the UI: particle count (resizes kernel buffers,
+    // preserving state — grow appends, shrink slices) + sample rate.
     if (onReady) {
       onReady({
         field: field ? (field as HelmholtzField) : null,
         getParticleCount: () => particleCount,
         setParticleCount: (n: number) => {
-          const nn = Math.max(1, Math.round(n));
-          if (nn === particleCount || !pos || !vel || !wh) return;
-          const oldP = pos;
-          const oldV = vel;
-          // PRESERVE STATE: grow by APPENDING fresh random particles to the
-          // existing cloud; shrink by SLICING off the tail. The current pattern
-          // is kept — you're not resetting the sim, just resizing it.
-          if (nn > particleCount) {
-            const extra = nn - particleCount;
-            const ap = tf.randomUniform([extra, 2], 0, 1).mul(wh) as tf.Tensor2D;
-            const av = tf.zeros([extra, 2]) as tf.Tensor2D;
-            pos = tf.concat([oldP, ap], 0) as tf.Tensor2D;
-            vel = tf.concat([oldV, av], 0) as tf.Tensor2D;
-            ap.dispose();
-            av.dispose();
-          } else {
-            pos = oldP.slice([0, 0], [nn, -1]) as tf.Tensor2D;
-            vel = oldV.slice([0, 0], [nn, -1]) as tf.Tensor2D;
+          if (!advect) return;
+          advect.setParticleCount(n);
+          particleCount = advect.count;
+          // resize replaces the pos/vel buffers — refresh the trainer's view
+          if (trainer) {
+            trainer.setParticleBuffers(advect.posBuffer, advect.velBuffer, advect.count);
           }
-          tf.keep(pos);
-          tf.keep(vel);
-          oldP.dispose();
-          oldV.dispose();
-          particleCount = nn;
+        },
+        getResetRate: () => resetRate,
+        setResetRate: (r: number) => {
+          resetRate = Math.max(0, Math.min(0.2, r));
+          if (advect) advect.setResetRate(resetRate);
         },
         getSampleRate: () => sampleRate,
         setSampleRate: (n: number) => {
@@ -697,6 +820,7 @@ export function startLoop(
         pointSize: (cfg as { pointSize?: number }).pointSize ?? 2.5,
         background: cfg.backgroundColor,
         maxSpeed: cfg.maxVelocity,
+        classes: field ? (field as HelmholtzField).classes ?? 0 : 0,
       });
     } catch (e) {
       console.error("[webgpu] renderer init failed", e);
@@ -713,8 +837,8 @@ export function startLoop(
     tele.remove();
     if (optimizer) optimizer.dispose(); // frees Adam accumulators (leaked on tab switch)
     if (wh) wh.dispose();
-    if (pos) pos.dispose();
-    if (vel) vel.dispose();
+    if (trainer) trainer.destroy(); // batch/scratch/grads/adam GPUBuffers
+    if (advect) advect.destroy(); // pos/vel/weights GPUBuffers
     if (model) model.dispose();
     if (field) field.dispose();
   };

@@ -8,6 +8,19 @@ if (!container) throw new Error("Container not found");
 const root = createRoot(container);
 root.render(<App />);
 
+// Particle slider is LOG-scale: the fused advect kernel handles 200 → 1M
+// particles, and a linear dial over that range has no low-end resolution.
+// Values snap to 2 significant figures so the readout stays clean.
+const PMIN = 200;
+const PMAX = 1_000_000;
+const particleToSlider = (n: number) =>
+  Math.log(Math.min(Math.max(n, PMIN), PMAX) / PMIN) / Math.log(PMAX / PMIN);
+const sliderToParticle = (t: number) => {
+  const raw = PMIN * Math.pow(PMAX / PMIN, t);
+  const mag = Math.pow(10, Math.max(0, Math.floor(Math.log10(raw)) - 1));
+  return Math.round(raw / mag) * mag;
+};
+
 function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
@@ -19,6 +32,7 @@ function App() {
   const [alpha, setAlpha] = useState(0.7);
   const [particles, setParticles] = useState(1000);
   const [samples, setSamples] = useState(256);
+  const [resetRate, setResetRate] = useState(0.01);
 
   // Only field-based pieces (createField) expose the order↔chaos alpha knob.
   const hasField = !!GALLERY[active].createField;
@@ -33,6 +47,7 @@ function App() {
       if (h.field) setAlpha(h.field.alpha);
       setParticles(h.getParticleCount());
       setSamples(h.getSampleRate());
+      setResetRate(h.getResetRate());
     });
     return () => {
       if (cleanupRef.current) cleanupRef.current();
@@ -64,12 +79,12 @@ function App() {
         <span style={{ width: 60 }}>particles</span>
         <input
           type="range"
-          min={200}
-          max={100000}
-          step={200}
-          value={particles}
+          min={0}
+          max={1}
+          step={0.002}
+          value={particleToSlider(particles)}
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-            const v = parseInt(e.target.value, 10);
+            const v = sliderToParticle(parseFloat(e.target.value));
             setParticles(v);
             handleRef.current?.setParticleCount(v);
           }}
@@ -93,6 +108,26 @@ function App() {
           style={{ flex: 1, maxWidth: 180, accentColor: "#5b8cff" }}
         />
         <span style={{ width: 36, textAlign: "right" }}>{samples}</span>
+        {/* Live respawn fraction. With particle-sourced training this is
+            ALSO the exploration dial: resets inject fresh uniform states
+            into the cloud, hence into the training batch. */}
+        <span style={{ width: 40, marginLeft: 18 }}>reset</span>
+        <input
+          type="range"
+          min={0}
+          max={0.05}
+          step={0.001}
+          value={resetRate}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+            const v = parseFloat(e.target.value);
+            setResetRate(v);
+            handleRef.current?.setResetRate(v);
+          }}
+          style={{ flex: 1, maxWidth: 140, accentColor: "#5b8cff" }}
+        />
+        <span style={{ width: 44, textAlign: "right" }}>
+          {(resetRate * 100).toFixed(1)}%
+        </span>
       </div>
       {hasField && (
         <div

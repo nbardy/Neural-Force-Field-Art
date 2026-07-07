@@ -61,6 +61,18 @@ export function renderPipeline(
   });
 }
 
+/** Build a compute pipeline from ONE WGSL module with a `main` entry point. */
+export function computePipeline(
+  device: GPUDevice,
+  code: string
+): GPUComputePipeline {
+  const module = device.createShaderModule({ code });
+  return device.createComputePipeline({
+    layout: "auto",
+    compute: { module, entryPoint: "main" },
+  });
+}
+
 /** A UNIFORM|COPY_DST buffer of `byteLength` bytes (multiple of 4). */
 export function uniformBuffer(device: GPUDevice, byteLength: number): GPUBuffer {
   return device.createBuffer({

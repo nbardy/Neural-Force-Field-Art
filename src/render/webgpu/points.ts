@@ -32,7 +32,15 @@ struct Uni {
   pointSize  : f32,
   maxSpeed   : f32,
   hasVel     : u32,
+  classes    : u32,
 };
+
+// same hash + salt as the advect/train kernels — class is derived, not stored
+fn pcg(v : u32) -> u32 {
+  let s = v * 747796405u + 2891336453u;
+  let t = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+  return (t >> 22u) ^ t;
+}
 @group(0) @binding(0) var<uniform> u : Uni;
 @group(0) @binding(1) var<storage, read> posBuf : array<f32>;
 @group(0) @binding(2) var<storage, read> velBuf : array<f32>;
@@ -63,11 +71,20 @@ fn vs(@builtin(vertex_index) vid : u32,
   out.uv = corner;
 
   var col = vec3f(1.0, 1.0, 1.0);
+  var t = 1.0;
   if (u.hasVel == 1u) {
     let vx = velBuf[iid * 2u];
     let vy = velBuf[iid * 2u + 1u];
-    let t = clamp(length(vec2f(vx, vy)) / u.maxSpeed, 0.0, 1.0);
+    t = clamp(length(vec2f(vx, vy)) / u.maxSpeed, 0.0, 1.0);
     col = mix(vec3f(0.25, 0.55, 1.0), vec3f(1.0, 0.55, 0.2), t); // blue->orange
+  }
+  if (u.classes > 0u) {
+    // per-species base colour (cosine palette, golden-angle spaced hues),
+    // brightness modulated by speed
+    let cls = pcg(iid ^ 2166136261u) % u.classes;
+    let hue = f32(cls) * 2.399963;
+    let base = 0.55 + 0.45 * cos(vec3f(hue, hue + 2.0944, hue + 4.1888));
+    col = base * (0.55 + 0.45 * t);
   }
   out.color = col;
   return out;
@@ -87,6 +104,8 @@ export interface GpuPointOpts {
   pointSize?: number;
   background?: [number, number, number];
   maxSpeed?: number;
+  /** multi-species count — colours dots per class (0 = speed colouring) */
+  classes?: number;
 }
 
 export class GpuPointRendererWebGPU {
@@ -106,6 +125,7 @@ export class GpuPointRendererWebGPU {
   private readonly bg: [number, number, number];
   private readonly pointSize: number;
   private readonly maxSpeed: number;
+  private readonly classes: number;
 
   /**
    * @param canvas on-screen canvas (must NOT have a 2d/webgl context yet).
@@ -132,6 +152,53 @@ export class GpuPointRendererWebGPU {
     this.pointSize = opts.pointSize ?? 2;
     this.bg = opts.background ?? [2, 0, 12];
     this.maxSpeed = opts.maxSpeed ?? 4;
+    this.classes = opts.classes ?? 0;
+  }
+
+  // Cached bind group for the raw-buffer path: the fused advect kernel's
+  // buffers are stable across frames (unlike per-frame dataToGPU clones), so
+  // the group is rebuilt only when the buffers themselves change (resize).
+  private bufBind: GPUBindGroup | null = null;
+  private bufBindPos: GPUBuffer | null = null;
+  private bufBindVel: GPUBuffer | null = null;
+
+  /** Draw N round dots straight from raw GPU buffers (interleaved xy f32) —
+   *  the zero-copy path for the fused advect kernel's particle state. */
+  renderFromBuffers(
+    posBuf: GPUBuffer,
+    velBuf: GPUBuffer,
+    n: number,
+    w: number,
+    h: number
+  ): void {
+    this.uniF[0] = w;
+    this.uniF[1] = h;
+    this.uniF[2] = this.pointSize;
+    this.uniF[3] = this.maxSpeed;
+    this.uniU[4] = 1; // hasVel
+    this.uniU[5] = this.classes;
+    this.device.queue.writeBuffer(this.uni, 0, this.uniData);
+
+    if (this.bufBindPos !== posBuf || this.bufBindVel !== velBuf) {
+      this.bufBind = bindGroup(this.device, this.pipeline, [
+        { binding: 0, resource: { buffer: this.uni } },
+        { binding: 1, resource: { buffer: posBuf } },
+        { binding: 2, resource: { buffer: velBuf } },
+      ]);
+      this.bufBindPos = posBuf;
+      this.bufBindVel = velBuf;
+    }
+    const group = this.bufBind!;
+
+    renderPass(
+      this.ctx,
+      [this.bg[0] / 255, this.bg[1] / 255, this.bg[2] / 255, 1],
+      (p) => {
+        p.setPipeline(this.pipeline);
+        p.setBindGroup(0, group);
+        p.draw(4, n);
+      }
+    );
   }
 
   /** Draw `pos` ([N,2] pixel coords) as N round dots, reading positions straight
@@ -150,6 +217,7 @@ export class GpuPointRendererWebGPU {
     this.uniF[2] = this.pointSize;
     this.uniF[3] = this.maxSpeed;
     this.uniU[4] = vel ? 1 : 0; // byte offset 16
+    this.uniU[5] = this.classes;
     this.device.queue.writeBuffer(this.uni, 0, this.uniData);
 
     // Zero-copy: tfjs tensor GPU buffers, same device -> bindable directly.
