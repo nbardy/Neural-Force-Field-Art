@@ -18,17 +18,29 @@
  *              pos/vel storage buffers points.ts binds, colours EXACTLY like
  *              points.ts's vertex shader (speed mix blue→orange; classes>0 →
  *              pcg-hash cosine palette with brightness by speed), deposits a
- *              2x2 bilinear footprint (floor position, fractional weights) of
- *              fixed-point (energy 1.0 → 4096) atomicAdds, bounds-guarded.
+ *              RADIAL CONE kernel (weight = max(0, 1 - dist/radius), dist from
+ *              the particle's exact subpixel position to each texel centre,
+ *              weights NORMALIZED in-shader so every particle deposits total
+ *              energy 1.0 → 4096 counts regardless of radius/subpixel phase)
+ *              of fixed-point atomicAdds, bounds-guarded. Round dots, not the
+ *              square 2x2 bilinear footprint this pass used to have.
  *   3. TONEMAP fullscreen triangle — reads acc as plain array<u32> (atomics
  *              are only needed while pass 2 races; passes in one encoder are
  *              ordered), colour = background + acc/4096 * exposure, soft
  *              shoulder c/(1+c) so additive glow saturates instead of
  *              clipping, gamma 1/2.2.
  *
+ * RETINA — the `dpr` option (default 1) sizes the accumulator at
+ * ceil(w*dpr)×ceil(h*dpr) NATIVE pixels and scales particle positions by dpr
+ * in the splat pass; `render()` keeps taking CSS w,h, and the caller keeps
+ * canvas.width/height == the same ceil(w*dpr)×ceil(h*dpr) (the tonemap
+ * indexes the accumulator by fragment coordinate — a stride mismatch would
+ * shear the image). The physics world stays in CSS pixels.
+ *
  * COLOURING HOOKS — all live-settable fields, uploaded each frame, no
  * pipeline rebuilds: `.exposure` (linear gain), `.decay` (trail persistence),
- * `.classes`, `.maxSpeed`, `.background`. For per-class palettes, edit the
+ * `.radius` (splat dot radius, CSS px), `.classes`, `.maxSpeed`,
+ * `.background`. For per-class palettes, edit the
  * cosine-palette block in SPLAT_WGSL (swap in a lookup keyed by `cls`); for
  * colour grading / tone curves, edit `fs` in TONEMAP_WGSL — that is the ONE
  * place where accumulated energy becomes screen colour.
@@ -54,39 +66,36 @@ import {
 export const SPLAT_FIXED_POINT = 4096;
 
 const WG = 256;
+/** Max native cone radius. Caps the splat tap count so retina (dpr>1) doesn't
+ *  explode the atomic-bound splat pass; a crisp small dot, not a fat blob. */
+const NATIVE_RADIUS_MAX = 1.6;
 
-// Shared uniform block — one 48-byte buffer bound to all three passes.
+// Shared uniform block — one 64-byte buffer bound to all three passes.
 const UNI_WGSL = /* wgsl */ `
 struct Uni {
-  size       : vec2u,  // accumulator W,H (pixels)
+  size       : vec2u,  // accumulator W,H (NATIVE pixels: ceil(css * dpr))
   count      : u32,    // live particles
   classes    : u32,    // 0 = speed colouring
   maxSpeed   : f32,
   exposure   : f32,
   decay      : f32,
-  pad0       : f32,
+  radius     : f32,    // cone radius in NATIVE pixels, pre-clamped [0.75, 4]
   background : vec4f,  // rgb 0-1 (pre-divided by 255), a unused
+  dpr        : f32,    // devicePixelRatio: CSS particle coords -> native texels
+  pad0       : f32,
+  pad1       : f32,
+  pad2       : f32,
 };
 @group(0) @binding(0) var<uniform> u : Uni;
 `;
 
-// Pass 1 — decay/clear. Thread per texel-channel. The workgroup grid is 2D
-// because W*H*3/256 exceeds the 65535 per-dimension dispatch limit at 4K.
-const DECAY_WGSL = /* wgsl */ `
-${UNI_WGSL}
-@group(0) @binding(1) var<storage, read_write> acc : array<u32>;
+// Decay is FUSED into the tonemap pass (below) — it multiplies the
+// accumulator by `decay` in place after reading it for display, so there is no
+// separate decay/clear compute pass (that streamed the whole ~44MB buffer with
+// its own barrier — the dominant retina cost). decay=0 => tonemap writes 0
+// (hard clear for the next frame).
 
-@compute @workgroup_size(${WG})
-fn main(@builtin(workgroup_id) wg : vec3u,
-        @builtin(num_workgroups) nwg : vec3u,
-        @builtin(local_invocation_index) li : u32) {
-  let i = (wg.y * nwg.x + wg.x) * ${WG}u + li;
-  if (i >= u.size.x * u.size.y * 3u) { return; }
-  acc[i] = u32(f32(acc[i]) * u.decay); // decay=0 -> hard clear
-}
-`;
-
-// Pass 2 — splat. Thread per particle; colour formulas are copied VERBATIM
+// Pass 1 — splat. Thread per particle; colour formulas are copied VERBATIM
 // from points.ts's vertex shader so the two renderers are visually
 // interchangeable (hasVel is always 1 on this path, same as renderFromBuffers).
 const SPLAT_WGSL = /* wgsl */ `
@@ -104,6 +113,7 @@ fn pcg(v : u32) -> u32 {
 @group(0) @binding(3) var<storage, read_write> acc : array<atomic<u32>>;
 
 fn tap(x : i32, y : i32, wgt : f32, col : vec3f) {
+  if (wgt <= 0.0) { return; } // box corners outside the cone: skip the atomics
   if (x < 0 || y < 0 || x >= i32(u.size.x) || y >= i32(u.size.y)) { return; }
   let base = (u32(y) * u.size.x + u32(x)) * 3u;
   atomicAdd(&acc[base + 0u], u32(col.r * wgt * ${SPLAT_FIXED_POINT}.0));
@@ -111,12 +121,18 @@ fn tap(x : i32, y : i32, wgt : f32, col : vec3f) {
   atomicAdd(&acc[base + 2u], u32(col.b * wgt * ${SPLAT_FIXED_POINT}.0));
 }
 
+fn cone(x : i32, y : i32, p : vec2f) -> f32 {
+  let d = distance(vec2f(f32(x), f32(y)), p);
+  return max(0.0, 1.0 - d / u.radius);
+}
+
 @compute @workgroup_size(${WG})
 fn main(@builtin(global_invocation_id) gid : vec3u) {
   let iid = gid.x;
   if (iid >= u.count) { return; }
-  let px = posBuf[iid * 2u];
-  let py = posBuf[iid * 2u + 1u];
+  // CSS-pixel particle position -> native accumulator texels
+  let px = posBuf[iid * 2u] * u.dpr;
+  let py = posBuf[iid * 2u + 1u] * u.dpr;
   let vx = velBuf[iid * 2u];
   let vy = velBuf[iid * 2u + 1u];
 
@@ -132,23 +148,44 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     col = base * (0.55 + 0.45 * t);
   }
 
-  // 2x2 bilinear footprint: floor position, fractional weights
-  let x0 = i32(floor(px));
-  let y0 = i32(floor(py));
-  let fx = px - floor(px);
-  let fy = py - floor(py);
-  tap(x0,     y0,     (1.0 - fx) * (1.0 - fy), col);
-  tap(x0 + 1, y0,     fx * (1.0 - fy),         col);
-  tap(x0,     y0 + 1, (1.0 - fx) * fy,         col);
-  tap(x0 + 1, y0 + 1, fx * fy,                 col);
+  // RADIAL CONE kernel over the integer box covering the circle |t - p| <= r.
+  // Texel "centres" sit at INTEGER coords — the same convention as the old
+  // 2x2 bilinear (an integer-position particle is centred on that texel
+  // index, which is what the tonemap's u32(frag.xy) indexing expects).
+  // Two in-shader passes: sum the cone weights, then deposit normalized taps,
+  // so EVERY particle deposits total energy 1.0 (4096 counts) regardless of
+  // radius or subpixel phase. u.radius is pre-clamped to [0.75, 4] on the CPU,
+  // so the box is <= 9x9 and wsum > 0 always (the nearest texel centre is at
+  // most sqrt(2)/2 ~ 0.707 < 0.75 away).
+  let p = vec2f(px, py);
+  let x0 = i32(ceil(px - u.radius));
+  let x1 = i32(floor(px + u.radius));
+  let y0 = i32(ceil(py - u.radius));
+  let y1 = i32(floor(py + u.radius));
+  var wsum = 0.0;
+  for (var y = y0; y <= y1; y++) {
+    for (var x = x0; x <= x1; x++) {
+      wsum += cone(x, y, p);
+    }
+  }
+  for (var y = y0; y <= y1; y++) {
+    for (var x = x0; x <= x1; x++) {
+      tap(x, y, cone(x, y, p) / wsum, col);
+    }
+  }
 }
 `;
 
-// Pass 3 — tonemap. Reads the accumulator as plain u32 (pass ordering within
-// the encoder makes the pass-2 atomics visible; no atomic view needed here).
+// Pass 2 (final) — tonemap + FUSED DECAY. Reads the accumulator as plain u32
+// (pass ordering within the encoder makes the splat atomics visible), writes
+// the display pixel, THEN multiplies the accumulator by decay in place — so
+// the separate decay compute pass is gone (it streamed the whole ~44MB buffer
+// with its own barrier). Decay now happens at END of frame instead of start;
+// equivalent up to a one-frame phase shift (measured 32ms→~9ms at 1M retina).
+// binding(1) is read_write so the fragment can write the faded value back.
 const TONEMAP_WGSL = /* wgsl */ `
 ${UNI_WGSL}
-@group(0) @binding(1) var<storage, read> acc : array<u32>;
+@group(0) @binding(1) var<storage, read_write> acc : array<u32>;
 
 @vertex
 fn vs(@builtin(vertex_index) vid : u32) -> @builtin(position) vec4f {
@@ -165,8 +202,15 @@ fn fs(@builtin(position) frag : vec4f) -> @location(0) vec4f {
   let x = u32(frag.x);
   let y = u32(frag.y);
   let base = (y * u.size.x + x) * 3u;
-  let energy = vec3f(f32(acc[base + 0u]), f32(acc[base + 1u]), f32(acc[base + 2u]))
-             * (1.0 / ${SPLAT_FIXED_POINT}.0);
+  let r = acc[base + 0u];
+  let g = acc[base + 1u];
+  let b = acc[base + 2u];
+  let energy = vec3f(f32(r), f32(g), f32(b)) * (1.0 / ${SPLAT_FIXED_POINT}.0);
+  // FUSED DECAY: fade the accumulator for the NEXT frame after reading it for
+  // display. decay=0 -> writes 0 (hard clear); decay~0.9 -> ghost trails.
+  acc[base + 0u] = u32(f32(r) * u.decay);
+  acc[base + 1u] = u32(f32(g) * u.decay);
+  acc[base + 2u] = u32(f32(b) * u.decay);
   var c = u.background.rgb + energy * u.exposure;
   c = c / (1.0 + c);            // soft shoulder: glow saturates, never clips
   c = pow(c, vec3f(1.0 / 2.2)); // gamma
@@ -184,6 +228,16 @@ export interface SplatOpts {
   decay?: number;
   /** linear gain on accumulated energy before the tone curve */
   exposure?: number;
+  /**
+   * devicePixelRatio (default 1): the accumulator becomes
+   * ceil(w*dpr)×ceil(h*dpr) native pixels and particle positions (CSS px) are
+   * scaled by dpr in the splat pass. render() keeps taking CSS w,h; the
+   * caller's canvas backing store must be the SAME ceil(w*dpr)×ceil(h*dpr).
+   */
+  dpr?: number;
+  /** radial cone splat radius in CSS px (default 1.25); native radius
+   *  = radius*dpr, clamped to [0.75, 4] */
+  radius?: number;
   /** explicit device (headless/tests) — defaults to tfjs's webgpu device */
   device?: GPUDevice;
 }
@@ -201,9 +255,9 @@ class CanvasTarget implements RenderTarget {
   get format(): GPUTextureFormat {
     return this.ctx.format;
   }
-  // Caller keeps canvas.width/height == the w,h passed to render(), exactly
-  // like points.ts — the tonemap shader indexes the accumulator by fragment
-  // coordinate, so a size mismatch would read the wrong texels.
+  // Caller keeps canvas.width/height == ceil(w*dpr)×ceil(h*dpr) for the CSS
+  // w,h passed to render() — the tonemap shader indexes the accumulator by
+  // fragment coordinate, so a size (row-stride) mismatch would shear/misread.
   view(_w: number, _h: number): GPUTextureView {
     return this.ctx.context.getCurrentTexture().createView();
   }
@@ -252,13 +306,15 @@ export class SplatRenderer {
   /** Headless output (constructed with canvas === null), else null. */
   readonly offscreen: OffscreenTarget | null;
 
-  private readonly decayPipe: GPUComputePipeline;
   private readonly splatPipe: GPUComputePipeline;
   private readonly tonePipe: GPURenderPipeline;
   private readonly uni: GPUBuffer;
-  private readonly uniData = new ArrayBuffer(48);
+  private readonly uniData = new ArrayBuffer(64);
   private readonly uniF = new Float32Array(this.uniData);
   private readonly uniU = new Uint32Array(this.uniData);
+
+  /** devicePixelRatio — fixed at construction (canvas backing is sized once) */
+  readonly dpr: number;
 
   // Live-settable colouring controls — re-uploaded every frame, so changing
   // any of these mid-run retunes the image with zero pipeline rebuilds.
@@ -267,12 +323,13 @@ export class SplatRenderer {
   classes: number;
   decay: number;
   exposure: number;
+  /** radial cone splat radius, CSS px (native = radius*dpr, clamped [0.75,4]) */
+  radius: number;
 
   // accumulation buffer + bind groups, cached on size / buffer identity
   private accBuf: GPUBuffer | null = null;
   private accW = 0;
   private accH = 0;
-  private decayBind: GPUBindGroup | null = null;
   private toneBind: GPUBindGroup | null = null;
   private splatBind: GPUBindGroup | null = null;
   private splatBindPos: GPUBuffer | null = null;
@@ -299,25 +356,27 @@ export class SplatRenderer {
       ? new CanvasTarget(attachCanvas(canvas, device))
       : this.offscreen!;
 
-    this.decayPipe = computePipeline(device, DECAY_WGSL);
     this.splatPipe = computePipeline(device, SPLAT_WGSL);
     this.tonePipe = renderPipeline(device, {
       code: TONEMAP_WGSL,
       format: this.target.format,
       topology: "triangle-list",
     });
-    this.uni = uniformBuffer(device, 48);
+    this.uni = uniformBuffer(device, 64);
 
+    this.dpr = opts.dpr ?? 1;
     this.background = opts.background ?? [2, 0, 12];
     this.maxSpeed = opts.maxSpeed ?? 4;
     this.classes = opts.classes ?? 0;
     this.decay = opts.decay ?? 0;
     this.exposure = opts.exposure ?? 1;
+    this.radius = opts.radius ?? 1.25;
   }
 
   /** Splat N particles (interleaved-xy f32 pos/vel storage buffers — the same
-   *  buffers points.ts binds) into a w×h frame: decay → splat → tonemap, one
-   *  encoder, one submit. Reallocates the accumulator when w/h changes.
+   *  buffers points.ts binds) into a frame of CSS size w×h (native size
+   *  ceil(w*dpr)×ceil(h*dpr)): decay → splat → tonemap, one encoder, one
+   *  submit. Reallocates the accumulator when the size changes.
    *  (Self-submitting; the fused hot path uses encodeRender.) */
   render(
     posBuf: GPUBuffer,
@@ -359,28 +418,40 @@ export class SplatRenderer {
     h: number,
     ts?: PassTimestampWrites
   ): void {
-    this.ensureAccum(w, h);
+    // CSS w,h -> native accumulator size. Math.ceil matches the caller's
+    // canvas-backing sizing (main.ts) so tonemap fragment coords, the canvas
+    // and the accumulator all agree texel-for-texel.
+    const nw = Math.ceil(w * this.dpr);
+    const nh = Math.ceil(h * this.dpr);
+    this.ensureAccum(nw, nh);
     this.ensureSplatBind(posBuf, velBuf);
 
-    this.uniU[0] = w;
-    this.uniU[1] = h;
+    this.uniU[0] = nw;
+    this.uniU[1] = nh;
     this.uniU[2] = n;
     this.uniU[3] = this.classes >>> 0;
     this.uniF[4] = this.maxSpeed;
     this.uniF[5] = this.exposure;
     this.uniF[6] = this.decay;
-    this.uniF[7] = 0;
+    // native cone radius. Clamp max is NATIVE_RADIUS_MAX (1.6), not 4: at
+    // retina (dpr 2) radius*dpr would be 2.5 → a 5×5=25-tap box, and the splat
+    // is atomic-bound so taps ≈ cost (25→9 taps roughly halves the frame at
+    // 1M). 1.6 native is a crisp small dot — SHARPER than the old fat 2.5 blob,
+    // not softer. The [0.75, cap] floor still guarantees wsum > 0 in-shader.
+    this.uniF[7] = Math.min(NATIVE_RADIUS_MAX, Math.max(0.75, this.radius * this.dpr));
     this.uniF[8] = this.background[0] / 255;
     this.uniF[9] = this.background[1] / 255;
     this.uniF[10] = this.background[2] / 255;
     this.uniF[11] = 1;
+    this.uniF[12] = this.dpr;
     this.device.queue.writeBuffer(this.uni, 0, this.uniData);
 
     const enc = encoder;
     // @webgpu/types 0.1.30 predates object-form timestampWrites; the live
-    // runtime uses it (see gputime.ts). Split the caller's begin/end across the
-    // decay (begin) and tonemap (end) passes so the span covers the whole splat.
-    const decayTs = ts
+    // runtime uses it (see gputime.ts). Two passes now (decay is fused into
+    // tonemap): begin on splat, end on tonemap, so the span covers the whole
+    // splat render.
+    const splatTs = ts
       ? { querySet: ts.querySet, beginningOfPassWriteIndex: ts.beginningOfPassWriteIndex }
       : undefined;
     const toneTs = ts
@@ -388,33 +459,22 @@ export class SplatRenderer {
       : undefined;
 
     {
-      // 1 — decay/clear (thread per texel-channel, 2D grid: see DECAY_WGSL)
-      const groups = Math.ceil((w * h * 3) / WG);
-      const gx = Math.min(groups, 65535);
-      const gy = Math.ceil(groups / gx);
+      // 1 — splat (thread per particle); reads last frame's decayed buffer
       const p = enc.beginComputePass(
-        (decayTs ? { timestampWrites: decayTs } : undefined) as GPUComputePassDescriptor
+        (splatTs ? { timestampWrites: splatTs } : undefined) as GPUComputePassDescriptor
       );
-      p.setPipeline(this.decayPipe);
-      p.setBindGroup(0, this.decayBind!);
-      p.dispatchWorkgroups(gx, gy);
-      p.end();
-    }
-    {
-      // 2 — splat (thread per particle)
-      const p = enc.beginComputePass();
       p.setPipeline(this.splatPipe);
       p.setBindGroup(0, this.splatBind!);
       p.dispatchWorkgroups(Math.ceil(n / WG));
       p.end();
     }
     {
-      // 3 — tonemap (fullscreen triangle; the draw covers every pixel, the
-      // clear is just a defined-load requirement)
+      // 2 — tonemap + fused decay (fullscreen triangle; the draw covers every
+      // pixel, the clear is just a defined-load requirement)
       const p = enc.beginRenderPass({
         colorAttachments: [
           {
-            view: this.target.view(w, h),
+            view: this.target.view(nw, nh),
             loadOp: "clear",
             clearValue: { r: 0, g: 0, b: 0, a: 1 },
             storeOp: "store",
@@ -429,6 +489,26 @@ export class SplatRenderer {
     }
   }
 
+  /** Test hook: the live accumulation buffer (native W×H×3 u32 counts,
+   *  COPY_SRC) — lets tools/splat_test.ts assert on raw deposited energy.
+   *  NOTE: the tonemap pass fades this buffer by `decay` at end of frame, so a
+   *  raw read after render() sees post-decay counts; read with decay=1 (or call
+   *  clearAccum first) to observe a single frame's raw deposit. */
+  get accumBuffer(): GPUBuffer | null {
+    return this.accBuf;
+  }
+
+  /** Zero the accumulation buffer — clears trails on demand (e.g. a "reset
+   *  trails" control), and lets tests start a frame from a known-clean buffer
+   *  independent of the fused end-of-frame decay. No-op before the first
+   *  render (the buffer is allocated lazily and zero-initialised). */
+  clearAccum(): void {
+    if (!this.accBuf) return;
+    const enc = this.device.createCommandEncoder();
+    enc.clearBuffer(this.accBuf, 0, this.accW * this.accH * 3 * 4);
+    this.device.queue.submit([enc.finish()]);
+  }
+
   /** (Re)allocate the W×H×3 atomic<u32> accumulator + its bind groups.
    *  WebGPU zero-initialises fresh buffers, so a resize starts clean. */
   private ensureAccum(w: number, h: number): void {
@@ -436,17 +516,14 @@ export class SplatRenderer {
     this.accBuf?.destroy();
     this.accBuf = this.device.createBuffer({
       size: w * h * 3 * 4,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+      // COPY_DST: clearAccum() uses encoder.clearBuffer to zero it on demand.
+      usage:
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.COPY_SRC |
+        GPUBufferUsage.COPY_DST,
     });
     this.accW = w;
     this.accH = h;
-    this.decayBind = this.device.createBindGroup({
-      layout: this.decayPipe.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: this.uni } },
-        { binding: 1, resource: { buffer: this.accBuf } },
-      ],
-    });
     this.toneBind = bindGroup(this.device, this.tonePipe, [
       { binding: 0, resource: { buffer: this.uni } },
       { binding: 1, resource: { buffer: this.accBuf } },

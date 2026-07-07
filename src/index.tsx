@@ -33,6 +33,7 @@ function App() {
   const [particles, setParticles] = useState(1000);
   const [samples, setSamples] = useState(256);
   const [resetRate, setResetRate] = useState(0.01);
+  const [decay, setDecay] = useState(0);
 
   // Only field-based pieces (createField) expose the order↔chaos alpha knob.
   const hasField = !!GALLERY[active].createField;
@@ -48,6 +49,7 @@ function App() {
       setParticles(h.getParticleCount());
       setSamples(h.getSampleRate());
       setResetRate(h.getResetRate());
+      setDecay(h.getDecay());
     });
     return () => {
       if (cleanupRef.current) cleanupRef.current();
@@ -128,6 +130,24 @@ function App() {
         <span style={{ width: 44, textAlign: "right" }}>
           {(resetRate * 100).toFixed(1)}%
         </span>
+        {/* Splat trail persistence — SplatRenderer.decay (0 = hard clear,
+            0.99 = long streaks). Shown always: splat is now the default
+            render path at every particle count. */}
+        <span style={{ width: 40, marginLeft: 18 }}>trails</span>
+        <input
+          type="range"
+          min={0}
+          max={0.99}
+          step={0.005}
+          value={decay}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+            const v = parseFloat(e.target.value);
+            setDecay(v);
+            handleRef.current?.setDecay(v);
+          }}
+          style={{ flex: 1, maxWidth: 140, accentColor: "#5b8cff" }}
+        />
+        <span style={{ width: 44, textAlign: "right" }}>{decay.toFixed(2)}</span>
       </div>
       {hasField && (
         <div

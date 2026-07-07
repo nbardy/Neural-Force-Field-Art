@@ -90,7 +90,14 @@ defaults to **200k particles** with a **log-scale slider up to 1M**
 6. **Parcel cache can serve STALE bundles silently** — a gallery/src change once
    built "successfully" without appearing in dist. When a change doesn't show up:
    `./node_modules/.bin/parcel build --no-scope-hoist --no-cache`.
-7. **Real-GPU browser QA is automatable**: `node tools/qa_browser.mjs` drives
+7. **Splat renderer is atomic-bound; taps ≈ cost.** At retina (dpr>1) the
+   native cone radius is capped at 1.6 (NATIVE_RADIUS_MAX) — bigger blows up
+   the tap count (radius×dpr → box×dpr²). Decay is FUSED into the tonemap pass
+   (fragment reads acc → displays → writes acc×decay), so there is NO separate
+   decay compute pass. Together these took 1M@retina from ~25 FPS to ~60
+   (render 32ms→8.7ms). Measured via scratchpad pass-isolation benches — splat
+   dominates, decay/tonemap are cheap.
+8. **Real-GPU browser QA is automatable**: `node tools/qa_browser.mjs` drives
    new-headless Chrome with `--use-angle=metal` (real Apple adapter, unlike
    smoke.mjs's SwiftShader), clicks through pieces, probes HUD, screenshots.
 

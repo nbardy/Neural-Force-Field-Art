@@ -507,6 +507,18 @@ function showWebGPUWarning(): void {
   document.body.appendChild(o);
 }
 
+/**
+ * Per-piece trail defaults for the splat renderer, keyed by the piece's
+ * declared renderer style (the splat's decay is now the one real trail
+ * mechanism behind all three looks): ghost pieces get soft trails,
+ * trail-buffer pieces long streaks, clean pieces none. `?decay=F` overrides.
+ */
+const SPLAT_DECAY_BY_RENDERER: Record<RendererType, number> = {
+  "alpha-fade": 0.94,
+  "trail-buffer": 0.97,
+  clean: 0,
+};
+
 export interface LoopHandle {
   field: HelmholtzField | null;
   getParticleCount(): number;
@@ -517,6 +529,10 @@ export interface LoopHandle {
    *  exploration dial (resets feed fresh uniform states into the batch). */
   getResetRate(): number;
   setResetRate(r: number): void;
+  /** Splat trail persistence (0 = hard clear … 0.99 = long streaks) — wired
+   *  straight to SplatRenderer.decay, the "trails" slider's backing knob. */
+  getDecay(): number;
+  setDecay(d: number): void;
 }
 
 export function startLoop(
@@ -555,13 +571,26 @@ export function startLoop(
     return () => {};
   }
 
+  // RETINA: the canvas BACKING store is native resolution (devicePixelRatio,
+  // capped at 2 — 3x phone DPRs quadruple the accumulator for little gain)
+  // while the physics WORLD stays w×h CSS pixels: kernels, trainer and losses
+  // are untouched; only the backing store and the splat accumulator scale.
+  // Math.ceil keeps canvas.width EXACTLY equal to the splat renderer's native
+  // accumulator width (its tonemap indexes the accumulator by fragment coord —
+  // a row-stride mismatch would shear the image). The quad renderer needs no
+  // change: its vertex math is pos/resolution-relative (incl. pointSize, which
+  // is in world units), and its fwidth AA sharpens automatically at native res.
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const w = window.innerWidth;
   const h = window.innerHeight;
-  canvas.width = w;
-  canvas.height = h;
+  canvas.width = Math.ceil(w * dpr);
+  canvas.height = Math.ceil(h * dpr);
 
   // Full-screen, no scroll (canvas is inline by default -> descender gap).
-  canvas.style.cssText = "display:block;position:fixed;inset:0";
+  // Explicit CSS width/height pin the element to CSS pixels so the native
+  // backing maps 1:1 onto device pixels.
+  canvas.style.cssText =
+    `display:block;position:fixed;inset:0;width:${w}px;height:${h}px`;
   document.documentElement.style.margin = "0";
   document.body.style.cssText = "margin:0;overflow:hidden;background:#000";
 
@@ -592,13 +621,15 @@ export function startLoop(
   let wh: tf.Tensor2D | null = null;
   let renderer: GpuPointRendererWebGPU | null = null;
   // Compute-splat renderer (accumulation buffer + tonemap): ~5 ms at 1M vs
-  // ~25 ms for instanced quads (4M verts + additive overdraw). Picked per
-  // frame by particle count — quads win visually at low N (AA round dots),
-  // splat wins structurally at high N, and its decay gives real ghost
-  // trails. `?render=splat|quads` forces one; `?decay=F` overrides decay.
+  // ~25 ms for instanced quads (4M verts + additive overdraw). The DEFAULT
+  // path at every count — its radial cone kernel gives round dots at low N
+  // too (the old 2x2 bilinear looked square, which is why quads used to win
+  // below 20k), and its decay gives real ghost trails. `?render=quads`
+  // restores the quad path; `?decay=F` overrides decay; `?dot=F` sets the
+  // splat radius in CSS px.
   let splat: SplatRenderer | null = null;
   const renderOverride = new URLSearchParams(location.search).get("render");
-  const SPLAT_MIN_N = 20000;
+  const SPLAT_MIN_N = 0;
   const exposureScale =
     parseFloat(new URLSearchParams(location.search).get("exposure") ?? "1") || 1;
 
@@ -720,9 +751,11 @@ export function startLoop(
         // the trail steady-state 1/(1-decay); normalize so the MEAN displayed
         // energy stays constant across counts (attractor hot-spots still
         // bloom through the tonemap shoulder — that's the aesthetic).
+        // The mean is over NATIVE texels — w*h CSS px times dpr² — since each
+        // particle's 4096 energy spreads over the dpr-scaled accumulator.
         // `?exposure=F` scales the target.
         splat!.exposure =
-          (0.35 * w * h * (1 - Math.min(splat!.decay, 0.995))) /
+          (0.35 * w * h * dpr * dpr * (1 - Math.min(splat!.decay, 0.995))) /
           Math.max(1, advect.count) * exposureScale;
         splat!.encodeRender(
           enc,
@@ -902,8 +935,41 @@ export function startLoop(
       );
     }
 
+    try {
+      renderer = new GpuPointRendererWebGPU(canvas, {
+        pointSize: (cfg as { pointSize?: number }).pointSize ?? 2.5,
+        background: cfg.backgroundColor,
+        maxSpeed: cfg.maxVelocity,
+        classes: field ? (field as HelmholtzField).classes ?? 0 : 0,
+      });
+      // splat shares the canvas context with the quad renderer (same device/
+      // format); its passes only run on frames where it's picked.
+      const decayParam = new URLSearchParams(location.search).get("decay");
+      const dotParam = new URLSearchParams(location.search).get("dot");
+      splat = new SplatRenderer(canvas, {
+        background: cfg.backgroundColor,
+        maxSpeed: cfg.maxVelocity,
+        classes: field ? (field as HelmholtzField).classes ?? 0 : 0,
+        dpr,
+        // `?dot=F` — radial splat radius in CSS px (default 1.25)
+        radius: dotParam !== null ? parseFloat(dotParam) || 1.25 : 1.25,
+        // Trails come from the piece's declared renderer style (the splat's
+        // decay is the real mechanism behind all of them); `?decay=F` overrides.
+        decay:
+          decayParam !== null
+            ? Math.max(0, Math.min(0.995, parseFloat(decayParam) || 0))
+            : SPLAT_DECAY_BY_RENDERER[cfg.renderer],
+      });
+    } catch (e) {
+      console.error("[webgpu] renderer init failed", e);
+      showWebGPUWarning();
+      return;
+    }
+
     // Live controls for the UI: particle count (resizes kernel buffers,
-    // preserving state — grow appends, shrink slices) + sample rate.
+    // preserving state — grow appends, shrink slices), sample rate, trails.
+    // Fired AFTER renderer/splat construction so getDecay() reads the live
+    // splat default (the trails slider initializes from it).
     if (onReady) {
       onReady({
         field: field ? (field as HelmholtzField) : null,
@@ -926,32 +992,11 @@ export function startLoop(
         setSampleRate: (n: number) => {
           sampleRate = Math.max(1, Math.round(n));
         },
+        getDecay: () => splat!.decay,
+        setDecay: (d: number) => {
+          if (splat) splat.decay = Math.max(0, Math.min(0.99, d));
+        },
       });
-    }
-
-    try {
-      renderer = new GpuPointRendererWebGPU(canvas, {
-        pointSize: (cfg as { pointSize?: number }).pointSize ?? 2.5,
-        background: cfg.backgroundColor,
-        maxSpeed: cfg.maxVelocity,
-        classes: field ? (field as HelmholtzField).classes ?? 0 : 0,
-      });
-      // splat shares the canvas context with the quad renderer (same device/
-      // format); its passes only run on frames where it's picked.
-      const decayParam = new URLSearchParams(location.search).get("decay");
-      splat = new SplatRenderer(canvas, {
-        background: cfg.backgroundColor,
-        maxSpeed: cfg.maxVelocity,
-        classes: field ? (field as HelmholtzField).classes ?? 0 : 0,
-        // "alpha-fade" pieces always wanted ghost trails — decay delivers them.
-        decay: decayParam !== null
-          ? Math.max(0, Math.min(0.995, parseFloat(decayParam) || 0))
-          : cfg.renderer === "alpha-fade" ? 0.88 : 0,
-      });
-    } catch (e) {
-      console.error("[webgpu] renderer init failed", e);
-      showWebGPUWarning();
-      return;
     }
     console.log(`starting: ${cfg.name} (webgpu)`);
     tick();
