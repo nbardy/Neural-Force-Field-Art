@@ -456,6 +456,32 @@ export const GALLERY: ArtPieceConfig[] = [
       new HelmholtzField({ alpha: 0.7, modelType: "fourier", fourierOctaves: 4 }),
     computeLoss: helmholtzChaosLoss(),
   },
+  {
+    // HASH-GRID field (Instant-NGP essence, single-level): a learned feature
+    // grid (32×32×4) is bilinearly interpolated → tiny MLP. Best detail-per-
+    // FLOP; the field reads more "painted texture" than "equation". Grid is a
+    // trainable tf.Variable (tfjs autograd scatters into cells); advects via
+    // the fused grid-interp kernel. SELECTABLE comparison type.
+    name: "Helmholtz · HashGrid",
+    particleCount: 200000,
+    friction: 0.99,
+    forceMagnitude: 3.5,
+    maxVelocity: 26,
+    resetRate: 0.01,
+    drawRate: 2,
+    learningRate: 0.01,
+    backgroundColor: [10, 4, 14],
+    alphaBlend: 0.05,
+    renderer: "alpha-fade",
+    createField: () =>
+      new HelmholtzField({
+        alpha: 0.7,
+        modelType: "hashgrid",
+        gridSize: 32,
+        gridFeatures: 4,
+      }),
+    computeLoss: helmholtzChaosLoss(),
+  },
 ];
 
 // ---------------------------------------------------------------------------

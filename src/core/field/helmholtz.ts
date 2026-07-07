@@ -106,11 +106,15 @@ export interface HelmholtzFieldConfig {
    * SIREN/Fourier train via tfjs autograd (the fused trainer's hand-written
    * backward is standard-only); they still ADVECT via the fused forward kernel.
    */
-  modelType?: "standard" | "siren" | "fourier";
+  modelType?: "standard" | "siren" | "fourier" | "hashgrid";
   /** SIREN first-layer frequency (folded into weights). Default 6. */
   sirenOmega0?: number;
   /** Fourier octaves (encDim = 2 + 4·octaves). Default 4. */
   fourierOctaves?: number;
+  /** Hashgrid resolution (gridSize×gridSize learned feature cells). Default 32. */
+  gridSize?: number;
+  /** Hashgrid features per cell (encDim). Default 4. */
+  gridFeatures?: number;
 }
 
 /**
@@ -202,9 +206,13 @@ export class HelmholtzField implements ForceField {
   private readonly weights: tf.Variable[];
 
   /** Selectable architecture — see {@link HelmholtzFieldConfig.modelType}. */
-  readonly modelType: "standard" | "siren" | "fourier";
+  readonly modelType: "standard" | "siren" | "fourier" | "hashgrid";
   readonly sirenOmega0: number;
   readonly fourierOctaves: number;
+  readonly gridSize: number;
+  readonly gridFeatures: number;
+  /** hashgrid learned feature table [gridSize², features]; null otherwise. */
+  readonly grid: tf.Variable | null = null;
 
   constructor({
     alpha,
@@ -213,18 +221,35 @@ export class HelmholtzField implements ForceField {
     modelType = "standard",
     sirenOmega0 = 6,
     fourierOctaves = 4,
+    gridSize = 32,
+    gridFeatures = 4,
   }: HelmholtzFieldConfig) {
     this.alpha = alpha;
     this.classes = classes;
     this.modelType = modelType;
     this.sirenOmega0 = sirenOmega0;
     this.fourierOctaves = fourierOctaves;
-    if (modelType === "fourier" && classes > 0) {
-      throw new Error("HelmholtzField: fourier + classes not supported yet");
+    this.gridSize = gridSize;
+    this.gridFeatures = gridFeatures;
+    if (modelType !== "standard" && classes > 0) {
+      throw new Error(`HelmholtzField: ${modelType} + classes not supported yet`);
     }
-    // per-head input dim: fourier expands the raw [x,y] to γ(p); the chaos
-    // head `r` also carries the class one-hot (standard/siren only).
-    const encIn = modelType === "fourier" ? fourierDim(fourierOctaves) : 2;
+    // per-head input dim by encoding: fourier expands [x,y]→γ(p); hashgrid's
+    // input is the interpolated feature vector; the chaos head `r` also
+    // carries the class one-hot (standard/siren only).
+    const encIn =
+      modelType === "fourier"
+        ? fourierDim(fourierOctaves)
+        : modelType === "hashgrid"
+        ? gridFeatures
+        : 2;
+    if (modelType === "hashgrid") {
+      // learned grid, listed FIRST in trainableWeights to match the packed
+      // "grid" segment at offset 0 in the advect weights buffer.
+      this.grid = tf.variable(
+        tf.randomUniform([gridSize * gridSize, gridFeatures], -0.1, 0.1)
+      );
+    }
     if (modelType === "siren") {
       this.g = makeSirenNet(hiddenUnits, encIn, sirenOmega0);
       this.r = makeSirenNet(hiddenUnits, encIn + classes, sirenOmega0);
@@ -235,10 +260,15 @@ export class HelmholtzField implements ForceField {
 
     // LayerVariable.val is the underlying tf.Variable (protected in the
     // typings). We expose the real Variables so the integrator can hand
-    // them to optimizer.minimize as an explicit varList.
+    // them to optimizer.minimize as an explicit varList. GRID FIRST for
+    // hashgrid (matches the packed-buffer segment order).
     const collect = (net: tf.Sequential): tf.Variable[] =>
       net.trainableWeights.map((w) => (w as any).val as tf.Variable);
-    this.weights = [...collect(this.g), ...collect(this.r)];
+    this.weights = [
+      ...(this.grid ? [this.grid] : []),
+      ...collect(this.g),
+      ...collect(this.r),
+    ];
   }
 
   /** Hidden-layer activation the advect kernel should generate for this type
@@ -286,11 +316,50 @@ export class HelmholtzField implements ForceField {
       const enc =
         this.modelType === "fourier"
           ? fourierEncode(posNorm, this.fourierOctaves)
+          : this.modelType === "hashgrid"
+          ? this.gridInterp(posNorm)
           : posNorm;
       const gVec = this.evalHead(this.g, enc);
       const rVec = this.evalHead(this.r, enc);
       const a = this.alpha;
       return gVec.mul(1 - a).add(rVec.mul(a)) as tf.Tensor2D;
+    });
+  }
+
+  /** Bilinear interpolation of the learned feature grid — the SAME row-major
+   *  indexing + weights the advect WGSL emitter uses, so trained grid values
+   *  line up. Differentiable (tf.gather backward scatters into cells). */
+  private gridInterp(posNorm: tf.Tensor2D): tf.Tensor2D {
+    return tf.tidy(() => {
+      const gs = this.gridSize;
+      const grid = this.grid!; // [gs*gs, F]
+      const gc = posNorm.clipByValue(0, 1).mul(gs - 1); // [N,2]
+      const i0 = gc.floor();
+      const f = gc.sub(i0);
+      const ix = i0.slice([0, 0], [-1, 1]) as tf.Tensor2D; // [N,1]
+      const iy = i0.slice([0, 1], [-1, 1]) as tf.Tensor2D;
+      const fx = f.slice([0, 0], [-1, 1]) as tf.Tensor2D;
+      const fy = f.slice([0, 1], [-1, 1]) as tf.Tensor2D;
+      const ix1 = ix.add(1).minimum(gs - 1);
+      const iy1 = iy.add(1).minimum(gs - 1);
+      // one-hot × matmul instead of tf.gather: gather's BACKWARD chokes on
+      // int32 indices inside the tape ("gradient of input indices must be
+      // float32"); onehot(cell) @ grid is differentiable w.r.t. the grid (the
+      // one-hot is a constant selector) and gives the identical [N,F] rows.
+      const gsq = gs * gs;
+      const gather = (jx: tf.Tensor2D, jy: tf.Tensor2D) => {
+        const cell = jy.mul(gs).add(jx).reshape([-1]).toInt();
+        return tf.oneHot(cell, gsq).matMul(grid) as tf.Tensor2D; // [N,F]
+      };
+      const w00 = fx.mul(-1).add(1).mul(fy.mul(-1).add(1)); // (1-fx)(1-fy)
+      const w10 = fx.mul(fy.mul(-1).add(1));
+      const w01 = fx.mul(-1).add(1).mul(fy);
+      const w11 = fx.mul(fy);
+      return gather(ix as tf.Tensor2D, iy as tf.Tensor2D)
+        .mul(w00)
+        .add(gather(ix1 as tf.Tensor2D, iy as tf.Tensor2D).mul(w10))
+        .add(gather(ix as tf.Tensor2D, iy1 as tf.Tensor2D).mul(w01))
+        .add(gather(ix1 as tf.Tensor2D, iy1 as tf.Tensor2D).mul(w11)) as tf.Tensor2D;
     });
   }
 
@@ -312,5 +381,6 @@ export class HelmholtzField implements ForceField {
   dispose(): void {
     this.g.dispose();
     this.r.dispose();
+    this.grid?.dispose();
   }
 }

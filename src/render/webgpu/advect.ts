@@ -117,14 +117,25 @@ export class AdvectKernel {
       }));
     // classes + encoding come from the field config; layoutField validates
     // that r's live layer-0 input width matches encDim(+classes) (D-trap rule).
+    const encoding =
+      field.modelType === "fourier"
+        ? ({ kind: "fourier", octaves: field.fourierOctaves } as const)
+        : field.modelType === "hashgrid"
+        ? ({ kind: "hashgrid", gridSize: field.gridSize, features: field.gridFeatures } as const)
+        : ({ kind: "raw" } as const);
     const layout = layoutField("helmholtz", [remap(hg.dims), remap(hr.dims)], {
       classes: field.classes ?? 0,
-      encoding:
-        field.modelType === "fourier"
-          ? { kind: "fourier", octaves: field.fourierOctaves }
-          : { kind: "raw" },
+      encoding,
     });
-    return new AdvectKernel(layout, [...hg.vars, ...hr.vars], physics, particleCount);
+    // hashgrid: the grid tf.Variable is FIRST (matches the "grid" segment at
+    // offset 0); then the head variables.
+    const gridVar = field.grid ? [field.grid] : [];
+    return new AdvectKernel(
+      layout,
+      [...gridVar, ...hg.vars, ...hr.vars],
+      physics,
+      particleCount
+    );
   }
 
   /** Legacy path: single sigmoid MLP, output re-centered by -0.5 in-shader. */

@@ -82,18 +82,28 @@ export type FieldSpec =
  */
 export type Encoding =
   | { kind: "raw" }
-  | { kind: "fourier"; octaves: number };
+  | { kind: "fourier"; octaves: number }
+  | { kind: "hashgrid"; gridSize: number; features: number };
 
 /** encoded input dimension (before the class one-hot). */
 export function encodingDim(e: Encoding): number {
-  return e.kind === "fourier" ? 2 + 4 * e.octaves : 2;
+  if (e.kind === "fourier") return 2 + 4 * e.octaves;
+  if (e.kind === "hashgrid") return e.features;
+  return 2;
+}
+
+/** Trainable-parameter floats the encoding adds AHEAD of the heads (a learned
+ *  feature grid for hashgrid; 0 otherwise). Packed at offset 0 of the weights
+ *  buffer so the fill can read it via W(). */
+export function encodingParamFloats(e: Encoding): number {
+  return e.kind === "hashgrid" ? e.gridSize * e.gridSize * e.features : 0;
 }
 
 /** One packed tensor's location — pairs 1:1 with the model's variable list. */
 export interface PackedSegment {
   floatOffset: number;
   floatLength: number;
-  role: "kernel" | "bias";
+  role: "kernel" | "bias" | "grid";
   head: number;
   layer: number;
 }
@@ -201,8 +211,8 @@ export function layoutField(
   if (classes > 0 && kind !== "helmholtz") {
     throw new Error(`advect: classes need the helmholtz kind (got '${kind}')`);
   }
-  if (encoding.kind === "fourier" && classes > 0) {
-    throw new Error(`advect: fourier + classes not supported yet`);
+  if (encoding.kind !== "raw" && classes > 0) {
+    throw new Error(`advect: ${encoding.kind} + classes not supported yet`);
   }
   const wantHeads = kind === "helmholtz" ? 2 : 1;
   if (headsDims.length !== wantHeads) {
@@ -214,6 +224,16 @@ export function layoutField(
   const align4 = (x: number) => (x + 3) & ~3;
   let off = 0;
   const segments: PackedSegment[] = [];
+  // hashgrid: reserve the learned feature grid at the FRONT of the buffer
+  // (offset 0) so the encoding-fill reads it via W(); pairs 1:1 with the grid
+  // tf.Variable, which the field lists FIRST in trainableWeights.
+  const gridFloats = encodingParamFloats(encoding);
+  if (gridFloats > 0) {
+    segments.push({
+      floatOffset: 0, floatLength: gridFloats, role: "grid", head: -1, layer: -1,
+    });
+    off = align4(gridFloats);
+  }
   const heads: HeadSpec[] = headsDims.map((dims, h) => {
     // head 1 (chaos lane) carries the one-hot class channels; head 0 (order)
     // and the legacy mlp stay class-blind. Both take the ENCODED input width
@@ -452,6 +472,27 @@ function emitHeadLooped(
       lines.push(`  ${bufs[0]}[${o + 2}] = cos(${w} * p.x);`);
       lines.push(`  ${bufs[0]}[${o + 3}] = cos(${w} * p.y);`);
     }
+  } else if (encoding.kind === "hashgrid") {
+    // Bilinear interp of the learned feature grid (row-major, offset 0 in W —
+    // same indexing as helmholtz.ts). encDim = features; fills h0[0..F-1],
+    // OVERWRITING the raw [x,y] above (the grid IS the encoded input).
+    const { gridSize: gs, features: F } = encoding;
+    lines.push(`  {`);
+    lines.push(`    let gxf = clamp(p.x, 0.0, 1.0) * ${(gs - 1).toFixed(1)};`);
+    lines.push(`    let gyf = clamp(p.y, 0.0, 1.0) * ${(gs - 1).toFixed(1)};`);
+    lines.push(`    let ix = u32(floor(gxf)); let iy = u32(floor(gyf));`);
+    lines.push(`    let fx = gxf - floor(gxf); let fy = gyf - floor(gyf);`);
+    lines.push(`    let ix1 = min(ix + 1u, ${gs - 1}u); let iy1 = min(iy + 1u, ${gs - 1}u);`);
+    lines.push(`    let b00 = (iy * ${gs}u + ix) * ${F}u;`);
+    lines.push(`    let b10 = (iy * ${gs}u + ix1) * ${F}u;`);
+    lines.push(`    let b01 = (iy1 * ${gs}u + ix) * ${F}u;`);
+    lines.push(`    let b11 = (iy1 * ${gs}u + ix1) * ${F}u;`);
+    lines.push(`    let w00 = (1.0 - fx) * (1.0 - fy); let w10 = fx * (1.0 - fy);`);
+    lines.push(`    let w01 = (1.0 - fx) * fy; let w11 = fx * fy;`);
+    lines.push(`    for (var fi = 0u; fi < ${F}u; fi = fi + 1u) {`);
+    lines.push(`      ${bufs[0]}[fi] = w00 * W(b00 + fi) + w10 * W(b10 + fi) + w01 * W(b01 + fi) + w11 * W(b11 + fi);`);
+    lines.push(`    }`);
+    lines.push(`  }`);
   }
   if (classChannels > 0) {
     lines.push(`  for (var k = 0u; k < ${classChannels}u; k = k + 1u) {`);

@@ -85,6 +85,23 @@ function refHead(
       act.push(Math.sin(w * px), Math.sin(w * py), Math.cos(w * px), Math.cos(w * py));
     }
     encDim = 2 + 4 * layout.encoding.octaves;
+  } else if (layout.encoding.kind === "hashgrid") {
+    // bilinear interp of the grid (offset 0 in W) — same indexing as the emitter
+    const gs = layout.encoding.gridSize, F = layout.encoding.features;
+    const gxf = Math.min(1, Math.max(0, px)) * (gs - 1);
+    const gyf = Math.min(1, Math.max(0, py)) * (gs - 1);
+    const ix = Math.floor(gxf), iy = Math.floor(gyf);
+    const fx = gxf - ix, fy = gyf - iy;
+    const ix1 = Math.min(ix + 1, gs - 1), iy1 = Math.min(iy + 1, gs - 1);
+    const b = (jx: number, jy: number) => (jy * gs + jx) * F;
+    const w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy), w01 = (1 - fx) * fy, w11 = fx * fy;
+    act = [];
+    for (let fi = 0; fi < F; fi++)
+      act.push(
+        w00 * W[b(ix, iy) + fi] + w10 * W[b(ix1, iy) + fi] +
+        w01 * W[b(ix, iy1) + fi] + w11 * W[b(ix1, iy1) + fi]
+      );
+    encDim = F;
   } else {
     act = [px, py];
     encDim = 2;
@@ -379,6 +396,25 @@ await numericCase(
     "helmholtz FOURIER γ oct=4 [32,32] ",
     layoutField("helmholtz", [fourierChain(), fourierChain()], {
       encoding: { kind: "fourier", octaves: oct },
+    }),
+    { stageWeights: true },
+    HELM
+  );
+}
+
+// 1d — HASHGRID: layer-0 input is the bilinear-interpolated learned feature
+//      grid (packed at offset 0). gs=8, F=4. Reference interpolates the same.
+{
+  const gs = 8, F = 4;
+  const hgChain = (): LayerDims[] => [
+    { inSize: F, outSize: 32, activation: "selu" },
+    { inSize: 32, outSize: 32, activation: "selu" },
+    { inSize: 32, outSize: 2, activation: "tanh" },
+  ];
+  await numericCase(
+    "helmholtz HASHGRID gs=8 F=4       ",
+    layoutField("helmholtz", [hgChain(), hgChain()], {
+      encoding: { kind: "hashgrid", gridSize: gs, features: F },
     }),
     { stageWeights: true },
     HELM
