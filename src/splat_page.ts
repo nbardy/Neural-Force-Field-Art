@@ -30,6 +30,7 @@
  */
 /// <reference types="@webgpu/types" />
 import { SplatOptimizer, cosine } from "./splat/optimize";
+import { fetchArrayBufferWithProgress, formatProgress } from "./splat/fetch_progress";
 import type { TrainPlan } from "./clip/vision";
 
 const SIDE = 256;
@@ -375,15 +376,21 @@ async function boot(): Promise<void> {
   const MODEL_BASE = isLocal
     ? "/models/mobileclip_s0/"
     : "https://huggingface.co/Nbardy/nff-clip-splat-weights/resolve/main/";
-  readoutEl.textContent = `fetching CLIP vision weights (82 MB)${isLocal ? "" : " from HF"}…`;
-  const [planRes, wRes] = await Promise.all([
-    fetch(MODEL_BASE + "plan_train.json"),
-    fetch(MODEL_BASE + "weights_train.bin"),
-  ]);
+  const srcLabel = isLocal ? "" : " from HF";
+  readoutEl.textContent = `fetching CLIP plan${srcLabel}…`;
+  const planRes = await fetch(MODEL_BASE + "plan_train.json");
   if (!planRes.ok) return fail(`plan_train.json fetch ${planRes.status} from ${MODEL_BASE}`);
-  if (!wRes.ok) return fail(`weights_train.bin fetch ${wRes.status} from ${MODEL_BASE}`);
   plan = (await planRes.json()) as TrainPlan;
-  weights = new Float32Array(await wRes.arrayBuffer());
+  // 82 MB weights with a live progress bar (Content-Length + streamed body).
+  let wbuf: ArrayBuffer;
+  try {
+    wbuf = await fetchArrayBufferWithProgress(MODEL_BASE + "weights_train.bin", (p) => {
+      readoutEl.textContent = formatProgress(`loading CLIP weights${srcLabel}`, p);
+    });
+  } catch (e: any) {
+    return fail(`weights_train.bin fetch failed from ${MODEL_BASE}: ${e?.message ?? e}`);
+  }
+  weights = new Float32Array(wbuf);
 
   status.phase = "optimizer";
   readoutEl.textContent = "building optimizer…";

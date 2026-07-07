@@ -26,7 +26,7 @@
       }
       #controls { display: flex; gap: 8px; align-items: center; width: 512px; }
       #prompt {
-        flex: 1; padding: 8px 10px;
+        flex: 1; min-width: 0; padding: 8px 10px;
         background: #181825; color: #cdd6f4;
         border: 1px solid #45475a; border-radius: 6px;
         font: inherit; font-size: 14px;
@@ -56,6 +56,7 @@
         <input id="prompt" type="text" placeholder="a photo of a cat"
                value="a photo of a cat" autocomplete="off" />
         <button id="optimize">Optimize</button>
+        <button id="nudge">NUDGE</button>
         <button id="reset">Reset</button>
       </div>
       <div id="readout">boot…</div>

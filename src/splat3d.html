@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>prompt → 3D splats</title>
+    <style>
+      :root { color-scheme: dark; }
+      html, body {
+        margin: 0; height: 100%;
+        background: #0b0d12; color: #cdd6f4;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      #wrap {
+        min-height: 100%;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        gap: 14px; padding: 24px;
+      }
+      #grid {
+        width: min(768px, calc(100vw - 48px));
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .tile { position: relative; min-width: 0; }
+      .view {
+        width: 100%; aspect-ratio: 1 / 1; display: block;
+        image-rendering: pixelated;
+        background: #000;
+        border: 1px solid #313244; border-radius: 8px;
+      }
+      .tile.active .view { border-color: #89b4fa; }
+      .label {
+        position: absolute; left: 7px; bottom: 7px;
+        padding: 2px 5px; border-radius: 4px;
+        background: rgba(11, 13, 18, 0.72); color: #cdd6f4;
+        font-size: 11px; pointer-events: none;
+      }
+      #controls { display: flex; gap: 8px; align-items: center; width: min(768px, calc(100vw - 48px)); }
+      #prompt {
+        flex: 1; min-width: 0; padding: 8px 10px;
+        background: #181825; color: #cdd6f4;
+        border: 1px solid #45475a; border-radius: 6px;
+        font: inherit; font-size: 14px;
+      }
+      select, button {
+        padding: 8px 10px;
+        background: #1e2030; color: #cdd6f4;
+        border: 1px solid #45475a; border-radius: 6px;
+        font: inherit; font-size: 13px; cursor: pointer;
+      }
+      select { max-width: 128px; }
+      button:hover, select:hover { border-color: #89b4fa; }
+      button:disabled, select:disabled { opacity: 0.5; cursor: default; }
+      #readout {
+        width: min(768px, calc(100vw - 48px)); font-size: 13px; color: #a6adc8;
+        min-height: 18px; letter-spacing: 0.2px;
+      }
+      #notice {
+        width: min(768px, calc(100vw - 48px)); color: #f38ba8; font-size: 13px; min-height: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="wrap">
+      <div id="grid"></div>
+      <div id="controls">
+        <input id="prompt" type="text" placeholder="a photo of a cat"
+               value="a photo of a cat" autocomplete="off" />
+        <select id="view"></select>
+        <select id="promptMode">
+          <option value="camera">camera text</option>
+          <option value="same">same text</option>
+        </select>
+        <select id="bgTextMode">
+          <option value="black">black bg</option>
+          <option value="none">no bg text</option>
+        </select>
+        <button id="optimize">Optimize</button>
+        <button id="reset">Reset</button>
+      </div>
+      <div id="readout">boot…</div>
+      <div id="notice"></div>
+    </div>
+    <script type="module" src="./splat3d_page.ts"></script>
+  </body>
+</html>
