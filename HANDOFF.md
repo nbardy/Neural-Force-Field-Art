@@ -69,10 +69,14 @@ defaults to **200k particles** with a **log-scale slider up to 1M**
 2. `GPUAdapter.prototype.requestAdapterInfo` shim — tfjs 4.10 calls the API Chrome removed (`adapter.info`).
 3. All tensor/model/**kernel** creation deferred until after `await tf.ready()` (webgpu init is async).
 4. Build with `parcel build --no-scope-hoist` (scope-hoist crashes tfjs at runtime).
-5. **Parcel cache can serve STALE bundles silently** — a gallery/src change once
+5. **Deploys need `--public-url ./`** — the site lives at the
+   /Neural-Force-Field-Art/ subpath; parcel's default absolute `/index-*.js`
+   404s on github.io. Deploy build:
+   `./node_modules/.bin/parcel build --no-scope-hoist --no-cache --public-url ./ --dist-dir dist_deploy`
+6. **Parcel cache can serve STALE bundles silently** — a gallery/src change once
    built "successfully" without appearing in dist. When a change doesn't show up:
    `./node_modules/.bin/parcel build --no-scope-hoist --no-cache`.
-6. **Real-GPU browser QA is automatable**: `node tools/qa_browser.mjs` drives
+7. **Real-GPU browser QA is automatable**: `node tools/qa_browser.mjs` drives
    new-headless Chrome with `--use-angle=metal` (real Apple adapter, unlike
    smoke.mjs's SwiftShader), clicks through pieces, probes HUD, screenshots.
 
