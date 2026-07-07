@@ -16,6 +16,42 @@
 
 Live: **https://nbardy.github.io/Neural-Force-Field-Art/** · `main` @ deploy is pushed to the `gh-pages` branch (see AGENTS.md for build/deploy).
 
+> **SESSION WRAP (2026-07-07): the whole engine is now fused + fast + shipped.**
+> Both Phase 1 (advect) AND Phase 2 (train) are DONE, plus a new render path.
+> Headline: **1,000,000 particles @ 60 FPS in-browser, including on retina**
+> (dpr 2). Full state below; the design map for what's next is
+> `docs/DESIGN_SPACE_PARTICLE_ART.md`.
+>
+> - **Fused advect** (`render/webgpu/advect{,_wgsl}.ts`): 1 dispatch; f16 fast
+>   path auto-picked when `shader-f16` present (~3.7 ms @ 1M; f32 byte-identical).
+> - **Fused trainer** (`render/webgpu/train{,_wgsl}.ts`): analytic BPTT + Adam
+>   in 2 dispatches; grads ≡ tfjs autograd (cos 1.0000000). K-step rollouts
+>   (`?rollout=K`), particle-sourced batches (real pos+vel; default), `?mix=F`,
+>   `?window=K` (= trajectory-window, proven ≡ real advected path to 6e-5 px),
+>   `?trainEvery=N`. Multi-species classes (chaos head `r(pos, onehot(c))`,
+>   storage-free class hash; "Helmholtz · Species" piece).
+> - **Compute-splat renderer** (`render/webgpu/splat.ts`): atomic accumulation
+>   + fused-decay tonemap; radial cone dots (round, not squares), retina/dpr,
+>   ghost trails via decay, per-class hues. Default renderer at all counts;
+>   `?render=quads` reverts. Knobs: trails slider, `?dot=`, `?decay=`, `?exposure=`.
+>   Perf: native cone radius capped at 1.6 + decay fused into tonemap took
+>   1M-retina render 32 ms → 8.7 ms.
+> - **HUD**: real per-pass GPU times via timestamp-query (rollout/optim/advect/
+>   render, in ms). The old sub-0.1ms "render" line was CPU *encode* time, not
+>   GPU time — now every shown time is either real GPU `(gpu)` or explicitly
+>   `(cpu·tfjs)` / `(cpu-encode)`.
+> - **Verify** (headless, real Metal via bun-webgpu): `bun tools/{kernel,train,
+>   integration,window,splat}_test.ts` + `tools/grad_reference.ts` fixtures.
+>   Browser QA: `node tools/qa_browser.mjs` (new-headless Chrome, --use-angle=metal).
+> - **Open threads**: task #16 subgroup pre-summation (last WebGPU splat-perf
+>   lever, parked — 8.7ms already clears 60); task #17 selectable Fourier/SIREN
+>   model types (per `DESIGN_SPACE_PARTICLE_ART.md`; ship as COMPARISON options).
+> - Deploy needs `--public-url ./`; parcel cache can serve stale bundles
+>   (`--no-cache`). The tfjs device is shimmed to request shader-f16 +
+>   timestamp-query (features are creation-time-only; see main.ts top).
+>
+> The older Phase-1/Phase-2 narrative below is retained for the reasoning/traps.
+
 This doc is the pick-up point. It covers (1) where the engine is now — **Phase 1
 (the fused ADVECT WGSL kernel) is SHIPPED and verified** — (2) the perf mental
 model, (3) the remaining big step — the **fused TRAIN kernel** — and what

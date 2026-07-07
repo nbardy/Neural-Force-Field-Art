@@ -797,17 +797,30 @@ export function startLoop(
         `${cfg.name}\n` +
         `backend ${tf.getBackend()}  render=${particleCount} train=${sampleRate}\n` +
         `FPS     ${(1000 / emaFrame).toFixed(1)}  (${emaFrame.toFixed(1)} ms)\n`;
-      // Real per-pass GPU times replace the CPU-encode learn/render lines
-      // whenever the profiler is live AND we're on the fused path (only then do
-      // the rollout/optim passes exist). Otherwise show the CPU-encode lines.
+      // HONEST TIMINGS. advect + render are OUR GPU passes on EVERY piece, so
+      // when the profiler is live we always show their real GPU time — never
+      // the CPU-encode time (which is ~0.1ms: the cost of RECORDING commands,
+      // not the async GPU work). The fused path also has real GPU rollout/optim
+      // passes; the legacy tfjs path's "learn" has no clean GPU span (tfjs owns
+      // its submits), so it's shown as CPU wall time, explicitly labelled.
+      // Without timestamp-query at all, everything is labelled (cpu-encode) so
+      // nothing masquerades as a real render time.
       const gt = timer?.timings;
-      const body =
-        gt && trainer
-          ? `rollout ${gt.rollout.toFixed(2)} ms  optim ${gt.optim.toFixed(2)} ms  loss ${hudLoss.toFixed(3)}\n` +
-            `advect  ${gt.advect.toFixed(2)} ms  render ${gt.render.toFixed(2)} ms  (gpu)\n`
-          : `learn   ${emaTrain.toFixed(1)} ms${
-              trainer ? `  (fused)  loss ${hudLoss.toFixed(3)}` : ""
-            }\n` + `render  ${emaRender.toFixed(1)} ms\n`;
+      let body: string;
+      if (gt && trainer) {
+        body =
+          `rollout ${gt.rollout.toFixed(2)} ms  optim ${gt.optim.toFixed(2)} ms  loss ${hudLoss.toFixed(3)}\n` +
+          `advect  ${gt.advect.toFixed(2)} ms  render ${gt.render.toFixed(2)} ms  (gpu)\n`;
+      } else if (gt) {
+        body =
+          `learn   ${emaTrain.toFixed(1)} ms  (cpu·tfjs)\n` +
+          `advect  ${gt.advect.toFixed(2)} ms  render ${gt.render.toFixed(2)} ms  (gpu)\n`;
+      } else {
+        body =
+          `learn   ${emaTrain.toFixed(1)} ms${
+            trainer ? `  (fused)  loss ${hudLoss.toFixed(3)}` : "  (cpu·tfjs)"
+          }\n` + `render  ${emaRender.toFixed(1)} ms  (cpu-encode)\n`;
+      }
       tele.textContent = head + body + `tensors ${tf.memory().numTensors}`;
     }
 
