@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>prompt → splats</title>
+    <style>
+      :root { color-scheme: dark; }
+      html, body {
+        margin: 0; height: 100%;
+        background: #0b0d12; color: #cdd6f4;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      #wrap {
+        min-height: 100%;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        gap: 14px; padding: 24px;
+      }
+      #splat {
+        width: 512px; height: 512px;
+        image-rendering: pixelated;      /* 256² upscaled crisply */
+        background: #000;
+        border: 1px solid #313244; border-radius: 8px;
+        box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+      }
+      #controls { display: flex; gap: 8px; align-items: center; width: 512px; }
+      #prompt {
+        flex: 1; padding: 8px 10px;
+        background: #181825; color: #cdd6f4;
+        border: 1px solid #45475a; border-radius: 6px;
+        font: inherit; font-size: 14px;
+      }
+      button {
+        padding: 8px 14px;
+        background: #1e2030; color: #cdd6f4;
+        border: 1px solid #45475a; border-radius: 6px;
+        font: inherit; font-size: 13px; cursor: pointer;
+      }
+      button:hover { border-color: #89b4fa; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      #readout {
+        width: 512px; font-size: 13px; color: #a6adc8;
+        min-height: 18px; letter-spacing: 0.2px;
+      }
+      #notice {
+        width: 512px; color: #f38ba8; font-size: 13px; min-height: 16px;
+      }
+      a { color: #89b4fa; }
+    </style>
+  </head>
+  <body>
+    <div id="wrap">
+      <canvas id="splat" width="256" height="256"></canvas>
+      <div id="controls">
+        <input id="prompt" type="text" placeholder="a photo of a cat"
+               value="a photo of a cat" autocomplete="off" />
+        <button id="optimize">Optimize</button>
+        <button id="reset">Reset</button>
+      </div>
+      <div id="readout">boot…</div>
+      <div id="notice"></div>
+    </div>
+    <script type="module" src="./splat_page.ts"></script>
+  </body>
+</html>
