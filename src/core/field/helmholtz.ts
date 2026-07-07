@@ -94,6 +94,23 @@ export interface HelmholtzFieldConfig {
    * from the particle index hash).
    */
   classes?: number;
+  /**
+   * Field architecture — a SELECTABLE model type for comparison (see
+   * docs/DESIGN_SPACE_PARTICLE_ART.md):
+   *   "standard" (default) — SELU hidden + tanh out, raw [x,y] input.
+   *   "siren"    — sin hidden (SIREN); ω0 folded into first-layer weights so
+   *                the WGSL activation is plain sin. Smooth higher derivatives.
+   *   "fourier"  — SELU hidden but the input is Fourier-encoded γ(p) =
+   *                [x, y, sin/cos(ωk·x/y)] over `fourierOctaves` octaves —
+   *                beats spectral bias, exposes fine structure.
+   * SIREN/Fourier train via tfjs autograd (the fused trainer's hand-written
+   * backward is standard-only); they still ADVECT via the fused forward kernel.
+   */
+  modelType?: "standard" | "siren" | "fourier";
+  /** SIREN first-layer frequency (folded into weights). Default 6. */
+  sirenOmega0?: number;
+  /** Fourier octaves (encDim = 2 + 4·octaves). Default 4. */
+  fourierOctaves?: number;
 }
 
 /**
@@ -118,6 +135,51 @@ function makeVectorNet(hiddenUnits: number[], inputDim = 2): tf.Sequential {
 }
 
 /**
+ * SIREN head: LINEAR dense layers (activations applied manually in forces() as
+ * sin/…/tanh, since tfjs has no "sin" activation string). The ω0 frequency is
+ * folded into the first layer's weights at build time so the WGSL advect
+ * activation stays plain `sin`. Uses the SIREN init (Sitzmann et al.): first
+ * layer U(-ω0/in, ω0/in), hidden U(-√(6/in), √(6/in)).
+ */
+function makeSirenNet(
+  hiddenUnits: number[],
+  inputDim: number,
+  omega0: number
+): tf.Sequential {
+  const net = tf.sequential();
+  const widths = [inputDim, ...hiddenUnits];
+  hiddenUnits.forEach((units, i) => {
+    const fin = widths[i];
+    const lim = i === 0 ? omega0 / fin : Math.sqrt(6 / fin);
+    const cfg: any = {
+      units,
+      activation: "linear",
+      kernelInitializer: tf.initializers.randomUniform({ minval: -lim, maxval: lim }),
+    };
+    if (i === 0) cfg.inputShape = [inputDim];
+    net.add(tf.layers.dense(cfg));
+  });
+  net.add(tf.layers.dense({ units: 2, activation: "linear" }));
+  return net;
+}
+
+/** Fourier feature encoding γ(p) = [x, y, sin(ωk x), cos(ωk x), sin(ωk y),
+ *  cos(ωk y)] for k=0..octaves-1, ωk = 2^k · 2π. Fixed (no weights); the same
+ *  transform is generated in the advect kernel. encDim = 2 + 4·octaves. */
+export function fourierEncode(pn: tf.Tensor2D, octaves: number): tf.Tensor2D {
+  return tf.tidy(() => {
+    const parts: tf.Tensor2D[] = [pn];
+    for (let k = 0; k < octaves; k++) {
+      const w = Math.pow(2, k) * 2 * Math.PI;
+      const wp = pn.mul(w) as tf.Tensor2D;
+      parts.push(tf.sin(wp) as tf.Tensor2D, tf.cos(wp) as tf.Tensor2D);
+    }
+    return tf.concat(parts, 1) as tf.Tensor2D;
+  });
+}
+export const fourierDim = (octaves: number) => 2 + 4 * octaves;
+
+/**
  * Direct-vector neural force field.
  *
  * Two small MLP heads output the order lane (`g`) and chaos lane (`r`) as
@@ -139,11 +201,37 @@ export class HelmholtzField implements ForceField {
 
   private readonly weights: tf.Variable[];
 
-  constructor({ alpha, hiddenUnits = [32, 32], classes = 0 }: HelmholtzFieldConfig) {
+  /** Selectable architecture — see {@link HelmholtzFieldConfig.modelType}. */
+  readonly modelType: "standard" | "siren" | "fourier";
+  readonly sirenOmega0: number;
+  readonly fourierOctaves: number;
+
+  constructor({
+    alpha,
+    hiddenUnits = [32, 32],
+    classes = 0,
+    modelType = "standard",
+    sirenOmega0 = 6,
+    fourierOctaves = 4,
+  }: HelmholtzFieldConfig) {
     this.alpha = alpha;
     this.classes = classes;
-    this.g = makeVectorNet(hiddenUnits, 2);
-    this.r = makeVectorNet(hiddenUnits, 2 + classes);
+    this.modelType = modelType;
+    this.sirenOmega0 = sirenOmega0;
+    this.fourierOctaves = fourierOctaves;
+    if (modelType === "fourier" && classes > 0) {
+      throw new Error("HelmholtzField: fourier + classes not supported yet");
+    }
+    // per-head input dim: fourier expands the raw [x,y] to γ(p); the chaos
+    // head `r` also carries the class one-hot (standard/siren only).
+    const encIn = modelType === "fourier" ? fourierDim(fourierOctaves) : 2;
+    if (modelType === "siren") {
+      this.g = makeSirenNet(hiddenUnits, encIn, sirenOmega0);
+      this.r = makeSirenNet(hiddenUnits, encIn + classes, sirenOmega0);
+    } else {
+      this.g = makeVectorNet(hiddenUnits, encIn);
+      this.r = makeVectorNet(hiddenUnits, encIn + classes);
+    }
 
     // LayerVariable.val is the underlying tf.Variable (protected in the
     // typings). We expose the real Variables so the integrator can hand
@@ -151,6 +239,13 @@ export class HelmholtzField implements ForceField {
     const collect = (net: tf.Sequential): tf.Variable[] =>
       net.trainableWeights.map((w) => (w as any).val as tf.Variable);
     this.weights = [...collect(this.g), ...collect(this.r)];
+  }
+
+  /** Hidden-layer activation the advect kernel should generate for this type
+   *  (SIREN builds LINEAR tf layers + applies sin manually, so the tf config
+   *  can't be trusted — the field declares it). */
+  get hiddenActivation(): "selu" | "sin" {
+    return this.modelType === "siren" ? "sin" : "selu";
   }
 
   get trainableWeights(): tf.Variable[] {
@@ -186,12 +281,32 @@ export class HelmholtzField implements ForceField {
       );
     }
     return tf.tidy(() => {
-      const gVec = this.g.predict(posNorm) as tf.Tensor2D; // order lane [N,2]
-      const rVec = this.r.predict(posNorm) as tf.Tensor2D; // chaos lane [N,2]
-
+      // Encode the input per model type; SIREN applies sin manually (its tf
+      // layers are linear). tfjs autograd differentiates all of these.
+      const enc =
+        this.modelType === "fourier"
+          ? fourierEncode(posNorm, this.fourierOctaves)
+          : posNorm;
+      const gVec = this.evalHead(this.g, enc);
+      const rVec = this.evalHead(this.r, enc);
       const a = this.alpha;
       return gVec.mul(1 - a).add(rVec.mul(a)) as tf.Tensor2D;
     });
+  }
+
+  /** Forward one head: standard/fourier use the built-in selu/tanh via
+   *  predict(); SIREN applies sin to hidden layers + tanh to the output. */
+  private evalHead(net: tf.Sequential, input: tf.Tensor2D): tf.Tensor2D {
+    if (this.modelType !== "siren") {
+      return net.predict(input) as tf.Tensor2D;
+    }
+    let h: tf.Tensor = input;
+    const layers = net.layers;
+    layers.forEach((layer, i) => {
+      h = layer.apply(h) as tf.Tensor; // LINEAR dense
+      h = i < layers.length - 1 ? tf.sin(h) : tf.tanh(h);
+    });
+    return h as tf.Tensor2D;
   }
 
   dispose(): void {

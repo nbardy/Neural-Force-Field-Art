@@ -415,6 +415,47 @@ export const GALLERY: ArtPieceConfig[] = [
     createField: () => new HelmholtzField({ alpha: 0.7, classes: 3 }),
     computeLoss: helmholtzChaosLoss(),
   },
+  {
+    // SIREN field — sinusoidal activations (Sitzmann et al.). Smooth, well-
+    // defined spatial derivatives (which the chaos/divergence probe losses
+    // measure), and higher-frequency structure than SELU. A SELECTABLE model
+    // type to compare against the standard field (same loss, same knobs).
+    // Trains via tfjs autograd; advects via the fused sin-kernel.
+    name: "Helmholtz · SIREN",
+    particleCount: 200000,
+    friction: 0.99,
+    forceMagnitude: 3.5,
+    maxVelocity: 26,
+    resetRate: 0.01,
+    drawRate: 2,
+    learningRate: 0.005,
+    backgroundColor: [6, 2, 20],
+    alphaBlend: 0.05,
+    renderer: "alpha-fade",
+    createField: () =>
+      new HelmholtzField({ alpha: 0.7, modelType: "siren", sirenOmega0: 6 }),
+    computeLoss: helmholtzChaosLoss(),
+  },
+  {
+    // FOURIER-feature field — γ(p) = [x,y,sin/cos(ωk·x/y)] input encoding beats
+    // the plain MLP's spectral bias, exposing fine "filigree" spatial detail.
+    // ω0/octaves are the artistic dial. Trains via tfjs; advects via the fused
+    // fourier-encoding kernel. SELECTABLE comparison type.
+    name: "Helmholtz · Fourier",
+    particleCount: 200000,
+    friction: 0.99,
+    forceMagnitude: 3.5,
+    maxVelocity: 26,
+    resetRate: 0.01,
+    drawRate: 2,
+    learningRate: 0.008,
+    backgroundColor: [2, 4, 14],
+    alphaBlend: 0.05,
+    renderer: "alpha-fade",
+    createField: () =>
+      new HelmholtzField({ alpha: 0.7, modelType: "fourier", fourierOctaves: 4 }),
+    computeLoss: helmholtzChaosLoss(),
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -679,9 +720,12 @@ export function startLoop(
     //     trained weights (pass ordering in one encoder inserts the barrier).
     //     tfjs path (legacy MLP pieces / ?train=tfjs): optimizer.minimize.
     const trainStart = performance.now();
-    if (trainer && frame % trainEvery !== 0) {
-      // `?trainEvery=N`: amortize training — the rollout batch is an imagined
-      // trajectory, so skipping frames loses nothing but update frequency.
+    // `?trainEvery=N`: amortize training over N frames — applies to BOTH the
+    // fused path (imagined-rollout batch) and the tfjs path (SIREN/Fourier,
+    // whose autograd + encoding learn stage is heavy — this is how a Fourier
+    // piece reaches 60fps: train every 2-3 frames, advect every frame).
+    if (frame % trainEvery !== 0) {
+      // skip training this frame (both paths)
     } else if (trainer) {
       trainer.encodeStep(
         enc,
@@ -895,12 +939,20 @@ export function startLoop(
     let wantTfjsTrainer =
       new URLSearchParams(location.search).get("train") === "tfjs";
     const fieldClasses = field ? (field as HelmholtzField).classes ?? 0 : 0;
+    const fieldModel = field ? (field as HelmholtzField).modelType : "standard";
     if (wantTfjsTrainer && fieldClasses > 0) {
       console.warn(
         "[train] ?train=tfjs ignored: class-aware fields are fused-only " +
           "(tfjs has no class input)"
       );
       wantTfjsTrainer = false;
+    }
+    // SIREN/Fourier fields train via tfjs autograd — the fused trainer's
+    // hand-written backward is standard-arch only. They still ADVECT via the
+    // fused forward kernel (weights sync tfjs→kernel each frame, the hybrid
+    // path). Only "standard" fields use the fully-fused GPU-resident trainer.
+    if (field && fieldModel !== "standard") {
+      wantTfjsTrainer = true;
     }
     if (field && !wantTfjsTrainer) {
       // `?rollout=K` (1..16, default 1): K-step BPTT rollout — the loss sees

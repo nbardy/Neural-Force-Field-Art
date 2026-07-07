@@ -54,6 +54,7 @@ function refAct(a: Activation, x: number): number {
     return x > 0 ? 1.0507009873554805 * x : 1.7580993408473768 * (Math.exp(x) - 1);
   if (a === "sigmoid") return 1 / (1 + Math.exp(-x));
   if (a === "tanh") return Math.tanh(x);
+  if (a === "sin") return Math.sin(x); // SIREN activation
   return x;
 }
 
@@ -73,8 +74,22 @@ function refHead(
   cls = 0
 ): [number, number] {
   const in0 = layout.spec.heads[head].layers[0].inSize;
-  let act: number[] = [px, py];
-  for (let k = 2; k < in0; k++) act.push(k - 2 === cls ? 1 : 0);
+  // encoded input: fourier γ(p) = [x,y, sin(ωk x),sin(ωk y),cos(ωk x),cos(ωk y)]
+  // (same order as helmholtz.ts / the WGSL emitter); else raw [x,y].
+  let act: number[];
+  let encDim: number;
+  if (layout.encoding.kind === "fourier") {
+    act = [px, py];
+    for (let k = 0; k < layout.encoding.octaves; k++) {
+      const w = Math.pow(2, k) * 2 * Math.PI;
+      act.push(Math.sin(w * px), Math.sin(w * py), Math.cos(w * px), Math.cos(w * py));
+    }
+    encDim = 2 + 4 * layout.encoding.octaves;
+  } else {
+    act = [px, py];
+    encDim = 2;
+  }
+  for (let k = encDim; k < in0; k++) act.push(k - encDim === cls ? 1 : 0);
   for (const L of layout.spec.heads[head].layers) {
     const out: number[] = new Array(L.outSize);
     for (let j = 0; j < L.outSize; j++) {
@@ -339,6 +354,36 @@ await numericCase(
   { stageWeights: true },
   HELM
 );
+
+// 1b — SIREN: sin hidden activations (the advect-forward half of the SIREN
+//      field type; training runs through tfjs autograd, this verifies the
+//      fused forward matches sin-net semantics).
+await numericCase(
+  "helmholtz SIREN sin [32,32]        ",
+  layoutField("helmholtz", [chain([32, 32], "sin", "tanh"), chain([32, 32], "sin", "tanh")]),
+  { stageWeights: true },
+  HELM
+);
+
+// 1c — FOURIER encoding: layer-0 input is γ(p) (2 + 4·octaves = 18 for 4
+//      octaves). Forces the looped emitter; the reference applies the same γ.
+{
+  const oct = 4;
+  const inDim = 2 + 4 * oct;
+  const fourierChain = (): LayerDims[] => [
+    { inSize: inDim, outSize: 32, activation: "selu" },
+    { inSize: 32, outSize: 32, activation: "selu" },
+    { inSize: 32, outSize: 2, activation: "tanh" },
+  ];
+  await numericCase(
+    "helmholtz FOURIER γ oct=4 [32,32] ",
+    layoutField("helmholtz", [fourierChain(), fourierChain()], {
+      encoding: { kind: "fourier", octaves: oct },
+    }),
+    { stageWeights: true },
+    HELM
+  );
+}
 
 // 2 — asymmetric + non-multiple-of-4 width: hardcoded-dim trap + the scalar
 //     fallback inside the unrolled emitter (18 % 4 != 0)

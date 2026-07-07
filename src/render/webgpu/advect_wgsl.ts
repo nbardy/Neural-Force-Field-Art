@@ -39,7 +39,9 @@
 // Canonical types
 // ---------------------------------------------------------------------------
 
-export type Activation = "linear" | "selu" | "tanh" | "sigmoid";
+// "sin" is the SIREN activation. The SIREN ω0 frequency is folded into the
+// trained weights (init scales them), so the WGSL activation is plain sin.
+export type Activation = "linear" | "selu" | "tanh" | "sigmoid" | "sin";
 
 /** Shape+activation of one dense layer, as read off the live model. */
 export interface LayerDims {
@@ -70,6 +72,23 @@ export type FieldSpec =
   | { kind: "helmholtz"; heads: [HeadSpec, HeadSpec] }
   | { kind: "mlp"; heads: [HeadSpec] };
 
+/**
+ * Input encoding for the field heads (a SELECTABLE model axis):
+ *   raw     — the head reads [x, y] directly (standard / SIREN).
+ *   fourier — the head reads γ(p) = [x, y, sin(ωk x), sin(ωk y), cos(ωk x),
+ *             cos(ωk y)] for k=0..octaves-1, ωk = 2^k·2π. encDim = 2 + 4·octaves.
+ *             MUST match src/core/field/helmholtz.ts fourierEncode (feature
+ *             order = the tfjs concat order the trained weights expect).
+ */
+export type Encoding =
+  | { kind: "raw" }
+  | { kind: "fourier"; octaves: number };
+
+/** encoded input dimension (before the class one-hot). */
+export function encodingDim(e: Encoding): number {
+  return e.kind === "fourier" ? 2 + 4 * e.octaves : 2;
+}
+
 /** One packed tensor's location — pairs 1:1 with the model's variable list. */
 export interface PackedSegment {
   floatOffset: number;
@@ -89,6 +108,8 @@ export interface FieldLayout {
    * the advect kernel, the trainer, and the renderer.
    */
   classes: number;
+  /** input encoding (raw / fourier) — the head's layer-0 input width. */
+  encoding: Encoding;
   /** total packed weights buffer length in floats (multiple of 4) */
   totalFloats: number;
   /**
@@ -119,6 +140,7 @@ const ACTIVATIONS: ReadonlySet<string> = new Set([
   "selu",
   "tanh",
   "sigmoid",
+  "sin",
 ]);
 
 function validateChain(dims: LayerDims[], label: string, wantIn: number): void {
@@ -168,14 +190,19 @@ function validateChain(dims: LayerDims[], label: string, wantIn: number): void {
 export function layoutField(
   kind: FieldSpec["kind"],
   headsDims: LayerDims[][],
-  opts: { classes?: number } = {}
+  opts: { classes?: number; encoding?: Encoding } = {}
 ): FieldLayout {
   const classes = opts.classes ?? 0;
+  const encoding: Encoding = opts.encoding ?? { kind: "raw" };
+  const encDim = encodingDim(encoding);
   if (!Number.isInteger(classes) || classes < 0 || classes > 16) {
     throw new Error(`advect: classes ${classes} outside [0, 16]`);
   }
   if (classes > 0 && kind !== "helmholtz") {
     throw new Error(`advect: classes need the helmholtz kind (got '${kind}')`);
+  }
+  if (encoding.kind === "fourier" && classes > 0) {
+    throw new Error(`advect: fourier + classes not supported yet`);
   }
   const wantHeads = kind === "helmholtz" ? 2 : 1;
   if (headsDims.length !== wantHeads) {
@@ -189,8 +216,9 @@ export function layoutField(
   const segments: PackedSegment[] = [];
   const heads: HeadSpec[] = headsDims.map((dims, h) => {
     // head 1 (chaos lane) carries the one-hot class channels; head 0 (order)
-    // and the legacy mlp stay class-blind at 2 inputs.
-    validateChain(dims, `${kind}[${h}]`, h === 1 ? 2 + classes : 2);
+    // and the legacy mlp stay class-blind. Both take the ENCODED input width
+    // (encDim = 2 for raw, 2+4·octaves for fourier).
+    validateChain(dims, `${kind}[${h}]`, h === 1 ? encDim + classes : encDim);
     const layers: LayerSpec[] = dims.map((d, l) => {
       const weightOffset = align4(off);
       off = weightOffset + d.inSize * d.outSize;
@@ -211,7 +239,7 @@ export function layoutField(
     kind === "helmholtz"
       ? { kind, heads: heads as [HeadSpec, HeadSpec] }
       : { kind, heads: heads as [HeadSpec] };
-  return { spec, classes, totalFloats: align4(off), segments };
+  return { spec, classes, encoding, totalFloats: align4(off), segments };
 }
 
 /** Salt for the storage-free class hash — must match trainer + renderer. */
@@ -236,6 +264,7 @@ function actExpr(a: Activation, s: string): string {
     case "selu":    return `selu(${s})`;
     case "tanh":    return `tanh(${s})`;
     case "sigmoid": return `sigmoid_(${s})`;
+    case "sin":     return `sin(${s})`;
   }
 }
 function actExpr4(a: Activation, s: string): string {
@@ -244,6 +273,7 @@ function actExpr4(a: Activation, s: string): string {
     case "selu":    return `selu4(${s})`;
     case "tanh":    return `tanh(${s})`;
     case "sigmoid": return `sigmoid4(${s})`;
+    case "sin":     return `sin(${s})`;
   }
 }
 
@@ -395,18 +425,37 @@ function emitHeadUnrolledF16(h: number, head: HeadSpec): string {
  * inner loops where outSize%4==0. Const loop bounds; ~4× fewer weight loads
  * than a scalar loop.
  */
-function emitHeadLooped(h: number, head: HeadSpec, maxW: number): string {
-  const classChannels = head.layers[0].inSize - 2;
+function emitHeadLooped(
+  h: number,
+  head: HeadSpec,
+  maxW: number,
+  encoding: Encoding = { kind: "raw" }
+): string {
+  const encDim = encodingDim(encoding);
+  const classChannels = head.layers[0].inSize - encDim;
   const bufs = [`h0_${h}`, `h1_${h}`];
   const lines: string[] = [`fn eval_head_${h}(p : vec2f, cls : u32) -> vec2f {`];
   if (classChannels === 0) lines.push(`  let _cls = cls; // classless head`);
   lines.push(`  var ${bufs[0]} : array<f32, ${maxW}>;`);
   lines.push(`  var ${bufs[1]} : array<f32, ${maxW}>;`);
+  // encoded input γ(p): raw = [x,y]; fourier prepends the raw coords then, per
+  // octave, [sin(ωk·x), sin(ωk·y), cos(ωk·x), cos(ωk·y)] — the SAME feature
+  // order as helmholtz.ts fourierEncode (what the trained weights expect).
   lines.push(`  ${bufs[0]}[0] = p.x;`);
   lines.push(`  ${bufs[0]}[1] = p.y;`);
+  if (encoding.kind === "fourier") {
+    for (let k = 0; k < encoding.octaves; k++) {
+      const w = (Math.pow(2, k) * 2 * Math.PI).toFixed(8);
+      const o = 2 + 4 * k;
+      lines.push(`  ${bufs[0]}[${o}] = sin(${w} * p.x);`);
+      lines.push(`  ${bufs[0]}[${o + 1}] = sin(${w} * p.y);`);
+      lines.push(`  ${bufs[0]}[${o + 2}] = cos(${w} * p.x);`);
+      lines.push(`  ${bufs[0]}[${o + 3}] = cos(${w} * p.y);`);
+    }
+  }
   if (classChannels > 0) {
     lines.push(`  for (var k = 0u; k < ${classChannels}u; k = k + 1u) {`);
-    lines.push(`    ${bufs[0]}[2u + k] = select(0.0, 1.0, k == cls);`);
+    lines.push(`    ${bufs[0]}[${encDim}u + k] = select(0.0, 1.0, k == cls);`);
     lines.push(`  }`);
   }
   head.layers.forEach((L, l) => {
@@ -507,7 +556,12 @@ export function advectShader(
   const { spec, totalFloats } = layout;
   const CLASS_SALT_LITERAL = CLASS_SALT;
   const WG = opts.workgroupSize ?? WORKGROUP_SIZE;
-  const unroll = opts.unroll ?? totalMacs(layout) <= UNROLL_MAC_LIMIT;
+  // Fourier encoding is only wired into the LOOPED emitter (it fills the
+  // encoded input array); force looped when encoding != raw.
+  const forceLooped = layout.encoding.kind !== "raw";
+  const unroll = forceLooped
+    ? false
+    : opts.unroll ?? totalMacs(layout) <= UNROLL_MAC_LIMIT;
   const precision = opts.precision ?? "f32";
   const total4 = totalFloats / 4; // layoutField pads to a multiple of 4
   const maxW = Math.max(
@@ -559,7 +613,9 @@ export function advectShader(
 
   const emitUnrolled = precision === "f16" ? emitHeadUnrolledF16 : emitHeadUnrolled;
   const heads = spec.heads
-    .map((h, i) => (unroll ? emitUnrolled(i, h) : emitHeadLooped(i, h, maxW)))
+    .map((h, i) =>
+      unroll ? emitUnrolled(i, h) : emitHeadLooped(i, h, maxW, layout.encoding)
+    )
     .join("\n\n");
 
   // `enable` directives must precede all declarations; "" for f32 keeps the
