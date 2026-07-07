@@ -28,8 +28,10 @@ import {
 // needs browser QA). See src/render/gpuPoints.ts.
 import { GpuPointRenderer } from "./render/gpuPoints";
 import { GpuPointRendererWebGPU } from "./render/webgpu/points";
+import { SplatRenderer } from "./render/webgpu/splat";
 import { AdvectKernel } from "./render/webgpu/advect";
 import { FusedTrainer } from "./render/webgpu/train";
+import { GpuTimer } from "./render/webgpu/gputime";
 
 // tfjs-backend-webgpu 4.10 calls adapter.requestAdapterInfo(), which current
 // Chrome removed in favour of the synchronous `adapter.info` property — without
@@ -40,6 +42,27 @@ import { FusedTrainer } from "./render/webgpu/train";
   if (GA && !GA.prototype.requestAdapterInfo) {
     GA.prototype.requestAdapterInfo = function () {
       return Promise.resolve((this as any).info ?? {});
+    };
+  }
+  // tfjs also OWNS GPUDevice creation and requests only the features it wants
+  // for itself — but device features are fixed at creation time, so anything
+  // OUR kernels need must be appended to tfjs's requestDevice call. Wrap it to
+  // add "shader-f16" (advect kernel's f16 fast path, see render/webgpu/
+  // advect.ts) and "timestamp-query" (upcoming GPU profiling), each only when
+  // the adapter reports it, deduped, preserving every other descriptor field.
+  if (GA && !(GA.prototype as any).__nffaRequestDeviceWrapped) {
+    (GA.prototype as any).__nffaRequestDeviceWrapped = true;
+    const origRequestDevice = GA.prototype.requestDevice;
+    GA.prototype.requestDevice = function (
+      desc?: GPUDeviceDescriptor
+    ): Promise<GPUDevice> {
+      const extras = ["shader-f16", "timestamp-query"].filter((f) =>
+        (this as GPUAdapter).features.has(f as GPUFeatureName)
+      ) as GPUFeatureName[];
+      const requiredFeatures = [
+        ...new Set([...(desc?.requiredFeatures ?? []), ...extras]),
+      ];
+      return origRequestDevice.call(this, { ...desc, requiredFeatures });
     };
   }
 }
@@ -561,8 +584,23 @@ export function startLoop(
   let trainSource: "particles" | "random" = "particles";
   let mixRandom = 0;
   let hudLoss = NaN;
+  // The shared GPUDevice (tfjs's) and the optional GPU profiler. Assigned in
+  // the async init once the webgpu backend is confirmed; timer is null when the
+  // adapter lacks "timestamp-query" (→ HUD falls back to CPU-encode lines).
+  let device: GPUDevice | null = null;
+  let timer: GpuTimer | null = null;
   let wh: tf.Tensor2D | null = null;
   let renderer: GpuPointRendererWebGPU | null = null;
+  // Compute-splat renderer (accumulation buffer + tonemap): ~5 ms at 1M vs
+  // ~25 ms for instanced quads (4M verts + additive overdraw). Picked per
+  // frame by particle count — quads win visually at low N (AA round dots),
+  // splat wins structurally at high N, and its decay gives real ghost
+  // trails. `?render=splat|quads` forces one; `?decay=F` overrides decay.
+  let splat: SplatRenderer | null = null;
+  const renderOverride = new URLSearchParams(location.search).get("render");
+  const SPLAT_MIN_N = 20000;
+  const exposureScale =
+    parseFloat(new URLSearchParams(location.search).get("exposure") ?? "1") || 1;
 
   let frame = 0;
 
@@ -587,20 +625,35 @@ export function startLoop(
   // as ~10KB of GPU→GPU copies per frame; particle state never touches tfjs,
   // so particle count scales to 1M+ without touching the train cost.
   async function tick() {
-    if (!running || !(optimizer || trainer) || !advect || !wh) return;
+    if (!running || !(optimizer || trainer) || !advect || !wh || !device) return;
     frame++;
 
-    // (1) LEARN — one gradient step on a SMALL random batch.
+    // ONE command encoder for the whole frame. On the FUSED path it records
+    // trainer pass A+B, the advect pass, and the render, then submits ONCE —
+    // versus the old three-submits-per-frame (train, advect, render). The tfjs
+    // legacy path can't share the encoder for its learn (optimizer.minimize
+    // does its own internal submits), but advect+render still share this one.
+    const enc = device.createCommandEncoder();
+    // Per-pass timestamp descriptors (undefined when the profiler is absent):
+    // 0/1 rollout(A), 2/3 optim(B), 4/5 advect, 6/7 render.
+    const tsA = timer?.writes(0, 1);
+    const tsB = timer?.writes(2, 3);
+    const tsAdvect = timer?.writes(4, 5);
+    const tsRender = timer?.writes(6, 7);
+
+    // (1) LEARN — one gradient step on a SMALL batch.
     //     Fused path (field pieces): 2 WGSL dispatches (analytic backward +
-    //     Adam) writing the shared weights buffer in place — no tfjs, no
-    //     readback; trainMs is just CPU encode time.
+    //     Adam) recorded into `enc`, writing the shared weights buffer in place
+    //     — no tfjs, no readback; the advect pass below then reads the freshly
+    //     trained weights (pass ordering in one encoder inserts the barrier).
     //     tfjs path (legacy MLP pieces / ?train=tfjs): optimizer.minimize.
     const trainStart = performance.now();
     if (trainer && frame % trainEvery !== 0) {
       // `?trainEvery=N`: amortize training — the rollout batch is an imagined
       // trajectory, so skipping frames loses nothing but update frequency.
     } else if (trainer) {
-      trainer.step(
+      trainer.encodeStep(
+        enc,
         {
           width: w,
           height: h,
@@ -615,7 +668,9 @@ export function startLoop(
           seed: frame,
           source: trainSource,
           mixRandom,
-        }
+        },
+        tsA,
+        tsB
       );
       if (frame % 30 === 0) {
         trainer
@@ -640,23 +695,64 @@ export function startLoop(
     }
     const trainMs = performance.now() - trainStart;
 
-    // (2) ADVECT — ONE fused dispatch over ALL particles (async on the GPU;
-    //     CPU cost here is just encoding, so no HUD line for it).
-    advect.step(frame, field ? (field as HelmholtzField).alpha : 0);
+    // (2) ADVECT — ONE fused dispatch over ALL particles, recorded into `enc`.
+    //     Returns the tfjs weight-sync clones (empty on the fused path); they
+    //     must be disposed AFTER submit so their source buffers survive the
+    //     in-flight copies.
+    const advectRefs = advect.encodeStep(
+      enc,
+      frame,
+      field ? (field as HelmholtzField).alpha : 0,
+      tsAdvect
+    );
 
-    // (3) RENDER — dots drawn straight from the kernel's particle buffers.
+    // (3) RENDER — dots drawn straight from the kernel's particle buffers,
+    //     recorded into `enc`.
     let renderMs = 0;
     if (renderer) {
       const r0 = performance.now();
-      renderer.renderFromBuffers(
-        advect.posBuffer,
-        advect.velBuffer,
-        advect.count,
-        w,
-        h
-      );
+      const useSplat =
+        splat !== null &&
+        renderOverride !== "quads" &&
+        (renderOverride === "splat" || advect.count >= SPLAT_MIN_N);
+      if (useSplat) {
+        // AUTO-EXPOSURE: accumulated energy scales with particle density and
+        // the trail steady-state 1/(1-decay); normalize so the MEAN displayed
+        // energy stays constant across counts (attractor hot-spots still
+        // bloom through the tonemap shoulder — that's the aesthetic).
+        // `?exposure=F` scales the target.
+        splat!.exposure =
+          (0.35 * w * h * (1 - Math.min(splat!.decay, 0.995))) /
+          Math.max(1, advect.count) * exposureScale;
+        splat!.encodeRender(
+          enc,
+          advect.posBuffer,
+          advect.velBuffer,
+          advect.count,
+          w,
+          h,
+          tsRender
+        );
+      } else {
+        renderer.encodeRender(
+          enc,
+          advect.posBuffer,
+          advect.velBuffer,
+          advect.count,
+          w,
+          h,
+          tsRender
+        );
+      }
       renderMs = performance.now() - r0;
     }
+
+    // Resolve the timestamp query set into a staging buffer within THIS frame's
+    // encoder (~every 15 frames), then SINGLE submit for the whole frame.
+    if (timer) timer.maybeResolve(enc, frame);
+    device.queue.submit([enc.finish()]);
+    for (const t of advectRefs) t.dispose();
+    if (timer) timer.afterSubmit();
 
     const now = performance.now();
     emaFrame = ema(emaFrame, now - lastT);
@@ -664,15 +760,22 @@ export function startLoop(
     emaTrain = ema(emaTrain, trainMs);
     emaRender = ema(emaRender, renderMs);
     if (frame % 6 === 0) {
-      tele.textContent =
+      const head =
         `${cfg.name}\n` +
         `backend ${tf.getBackend()}  render=${particleCount} train=${sampleRate}\n` +
-        `FPS     ${(1000 / emaFrame).toFixed(1)}  (${emaFrame.toFixed(1)} ms)\n` +
-        `learn   ${emaTrain.toFixed(1)} ms${
-          trainer ? `  (fused)  loss ${hudLoss.toFixed(3)}` : ""
-        }\n` +
-        `render  ${emaRender.toFixed(1)} ms\n` +
-        `tensors ${tf.memory().numTensors}`;
+        `FPS     ${(1000 / emaFrame).toFixed(1)}  (${emaFrame.toFixed(1)} ms)\n`;
+      // Real per-pass GPU times replace the CPU-encode learn/render lines
+      // whenever the profiler is live AND we're on the fused path (only then do
+      // the rollout/optim passes exist). Otherwise show the CPU-encode lines.
+      const gt = timer?.timings;
+      const body =
+        gt && trainer
+          ? `rollout ${gt.rollout.toFixed(2)} ms  optim ${gt.optim.toFixed(2)} ms  loss ${hudLoss.toFixed(3)}\n` +
+            `advect  ${gt.advect.toFixed(2)} ms  render ${gt.render.toFixed(2)} ms  (gpu)\n`
+          : `learn   ${emaTrain.toFixed(1)} ms${
+              trainer ? `  (fused)  loss ${hudLoss.toFixed(3)}` : ""
+            }\n` + `render  ${emaRender.toFixed(1)} ms\n`;
+      tele.textContent = head + body + `tensors ${tf.memory().numTensors}`;
     }
 
     requestAnimationFrame(tick);
@@ -692,6 +795,18 @@ export function startLoop(
       showWebGPUWarning();
       return;
     }
+
+    // The shared GPUDevice tfjs created — everything (advect/train/render/timer)
+    // records onto it. The optional GPU profiler needs the "timestamp-query"
+    // feature (main.ts's requestDevice shim appends it when present); when it's
+    // absent GpuTimer.create returns null and the HUD keeps its CPU-encode lines.
+    device = (tf.backend() as unknown as { device: GPUDevice }).device;
+    timer = GpuTimer.create(device);
+    console.log(
+      timer
+        ? "[gputime] timestamp-query active — HUD shows per-pass GPU ms"
+        : "[gputime] no timestamp-query feature — HUD uses CPU-encode ms"
+    );
 
     // `?handoff=N`: override tfjs's small-tensor CPU forwarding threshold
     // (WEBGPU_CPU_HANDOFF_SIZE_THRESHOLD; 0 = force every op onto the GPU).
@@ -742,7 +857,6 @@ export function startLoop(
       wantTfjsTrainer = false;
     }
     if (field && !wantTfjsTrainer) {
-      const device = (tf.backend() as unknown as { device: GPUDevice }).device;
       // `?rollout=K` (1..16, default 1): K-step BPTT rollout — the loss sees
       // how particles FLOW through the field (evolving pos+vel), not just one
       // step. K is compiled into the trainer's WGSL. K=1 ≡ the tfjs loss.
@@ -774,7 +888,7 @@ export function startLoop(
           parseFloat(new URLSearchParams(location.search).get("mix") ?? "0") || 0
         )
       );
-      trainer = new FusedTrainer(device, advect.layout, {
+      trainer = new FusedTrainer(device!, advect.layout, {
         weightsBuffer: advect.weightsBuffer,
         batchCap: 1024,
         kSteps: rollout,
@@ -822,6 +936,18 @@ export function startLoop(
         maxSpeed: cfg.maxVelocity,
         classes: field ? (field as HelmholtzField).classes ?? 0 : 0,
       });
+      // splat shares the canvas context with the quad renderer (same device/
+      // format); its passes only run on frames where it's picked.
+      const decayParam = new URLSearchParams(location.search).get("decay");
+      splat = new SplatRenderer(canvas, {
+        background: cfg.backgroundColor,
+        maxSpeed: cfg.maxVelocity,
+        classes: field ? (field as HelmholtzField).classes ?? 0 : 0,
+        // "alpha-fade" pieces always wanted ghost trails — decay delivers them.
+        decay: decayParam !== null
+          ? Math.max(0, Math.min(0.995, parseFloat(decayParam) || 0))
+          : cfg.renderer === "alpha-fade" ? 0.88 : 0,
+      });
     } catch (e) {
       console.error("[webgpu] renderer init failed", e);
       showWebGPUWarning();
@@ -834,6 +960,8 @@ export function startLoop(
   return () => {
     running = false;
     if (renderer) renderer.destroy();
+    if (splat) splat.destroy?.();
+    if (timer) timer.destroy(); // querySet + resolve/staging GPUBuffers
     tele.remove();
     if (optimizer) optimizer.dispose(); // frees Adam accumulators (leaked on tab switch)
     if (wh) wh.dispose();

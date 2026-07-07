@@ -141,9 +141,18 @@ if (!adapter) {
   console.error("FATAL: no WebGPU adapter (bun-webgpu found no GPU)");
   process.exit(1);
 }
-const device: any = await adapter.requestDevice();
+// Device features are creation-time-only: the f16 cases need "shader-f16"
+// requested HERE (mirrors main.ts, which wraps tfjs's requestDevice call).
+// Feature-detect so the suite still runs — minus f16 — on adapters without it.
+const HAS_F16: boolean = adapter.features?.has?.("shader-f16") ?? false;
+const device: any = await adapter.requestDevice(
+  HAS_F16 ? { requiredFeatures: ["shader-f16"] } : undefined
+);
 const info = adapter.info ?? {};
-console.log(`adapter: ${info.vendor ?? "?"} ${info.architecture ?? "?"}\n`);
+console.log(
+  `adapter: ${info.vendor ?? "?"} ${info.architecture ?? "?"}` +
+    `${HAS_F16 ? "" : "  (no shader-f16 — f16 cases will be SKIPPED)"}\n`
+);
 
 // bun-webgpu doesn't implement getCompilationInfo — WGSL compile errors
 // surface through the validation error scope at pipeline creation instead.
@@ -185,9 +194,12 @@ interface GpuSim {
   n: number;
 }
 
+/** Passed straight through to advectShader (precision included). */
+type ShaderOpts = { stageWeights: boolean; unroll?: boolean; precision?: "f32" | "f16" };
+
 async function makeSim(
   layout: FieldLayout,
-  shaderOpts: { stageWeights: boolean; unroll?: boolean },
+  shaderOpts: ShaderOpts,
   W: Float32Array,
   pos: Float32Array,
   vel: Float32Array
@@ -262,7 +274,7 @@ function chain(hidden: number[], hiddenAct: Activation, outAct: Activation, in0 
 async function numericCase(
   name: string,
   layout: FieldLayout,
-  shaderOpts: { stageWeights: boolean; unroll?: boolean },
+  shaderOpts: ShaderOpts,
   P: Phys
 ): Promise<void> {
   const rnd = mulberry32(1234);
@@ -299,7 +311,21 @@ async function numericCase(
     maxP = Math.max(maxP, dp);
     maxV = Math.max(maxV, Math.abs(gVel[i] - refVel[i]));
   }
-  const ok = maxP < 0.02 && maxV < 0.02;
+  // Tolerance derivation:
+  //   f32 — 0.02 px: the original bound; also the REGRESSION GUARD that the
+  //     f32 codegen stayed byte-identical after the f16 fast path landed (the
+  //     printed maxΔ values must match the pre-f16 run exactly).
+  //   f16 — weights/activations round to a 10-bit mantissa ⇒ ~5e-4 relative
+  //     per value; through 3 layers of ~32-term MACs that compounds to
+  //     ~0.3-1% relative force error. |force| ≲ 1 (tanh heads) × forceMag 3.5
+  //     ⇒ per-step velocity error up to ~0.03 px, and velocity persists
+  //     through friction≈1 so 3 steps stack to ~0.1 px in velocity and
+  //     ~0.2 px in integrated position. Bounds: maxΔvel < 0.1, maxΔpos < 0.25
+  //     (small headroom on pos for the worst-case particle). Values well
+  //     beyond that (≳1 px) would mean a real bug (wrong row, overflow), not
+  //     rounding.
+  const [tolP, tolV] = shaderOpts.precision === "f16" ? [0.25, 0.1] : [0.02, 0.02];
+  const ok = maxP < tolP && maxV < tolV;
   if (!ok) failures++;
   console.log(
     `${ok ? "PASS" : "FAIL"}  ${name}  (${STEPS} steps, maxΔpos=${maxP.toExponential(2)}, maxΔvel=${maxV.toExponential(2)})`
@@ -362,6 +388,31 @@ await numericCase(
   HELM
 );
 
+// 6 — f16 FAST PATH: same shipped field + the classes=3 multi-species shape,
+//     weights staged as vec4<f16>, MACs/accumulation in f16 (activations and
+//     physics f32). Compared against the SAME float64 reference as the f32
+//     cases, with the wider f16 tolerance (derivation at the check above).
+if (HAS_F16) {
+  await numericCase(
+    "helmholtz [32,32] f16 unrolled    ",
+    layoutField("helmholtz", [chain([32, 32], "selu", "tanh"), chain([32, 32], "selu", "tanh")]),
+    { stageWeights: true, precision: "f16" },
+    HELM
+  );
+  await numericCase(
+    "helmholtz classes=3 [32,32] f16   ",
+    layoutField(
+      "helmholtz",
+      [chain([32, 32], "selu", "tanh"), chain([32, 32], "selu", "tanh", 5)],
+      { classes: 3 }
+    ),
+    { stageWeights: true, precision: "f16" },
+    HELM
+  );
+} else {
+  console.log("SKIP  f16 cases — adapter has no shader-f16 feature");
+}
+
 // 5 — resetRate=1: every particle must respawn in-bounds with zero velocity
 {
   const layout = layoutField("helmholtz", [
@@ -392,7 +443,9 @@ await numericCase(
   console.log(`${ok ? "PASS" : "FAIL"}  reset: respawn in-bounds, vel=0, spread buckets=${spreadX.size}`);
 }
 
-// 6 — benchmark: fused advect at 1M particles, per-frame submit pattern
+// 7 — benchmark: fused advect at 1M particles, per-frame submit pattern.
+//     f32 and f16 run back-to-back on identical initial state (fresh buffers
+//     per run) so the two numbers are directly comparable.
 {
   const N = Number(process.env.BENCH_N ?? 1_000_000);
   const layout = layoutField("helmholtz", [
@@ -409,24 +462,31 @@ await numericCase(
     pos[i + 1] = rnd() * 1080;
   }
   const P: Phys = { w: 1920, h: 1080, forceMag: 3.5, friction: 0.99, maxVel: 26, alpha: 0.7, resetRate: 0.01 };
-  const sim = await makeSim(layout, { stageWeights: true }, W, pos, vel);
 
-  const WARM = 20, TIMED = 200;
-  for (let s = 0; s < WARM; s++) {
-    device.queue.writeBuffer(sim.uni, 0, uniData(P, s, N));
-    encodeStep(sim);
-  }
-  await readback(sim.posBuf, 2); // settle
-  const t0 = performance.now();
-  for (let s = 0; s < TIMED; s++) {
-    device.queue.writeBuffer(sim.uni, 0, uniData(P, WARM + s, N));
-    encodeStep(sim);
-  }
-  await readback(sim.posBuf, 2); // fence
-  const ms = (performance.now() - t0) / TIMED;
-  console.log(
-    `\nBENCH  fused advect @ ${N.toLocaleString()} particles: ${ms.toFixed(3)} ms/step  (${(1000 / ms).toFixed(0)} steps/s)`
-  );
+  console.log("");
+  const benchOne = async (precision: "f32" | "f16"): Promise<void> => {
+    const sim = await makeSim(layout, { stageWeights: true, precision }, W, pos, vel);
+    const WARM = 20, TIMED = 200;
+    for (let s = 0; s < WARM; s++) {
+      device.queue.writeBuffer(sim.uni, 0, uniData(P, s, N));
+      encodeStep(sim);
+    }
+    await readback(sim.posBuf, 2); // settle
+    const t0 = performance.now();
+    for (let s = 0; s < TIMED; s++) {
+      device.queue.writeBuffer(sim.uni, 0, uniData(P, WARM + s, N));
+      encodeStep(sim);
+    }
+    await readback(sim.posBuf, 2); // fence
+    const ms = (performance.now() - t0) / TIMED;
+    console.log(
+      `BENCH  fused advect ${precision} @ ${N.toLocaleString()} particles: ${ms.toFixed(3)} ms/step  (${(1000 / ms).toFixed(0)} steps/s)`
+    );
+    for (const b of [sim.posBuf, sim.velBuf]) b.destroy();
+  };
+  await benchOne("f32");
+  if (HAS_F16) await benchOne("f16");
+  else console.log("BENCH  f16 skipped — adapter has no shader-f16 feature");
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nALL PASS");

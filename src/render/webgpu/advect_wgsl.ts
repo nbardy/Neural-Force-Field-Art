@@ -20,10 +20,14 @@
  *   naive loop codegen, wg=64, storage reads . ~18-20 ms/step
  *   loop codegen, wg=128, workgroup staging .. ~14 ms/step
  *   fully-unrolled scalar registers ......... ~12 ms/step
- *   UNROLLED VEC4 TILES + staging + wg=256 .. ~7-9 ms/step   ← shipped
+ *   UNROLLED VEC4 TILES + staging + wg=256 .. ~7-9 ms/step   ← shipped (f32)
+ *   + f16 stage/MAC/accum (precision:"f16") . ~4-7 ms/step   ← shipped when
+ *                                              the device has "shader-f16"
  * The kernel is weight-load-throughput bound, so the wins are (a) staging the
  * ~10KB of weights in workgroup memory, (b) vec4 weight loads accumulating 4
- * outputs at once, (c) full unrolling so activations live in registers.
+ * outputs at once, (c) full unrolling so activations live in registers, and
+ * (d) f16 halving the staged-weight traffic (see emitHeadUnrolledF16 for the
+ * f16/f32 precision split; physics is always f32).
  *
  * Weight layout matches tfjs dense so packed buffers are filled by verbatim
  * GPU→GPU copies of each variable: kernel `[in][out]` row-major (row = input
@@ -309,6 +313,84 @@ function emitHeadUnrolled(h: number, head: HeadSpec): string {
 }
 
 /**
+ * f16 UNROLLED head evaluator — same tiling as emitHeadUnrolled, but the
+ * staged weights, MACs, and accumulators are f16 (halves the workgroup-memory
+ * traffic the kernel is bound on, 2× ALU rate on Apple GPUs; measured
+ * ~9.1-9.6 → ~6.0-7.5 ms/step @ 1M particles on M-series Metal).
+ *
+ * Precision split (deliberate, matches the measured A/B in the f16 bench):
+ *   - MACs + accumulation ... f16 (the win; error ~2^-11 relative per term)
+ *   - activations ........... f32 (exp/tanh lose REAL precision in f16 —
+ *                              compute via a vec4f cast, truncate back to f16)
+ *   - positions / physics ... f32 (untouched — only the field eval narrows)
+ * Layer-0 class row add (`acc + W4(row 2+cls)`) is a plain f16 add.
+ * Scalar (outSize%4!=0) layers widen each f16 weight to f32, compute in f32,
+ * and hand the next layer an f16 activation — the final outSize=2 layer always
+ * takes this path, so head outputs are f16-rounded, well inside the kernel
+ * test's f16 tolerance.
+ */
+function emitHeadUnrolledF16(h: number, head: HeadSpec): string {
+  const classChannels = head.layers[0].inSize - 2;
+  const lines: string[] = [`fn eval_head_${h}(p : vec2f, cls : u32) -> vec2f {`];
+  if (classChannels === 0) lines.push(`  let _cls = cls; // classless head`);
+  // position narrowed ONCE per head; p in [0,1] so f16 costs ~5e-4 absolute
+  lines.push(`  let hx = f16(p.x); let hy = f16(p.y);`);
+  let prev: string[] = []; // f16-typed expressions
+  head.layers.forEach((L, l) => {
+    const cur: string[] = [];
+    lines.push(`  // layer ${l}: ${L.inSize} -> ${L.outSize} (${L.activation})`);
+    if (L.outSize % 4 === 0) {
+      const T = L.outSize / 4; // vec4 tiles per row; offsets are 16B-aligned
+      for (let t = 0; t < T; t++) {
+        const acc = `q${h}_${l}_${t}`;
+        lines.push(`  var ${acc} = W4(${L.biasOffset / 4 + t}u);`);
+        const row = (i: number) => (L.weightOffset + i * L.outSize) / 4 + t;
+        if (l === 0) {
+          lines.push(`  ${acc} = fma(vec4<f16>(hx), W4(${row(0)}u), ${acc});`);
+          lines.push(`  ${acc} = fma(vec4<f16>(hy), W4(${row(1)}u), ${acc});`);
+          if (classChannels > 0) {
+            // dynamic row 2+cls; OUT%4==0 + 16B-aligned offset ⇒ exact /4
+            lines.push(
+              `  ${acc} = ${acc} + W4((${L.weightOffset}u + (2u + cls) * ${L.outSize}u) / 4u + ${t}u);`
+            );
+          }
+        } else {
+          for (let i = 0; i < L.inSize; i++) {
+            lines.push(`  ${acc} = fma(vec4<f16>(${prev[i]}), W4(${row(i)}u), ${acc});`);
+          }
+        }
+        // activation in f32, truncated back to f16 for the next layer's MACs
+        lines.push(
+          `  let a${h}_${l}_${t} = vec4<f16>(${actExpr4(L.activation, `vec4f(${acc})`)});`
+        );
+        for (const c of ["x", "y", "z", "w"]) cur.push(`a${h}_${l}_${t}.${c}`);
+      }
+    } else {
+      for (let j = 0; j < L.outSize; j++) {
+        const terms = [`f32(W(${L.biasOffset + j}u))`];
+        if (l === 0) {
+          terms.push(`p.x * f32(W(${L.weightOffset + j}u))`);
+          terms.push(`p.y * f32(W(${L.weightOffset + L.outSize + j}u))`);
+          if (classChannels > 0) {
+            terms.push(`f32(W(${L.weightOffset}u + (2u + cls) * ${L.outSize}u + ${j}u))`);
+          }
+        } else {
+          for (let i = 0; i < L.inSize; i++) {
+            terms.push(`f32(${prev[i]}) * f32(W(${L.weightOffset + i * L.outSize + j}u))`);
+          }
+        }
+        lines.push(`  let s${h}_${l}_${j} = ${actExpr(L.activation, terms.join(" + "))};`);
+        cur.push(`f16(s${h}_${l}_${j})`);
+      }
+    }
+    prev = cur;
+  });
+  lines.push(`  return vec2f(f32(${prev[0]}), f32(${prev[1]}));`);
+  lines.push(`}`);
+  return lines.join("\n");
+}
+
+/**
  * LOOPED head evaluator (big nets): ping-pong activation arrays, vec4-tiled
  * inner loops where outSize%4==0. Const loop bounds; ~4× fewer weight loads
  * than a scalar loop.
@@ -392,6 +474,16 @@ export interface AdvectShaderOpts {
   workgroupSize?: number;
   /** Force unrolled/looped head codegen; default auto by UNROLL_MAC_LIMIT. */
   unroll?: boolean;
+  /**
+   * Field-eval precision. "f32" (default) is BYTE-IDENTICAL to the original
+   * codegen (regression guard in tools/kernel_test.ts). "f16" stages weights
+   * as vec4<f16> and runs the MLP MACs/accumulators in f16 (activations f32,
+   * physics f32) — the measured fast path (~9.3 → ~6.5 ms/step @ 1M, Apple
+   * Metal). Requires the DEVICE to have the "shader-f16" feature, and only
+   * the unrolled+staged codegen has an f16 variant — requesting "f16" with a
+   * looped net or stageWeights:false throws (no silent fallback).
+   */
+  precision?: "f32" | "f16";
 }
 
 /**
@@ -416,32 +508,66 @@ export function advectShader(
   const CLASS_SALT_LITERAL = CLASS_SALT;
   const WG = opts.workgroupSize ?? WORKGROUP_SIZE;
   const unroll = opts.unroll ?? totalMacs(layout) <= UNROLL_MAC_LIMIT;
+  const precision = opts.precision ?? "f32";
   const total4 = totalFloats / 4; // layoutField pads to a multiple of 4
   const maxW = Math.max(
     2,
     ...spec.heads.flatMap((h) => h.layers.map((L) => Math.max(L.outSize, L.inSize)))
   );
 
-  const weightAccess = opts.stageWeights
-    ? `var<workgroup> wsW : array<vec4f, ${total4}>;\n` +
-      `fn W4(i : u32) -> vec4f { return wsW[i]; }\n` +
-      `fn W(i : u32) -> f32 { return wsW[i >> 2u][i & 3u]; }`
-    : `fn W4(i : u32) -> vec4f { return weights[i]; }\n` +
-      `fn W(i : u32) -> f32 { return weights[i >> 2u][i & 3u]; }`;
+  // f16 is a fast path for the SHIPPED configuration (small net → unrolled +
+  // staged); there is deliberately no f16 looped/unstaged emitter. Requesting
+  // an impossible combination throws — no silent f32 downgrade (Rule T4).
+  if (precision === "f16" && !unroll) {
+    throw new Error(
+      `advect: precision 'f16' needs the unrolled emitter, but this net ` +
+        `(${totalMacs(layout)} MACs > ${UNROLL_MAC_LIMIT}) uses the looped ` +
+        `fallback — pass precision 'f32' for big nets`
+    );
+  }
+  if (precision === "f16" && !opts.stageWeights) {
+    throw new Error(
+      `advect: precision 'f16' requires stageWeights (the f16 win IS the ` +
+        `halved workgroup-memory traffic) — pass precision 'f32' when weights ` +
+        `don't fit workgroup memory`
+    );
+  }
+
+  const weightAccess =
+    precision === "f16"
+      ? // staged only (enforced above): weights live as vec4<f16>
+        `var<workgroup> wsW : array<vec4<f16>, ${total4}>;\n` +
+        `fn W4(i : u32) -> vec4<f16> { return wsW[i]; }\n` +
+        `fn W(i : u32) -> f16 { return wsW[i >> 2u][i & 3u]; }`
+      : opts.stageWeights
+      ? `var<workgroup> wsW : array<vec4f, ${total4}>;\n` +
+        `fn W4(i : u32) -> vec4f { return wsW[i]; }\n` +
+        `fn W(i : u32) -> f32 { return wsW[i >> 2u][i & 3u]; }`
+      : `fn W4(i : u32) -> vec4f { return weights[i]; }\n` +
+        `fn W(i : u32) -> f32 { return weights[i >> 2u][i & 3u]; }`;
 
   // Staging must happen in UNIFORM control flow (workgroupBarrier), i.e.
   // before the `gid >= count` early-out — dead threads still help copy.
+  // f16: the storage buffer stays f32 (packed by tfjs copies); each thread
+  // narrows on the fly while staging.
   const stagePrelude = opts.stageWeights
-    ? `  for (var i = li; i < ${total4}u; i = i + ${WG}u) { wsW[i] = weights[i]; }\n` +
+    ? `  for (var i = li; i < ${total4}u; i = i + ${WG}u) { wsW[i] = ${
+        precision === "f16" ? "vec4<f16>(weights[i])" : "weights[i]"
+      }; }\n` +
       `  workgroupBarrier();`
     : ``;
 
+  const emitUnrolled = precision === "f16" ? emitHeadUnrolledF16 : emitHeadUnrolled;
   const heads = spec.heads
-    .map((h, i) => (unroll ? emitHeadUnrolled(i, h) : emitHeadLooped(i, h, maxW)))
+    .map((h, i) => (unroll ? emitUnrolled(i, h) : emitHeadLooped(i, h, maxW)))
     .join("\n\n");
 
+  // `enable` directives must precede all declarations; "" for f32 keeps the
+  // f32 output byte-identical to the pre-f16 codegen.
+  const enableDirective = precision === "f16" ? `enable f16;\n` : ``;
+
   return /* wgsl */ `
-struct Uni {
+${enableDirective}struct Uni {
   resolution : vec2f,
   forceMag   : f32,
   friction   : f32,

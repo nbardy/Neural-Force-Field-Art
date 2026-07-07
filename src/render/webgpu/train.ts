@@ -15,6 +15,7 @@
  */
 
 import type { FieldLayout } from "./advect_wgsl";
+import type { PassTimestampWrites } from "./gputime";
 import {
   trainPassAShader,
   trainPassBShader,
@@ -205,8 +206,37 @@ export class FusedTrainer {
     this.device.queue.writeBuffer(this.batchBuf, 0, b as unknown as BufferSource);
   }
 
-  /** One fused training step: 2 dispatches, 1 submit. */
+  /** One fused training step: 2 dispatches, 1 submit. (Self-submitting — tests
+   *  and the tfjs-legacy path use this; the fused hot path uses encodeStep.) */
   step(phys: TrainPhysics, o: TrainStepOpts): void {
+    const enc = this.device.createCommandEncoder();
+    this.record(enc, phys, o);
+    this.device.queue.submit([enc.finish()]);
+  }
+
+  /**
+   * Same two passes as {@link step}, recorded into a CALLER-owned encoder and
+   * NOT submitted — so a whole frame (train + advect + render) collapses to one
+   * queue.submit. Uniform writeBuffers stay on the queue (ordered before the
+   * caller's submit). `tsA`/`tsB` optionally timestamp passes A and B.
+   */
+  encodeStep(
+    encoder: GPUCommandEncoder,
+    phys: TrainPhysics,
+    o: TrainStepOpts,
+    tsA?: PassTimestampWrites,
+    tsB?: PassTimestampWrites
+  ): void {
+    this.record(encoder, phys, o, tsA, tsB);
+  }
+
+  private record(
+    encoder: GPUCommandEncoder,
+    phys: TrainPhysics,
+    o: TrainStepOpts,
+    tsA?: PassTimestampWrites,
+    tsB?: PassTimestampWrites
+  ): void {
     if (o.n > this.batchCap) {
       throw new Error(`train: n=${o.n} > batchCap ${this.batchCap}`);
     }
@@ -245,18 +275,22 @@ export class FusedTrainer {
     uB[6] = o.n;
     this.device.queue.writeBuffer(this.uniB, 0, this.uniBData);
 
-    const enc = this.device.createCommandEncoder();
-    const pa = enc.beginComputePass();
+    // @webgpu/types 0.1.30 predates the object-form timestampWrites; the live
+    // runtime uses it, so cast the descriptor (see gputime.ts).
+    const pa = encoder.beginComputePass(
+      (tsA ? { timestampWrites: tsA } : undefined) as GPUComputePassDescriptor
+    );
     pa.setPipeline(this.pipeA);
     pa.setBindGroup(0, this.bindA);
     pa.dispatchWorkgroups(1); // ONE workgroup owns the batch (see train_wgsl)
     pa.end();
-    const pb = enc.beginComputePass();
+    const pb = encoder.beginComputePass(
+      (tsB ? { timestampWrites: tsB } : undefined) as GPUComputePassDescriptor
+    );
     pb.setPipeline(this.pipeB);
     pb.setBindGroup(0, this.bindB);
     pb.dispatchWorkgroups(Math.ceil(this.layout.totalFloats / TRAIN_WG_B));
     pb.end();
-    this.device.queue.submit([enc.finish()]);
   }
 
   resetAdam(): void {

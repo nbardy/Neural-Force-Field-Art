@@ -16,6 +16,7 @@
  */
 
 import * as tf from "@tensorflow/tfjs";
+import type { PassTimestampWrites } from "./gputime";
 import {
   attachCanvas,
   renderPipeline,
@@ -163,13 +164,46 @@ export class GpuPointRendererWebGPU {
   private bufBindVel: GPUBuffer | null = null;
 
   /** Draw N round dots straight from raw GPU buffers (interleaved xy f32) —
-   *  the zero-copy path for the fused advect kernel's particle state. */
+   *  the zero-copy path for the fused advect kernel's particle state.
+   *  (Self-submitting; the fused hot path uses encodeRender.) */
   renderFromBuffers(
     posBuf: GPUBuffer,
     velBuf: GPUBuffer,
     n: number,
     w: number,
     h: number
+  ): void {
+    const encoder = this.device.createCommandEncoder();
+    this.record(encoder, posBuf, velBuf, n, w, h);
+    this.device.queue.submit([encoder.finish()]);
+  }
+
+  /**
+   * Same render pass as {@link renderFromBuffers}, recorded into a CALLER-owned
+   * encoder and NOT submitted — lets a whole frame collapse to one queue.submit.
+   * getCurrentTexture() is called here, during this frame's recording (correct).
+   * `ts` optionally timestamps the pass.
+   */
+  encodeRender(
+    encoder: GPUCommandEncoder,
+    posBuf: GPUBuffer,
+    velBuf: GPUBuffer,
+    n: number,
+    w: number,
+    h: number,
+    ts?: PassTimestampWrites
+  ): void {
+    this.record(encoder, posBuf, velBuf, n, w, h, ts);
+  }
+
+  private record(
+    encoder: GPUCommandEncoder,
+    posBuf: GPUBuffer,
+    velBuf: GPUBuffer,
+    n: number,
+    w: number,
+    h: number,
+    ts?: PassTimestampWrites
   ): void {
     this.uniF[0] = w;
     this.uniF[1] = h;
@@ -190,15 +224,27 @@ export class GpuPointRendererWebGPU {
     }
     const group = this.bufBind!;
 
-    renderPass(
-      this.ctx,
-      [this.bg[0] / 255, this.bg[1] / 255, this.bg[2] / 255, 1],
-      (p) => {
-        p.setPipeline(this.pipeline);
-        p.setBindGroup(0, group);
-        p.draw(4, n);
-      }
-    );
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: this.ctx.context.getCurrentTexture().createView(),
+          clearValue: {
+            r: this.bg[0] / 255,
+            g: this.bg[1] / 255,
+            b: this.bg[2] / 255,
+            a: 1,
+          },
+          loadOp: "clear",
+          storeOp: "store",
+        },
+      ],
+      // @webgpu/types 0.1.30 predates object-form timestampWrites (see gputime).
+      ...((ts ? { timestampWrites: ts } : {}) as object),
+    });
+    pass.setPipeline(this.pipeline);
+    pass.setBindGroup(0, group);
+    pass.draw(4, n);
+    pass.end();
   }
 
   /** Draw `pos` ([N,2] pixel coords) as N round dots, reading positions straight

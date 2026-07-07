@@ -28,6 +28,7 @@ import {
   type LayerDims,
 } from "./advect_wgsl";
 import { computePipeline } from "./microgpu";
+import type { PassTimestampWrites } from "./gputime";
 import type { HelmholtzField } from "../../core/field/helmholtz";
 
 /** Per-piece physics constants baked into the uniform once at construction. */
@@ -179,9 +180,19 @@ export class AdvectKernel {
 
     const stageWeights =
       layout.totalFloats * 4 <= device.limits.maxComputeWorkgroupStorageSize;
+    // f16 fast path (measured ~9.3 → ~6.5 ms/step @ 1M on Apple Metal): only
+    // the unrolled+staged codegen has an f16 variant, and the FEATURE must be
+    // on the device — tfjs creates the device and requests only its own
+    // features, so main.ts wraps GPUAdapter.requestDevice to append
+    // "shader-f16" (device features are fixed at creation time).
+    const unrolled = totalMacs(layout) <= UNROLL_MAC_LIMIT;
+    const precision: "f32" | "f16" =
+      device.features.has("shader-f16") && stageWeights && unrolled
+        ? "f16"
+        : "f32";
     this.pipeline = computePipeline(
       device,
-      advectShader(layout, { stageWeights })
+      advectShader(layout, { stageWeights, precision })
     );
 
     // COPY_SRC: a co-owning FusedTrainer reads this buffer back in tests
@@ -212,7 +223,7 @@ export class AdvectKernel {
     console.log(
       `[advect] fused kernel: ${layout.spec.kind}, ${layout.totalFloats} weight ` +
         `floats, ${totalMacs(layout)} MACs/particle, staged=${stageWeights}, ` +
-        `unrolled=${totalMacs(layout) <= UNROLL_MAC_LIMIT}, n=${particleCount}`
+        `unrolled=${unrolled}, precision=${precision}, n=${particleCount}`
     );
   }
 
@@ -250,12 +261,41 @@ export class AdvectKernel {
    * mix (ignored by 'mlp' kind).
    */
   step(seed: number, alpha: number): void {
+    const encoder = this.device.createCommandEncoder();
+    const refs = this.recordStep(encoder, seed, alpha);
+    this.device.queue.submit([encoder.finish()]);
+    // Release the tensor clones tfjs minted for dataToGPU (after submit —
+    // the queue keeps the source buffers alive for the in-flight copies).
+    for (const t of refs) t.dispose();
+  }
+
+  /**
+   * Same weight-sync + advect pass as {@link step}, recorded into a
+   * CALLER-owned encoder and NOT submitted — lets a whole frame collapse to one
+   * queue.submit. Returns the tfjs dataToGPU tensor clones (empty when
+   * syncFromTfjs is off); the CALLER must dispose them AFTER its submit so the
+   * source buffers survive the in-flight copies. `ts` optionally timestamps the
+   * advect pass.
+   */
+  encodeStep(
+    encoder: GPUCommandEncoder,
+    seed: number,
+    alpha: number,
+    ts?: PassTimestampWrites
+  ): tf.Tensor[] {
+    return this.recordStep(encoder, seed, alpha, ts);
+  }
+
+  private recordStep(
+    encoder: GPUCommandEncoder,
+    seed: number,
+    alpha: number,
+    ts?: PassTimestampWrites
+  ): tf.Tensor[] {
     this.uniF[5] = alpha;
     this.uniU[7] = seed >>> 0;
     this.uniU[8] = this.particleCount;
     this.device.queue.writeBuffer(this.uni, 0, this.uniData);
-
-    const encoder = this.device.createCommandEncoder();
 
     // Weights sync: ~10KB per frame, one segment per variable. A tfjs tensor
     // is in one of TWO residency states the API won't let us query directly:
@@ -298,16 +338,17 @@ export class AdvectKernel {
       }
     }
 
-    const pass = encoder.beginComputePass();
+    // @webgpu/types 0.1.30 predates the object-form timestampWrites; the live
+    // runtime uses it, so cast the descriptor (see gputime.ts).
+    const pass = encoder.beginComputePass(
+      (ts ? { timestampWrites: ts } : undefined) as GPUComputePassDescriptor
+    );
     pass.setPipeline(this.pipeline);
     pass.setBindGroup(0, this.bind);
     pass.dispatchWorkgroups(Math.ceil(this.particleCount / WORKGROUP_SIZE));
     pass.end();
-    this.device.queue.submit([encoder.finish()]);
 
-    // Release the tensor clones tfjs minted for dataToGPU (after submit —
-    // the queue keeps the source buffers alive for the in-flight copies).
-    for (const t of refs) t.dispose();
+    return refs;
   }
 
   /**

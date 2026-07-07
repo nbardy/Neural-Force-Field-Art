@@ -1,5 +1,19 @@
 # Handoff — Neural Force Field Art (WebGPU) + the fused-kernel plan
 
+> **NEW (2026-07): fused WGSL CLIP vision encoder — SHIPPED & verified.**
+> MobileCLIP-S0's image encoder (11.35M params, 2.4 GMACs) runs as 99
+> hand-generated WGSL dispatches in ONE submit: **≈6.2–6.6 ms/forward on
+> Metal-3 (~9× ORT CPU ≈60 ms, ~1.8× ORT-WebGPU ≈11.3 ms measured on the same
+> adapter), ≈0.15 ms CPU-side, embedding cosine 1.000000 vs the ONNX oracle,
+> all 99 steps verified per-layer.** This is the perception half of
+> the prompt-guidance loss (text prompt → CLIP → gradient → force field).
+> Everything lives in `tools/clip/` + `src/clip/` — **read
+> `tools/clip/README.md` first**; it has the full pipeline (κ plan compiler →
+> per-step ORT goldens → bun-webgpu verification), the measured perf ladder,
+> and the gotchas (pinned input slot, Metal lazy-JIT warmup). Next:
+> canvas→NCHW input kernel, one-shot text embedding, hand-written backward to
+> dL/dpixels (weights frozen — much simpler than the trainer's backward).
+
 Live: **https://nbardy.github.io/Neural-Force-Field-Art/** · `main` @ deploy is pushed to the `gh-pages` branch (see AGENTS.md for build/deploy).
 
 This doc is the pick-up point. It covers (1) where the engine is now — **Phase 1
