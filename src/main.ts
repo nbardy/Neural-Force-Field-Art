@@ -389,20 +389,19 @@ function physicsForward(
     ? (field.forces(posNorm).mul(cfg.forceMagnitude) as tf.Tensor2D)
     : ((model!.predict(posNorm) as tf.Tensor2D).sub(0.5).mul(cfg.forceMagnitude) as tf.Tensor2D);
 
-  const updVel = vel.add(forces).mul(cfg.friction);
+  // PERF: clip/wrap the WHOLE [N,2] tensor in one op each instead of
+  // slice-x/clip, slice-y/clip, concat (5 ops -> 1) and likewise for the wrap.
+  // maxVelocity is symmetric so a single clipByValue covers both axes; mod
+  // broadcasts a [1,2] to wrap x by w and y by h at once. ~8 fewer GPU
+  // dispatches per call, and this runs twice a frame (learn + advect).
+  const clippedVel = vel
+    .add(forces)
+    .mul(cfg.friction)
+    .clipByValue(-cfg.maxVelocity, cfg.maxVelocity) as tf.Tensor2D;
 
-  const vx = updVel
-    .slice([0, 0], [-1, 1])
-    .clipByValue(-cfg.maxVelocity, cfg.maxVelocity);
-  const vy = updVel
-    .slice([0, 1], [-1, 1])
-    .clipByValue(-cfg.maxVelocity, cfg.maxVelocity);
-  const clippedVel = vx.concat(vy, 1) as tf.Tensor2D;
-
-  const updPos = pos.add(clippedVel);
-  const px = updPos.slice([0, 0], [-1, 1]).mod(tf.scalar(w));
-  const py = updPos.slice([0, 1], [-1, 1]).mod(tf.scalar(h));
-  const wrappedPos = px.concat(py, 1) as tf.Tensor2D;
+  const wrappedPos = pos
+    .add(clippedVel)
+    .mod(tf.tensor2d([[w, h]])) as tf.Tensor2D;
 
   return { newPos: wrappedPos, newVel: clippedVel, force: forces };
 }
