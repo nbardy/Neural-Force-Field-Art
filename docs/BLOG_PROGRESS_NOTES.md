@@ -43,9 +43,57 @@ Capture these as the system gets better:
   - Does `camera text` make views more distinct or more stable?
   - Does `same text` produce a more coherent shared object?
   - Does the 3x3 grid show collapse/fog/hole failures clearly?
-- Likely next engineering knobs after screenshots:
-  - view subset per step (`1`, `3`, `9`) for speed;
-  - zoom-out/object scale control;
-  - geometry-first learning-rate schedule;
-  - alpha/coverage regularizer;
-  - better 2DGS/surfel-style parameterization if volumetric blobs stay incoherent.
+
+## Dream Fields-Inspired Ablation Plan
+
+Dream Fields is a good mental model, but the browser version should stay splat-first:
+explicit splat rasterization should be much faster than NeRF-style ray marching in
+WebGPU. The likely bottleneck is CLIP per view, not the rasterizer. Dream Fields
+also did not use CLIP alone: the transferable pieces are geometric/background
+priors around CLIP.
+
+Run these as screenshot-friendly toggles, one at a time:
+
+1. **Prompt/background text**
+   - `black bg`: append `on a black background`.
+   - `no bg text`: no background wording.
+   - Later wording to try: `centered on a black background`.
+
+2. **Renderer background**
+   - fixed black;
+   - dark random background;
+   - full random background.
+   Keep black as the first visual baseline, but Dream Fields suggests random
+   backgrounds are important once opacity regularization exists.
+
+3. **Opacity/transmittance pressure**
+   - no regularizer;
+   - weak alpha/coverage target;
+   - stronger transmittance-style sparsity.
+   This is the highest-priority Dream Fields prior to port after screenshots.
+
+4. **Scene bounds / object centering**
+   - no bounds beyond current init;
+   - soft radial bound around origin;
+   - zoomed-out centered object framing.
+   This should reduce frame-filling fog and off-center CLIP hacks.
+
+5. **View sampling**
+   - all 9 views per step;
+   - rotating 3-view subset;
+   - 1 random view per step plus periodic 9-view display refresh.
+   This is the main speed ablation before CLIP batching.
+
+6. **Prompt directionality**
+   - same base prompt for all views;
+   - coarse direction suffixes only (`front`, `side`, `back`, `top`);
+   - all 9 natural camera phrases.
+   Avoid internal labels like `front-left-high`; use phrases like
+   `a camera angle from the right side`.
+
+7. **Representation schedule**
+   - current isotropic 3D blobs;
+   - anisotropic 3D Gaussian scale;
+   - later surfel/2DGS-style flattening once the object exists.
+   Do not start here; this is a later geometry upgrade if volumetric blobs stay
+   incoherent.
