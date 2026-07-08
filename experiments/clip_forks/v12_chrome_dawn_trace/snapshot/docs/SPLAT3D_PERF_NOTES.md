@@ -319,42 +319,6 @@ Decision: this is a real small CLIP win on the current best stack. Keep it
 gated until the interactive default path is chosen; do not mistake it for the
 2-4x structural speedup.
 
-## Chrome Dawn Trace Helper
-
-`tools/webgpu_trace.mjs` captures a Chrome DevTools trace around the running
-browser optimizer. It complements, but does not replace, Bun/WebGPU timestamp
-profiling. It can show Dawn/WebGPU command traffic, queue submits, Metal
-backpressure, browser scheduling, and pipeline events. It does not expose
-per-shader memory bandwidth, occupancy, cache behavior, register pressure, or
-stall counters.
-
-The correct local trace path uses a built page served from the repo root so
-`/dist/` assets and `/models/` weights are same-origin:
-
-```bash
-npx parcel build --no-scope-hoist --no-cache --public-url ./ src/splat3d.html
-node tools/splat/serve.mjs 8799
-GRID9=1 DIRECT_GRID=1 SETUP_TIMEOUT_MS=180000 node tools/webgpu_trace.mjs http://localhost:8799/dist/splat3d.html 2000 /tmp/nffa_trace_probe4
-```
-
-Tracing the Parcel dev server directly failed because Parcel returned
-`index.html` for `/models/mobileclip_s0/plan_train.json`, which made app boot
-fail with `Unexpected token '<'`.
-
-Successful probe:
-
-| Field | Value |
-| --- | --- |
-| Trace | `/tmp/nffa_trace_probe4/webgpu_trace_2026-07-08T12-39-16-079Z.json` |
-| Screenshot | `/tmp/nffa_trace_probe4/webgpu_trace_2026-07-08T12-39-16-079Z.png` |
-| Mode | `grid9_close2`, `gridDirectRaster=true`, `views=9`, `clipBatch=3` |
-| Steps | `2 -> 35` |
-| Events | `40,331` |
-
-Top relevant buckets included `DawnCommands`,
-`DeviceMTL::SubmitPendingCommandBuffer`, `CommandEncoder::Finish`, and
-`Queue::Submit`. Use Perfetto or `chrome://tracing` to inspect the JSON.
-
 ## Prompt Encoding Cache
 
 The 3D page now caches text embeddings by exact expanded prompt. In `same text`

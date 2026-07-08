@@ -28,7 +28,6 @@ node experiments/clip_forks/diff_fork.mjs v08_grid_contact_sheet_prompt
 node experiments/clip_forks/diff_fork.mjs v09_direct_grid_raster
 node experiments/clip_forks/diff_fork.mjs v10_shared_w_pointwise_forward
 node experiments/clip_forks/diff_fork.mjs v11_backward_local_fusions
-node experiments/clip_forks/diff_fork.mjs v12_chrome_dawn_trace
 ```
 
 ## Standard Gate
@@ -66,8 +65,6 @@ Use the gate-specific env vars in addition to the commands above.
   forward allowlist; recorded as no-promote after integrated timing.
 - `v11_backward_local_fusions`: refresh of the existing GELU/residual backward
   pointwise fusion gates on the current grid80+depthwise stack.
-- `v12_chrome_dawn_trace`: reproducible Chrome/Puppeteer trace helper for
-  browser Dawn/WebGPU scheduling evidence.
 
 ## Snapshot Coverage
 
@@ -88,8 +85,6 @@ Use the gate-specific env vars in addition to the commands above.
   wiring, CLIP train matrix, and 3D step matrix.
 - `v11_backward_local_fusions`: CLIP backward emitters, 3D optimizer wiring,
   backward correctness tests, dispatch profiler, and 3D step matrix.
-- `v12_chrome_dawn_trace`: browser trace helper, Chrome trace plan, and
-  perf-note context.
 
 ## Related Notes
 
