@@ -195,3 +195,6 @@ Sequential benchmark on Apple `metal-3` after this change:
 
 Takeaway: `batch CLIP x3` is now the useful multi-view speed mode. `batch CLIP
 x9` is still not worth promoting on this hardware.
+
+The 3D page now defaults to `3 / 9 views` plus `batch CLIP x3`. Single CLIP and
+batch x9 remain available as explicit ablation toggles.

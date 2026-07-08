@@ -38,7 +38,7 @@ const status: Status = {
   blackBgText: true,
   profiling: false,
   viewsPerStep: 3,
-  clipBatchSize: 1,
+  clipBatchSize: 3,
 };
 (window as any).__splat3d = status;
 
