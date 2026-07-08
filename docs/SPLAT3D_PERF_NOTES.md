@@ -367,3 +367,38 @@ It did not clear the promotion bar:
 Decision: keep the gated path and parity tool, but do not enable it by default.
 The next raster attempt should target batched backward/lane-strided `accGrad` or
 overflow/workgroup-staging telemetry instead of forward scheduling alone.
+
+## View-Lane Raster Backward Gate
+
+The lane-strided raster state now also has a gated batched backward path behind
+`VIEW_LANE_RASTER_BWD=1`. It adds lane-strided `accGrad`, runs tile backward
+with `workgroup_id.z = lane`, then applies the existing camera-specific
+`chainAdd` dispatch sequentially per lane.
+
+Correctness passed exactly:
+
+```bash
+bun tools/splat3d/raster_batch_forward_test.ts
+```
+
+```text
+image diff: max=0.000e+0 mean=0.000e+0
+grad diff:  max=0.000e+0 mean=0.000e+0
+batch backward diff: max=0.000e+0 mean=0.000e+0
+```
+
+It did not clear the default-promotion bar:
+
+| Views / Batch | Variant | Normal Median | Profile Median | Raster Median |
+| --- | --- | ---: | ---: | ---: |
+| `3/3` | default | `52.69 ms` | `56.81 ms` | `13.45 ms` |
+| `3/3` | `VIEW_LANE_RASTER_BWD=1` | `53.37 ms` | `57.37 ms` | `12.63 ms` |
+| `3/3` | `VIEW_LANE_RASTER_FWD=1 VIEW_LANE_RASTER_BWD=1` | `53.44 ms` | `57.60 ms` | `12.73 ms` |
+| `9/3` | default | `157.01 ms` | `162.59 ms` | `37.66 ms` |
+| `9/3` | `VIEW_LANE_RASTER_BWD=1` | `157.41 ms` | `163.03 ms` | `35.00 ms` |
+| `9/3` | `VIEW_LANE_RASTER_FWD=1 VIEW_LANE_RASTER_BWD=1` | `152.42 ms` | `163.78 ms` | `36.14 ms` |
+
+Decision: keep the gate and parity coverage, but do not enable it by default.
+The sampled raster split improved in places, but the default 3-view optimizer
+step got slower. Further raster work should add overflow/occupancy telemetry or
+real timestamp attribution before more scheduling rewrites.

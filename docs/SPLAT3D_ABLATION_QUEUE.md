@@ -404,6 +404,66 @@ Decision:
   raster remains worth attacking, move to lane-strided `accGrad`/batched
   backward or overflow/workgroup-staging telemetry.
 
+Attempt 4 result: view-lane raster backward was implemented but not promoted.
+
+Hypothesis: the costly part of the raster lane path is not forward scheduling
+alone but repeated backward tile passes and `accGrad` clears. A lane-strided
+`accGrad` plus one `workgroup_id.z = view lane` backward dispatch could reduce
+that overhead while keeping `chainAdd` sequential for correctness.
+
+Implementation:
+
+- Added a batched backward WGSL kernel that reads lane-strided CLIP image
+  gradients, tile counts, sorted IDs, tile stops, and derived splat data.
+- Added a lane-strided `accGrad` buffer to the view-lane raster state.
+- `recordBatchBackwardAdd()` clears the active `accGrad` lanes, runs one
+  batched tile-backward dispatch, then runs the existing camera-specific
+  `chainAdd` dispatch once per lane.
+- Exposed with `VIEW_LANE_RASTER_BWD=1` and matrix token `viewbwd`.
+- The existing `tools/splat3d/raster_batch_forward_test.ts` now checks both
+  view-lane forward and view-lane backward against the separate per-view path.
+
+Correctness:
+
+```bash
+bun tools/splat3d/raster_batch_forward_test.ts
+```
+
+Result:
+
+```text
+image diff: max=0.000e+0 mean=0.000e+0
+grad diff:  max=0.000e+0 mean=0.000e+0
+batch backward diff: max=0.000e+0 mean=0.000e+0
+GATE PASS
+```
+
+Performance:
+
+```bash
+TRIALS=3 CONFIGS=base=3:3,viewbwd=3:3:viewbwd,viewboth=3:3:viewlane:viewbwd RUNS=5 WARMUP=3 bun tools/splat3d/step_matrix.ts
+TRIALS=2 CONFIGS=base=9:3,viewbwd=9:3:viewbwd,viewboth=9:3:viewlane:viewbwd RUNS=3 WARMUP=2 bun tools/splat3d/step_matrix.ts
+```
+
+| Views | Path | Normal Step Median | Profile Median | CLIP Median | Raster Median |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 3 | separate-forward/backward control | `52.69 ms` | `56.81 ms` | `40.50 ms` | `13.45 ms` |
+| 3 | view-lane backward | `53.37 ms` | `57.37 ms` | `41.35 ms` | `12.63 ms` |
+| 3 | view-lane forward + backward | `53.44 ms` | `57.60 ms` | `41.13 ms` | `12.73 ms` |
+| 9 | separate-forward/backward control | `157.01 ms` | `162.59 ms` | `121.95 ms` | `37.66 ms` |
+| 9 | view-lane backward | `157.41 ms` | `163.03 ms` | `124.41 ms` | `35.00 ms` |
+| 9 | view-lane forward + backward | `152.42 ms` | `163.78 ms` | `123.90 ms` | `36.14 ms` |
+
+Decision:
+
+- Keep the exact batched backward path and parity test as a gated ablation.
+- Do not enable it by default. It reduces sampled raster median, but default
+  3-view normal/profile timing regressed, and the 9-view normal-step win for
+  forward+backward did not show up in split-profile total.
+- The next raster attempt should use telemetry before another scheduler rewrite:
+  overflow counts, tile occupancy histograms, and possibly per-kernel timestamp
+  queries if available.
+
 ### 5. Shape-Gated Shared-W Pointwise
 
 Hypothesis: some pointwise CLIP layers can reuse a staged weight tile across

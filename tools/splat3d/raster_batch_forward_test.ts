@@ -5,9 +5,9 @@
  *   1. existing per-view `recordForward(..., laneIO)`
  *   2. new `recordBatchForward(..., views)`
  *
- * Then it applies identical synthetic image gradients through the existing
- * per-lane backward path and compares both the rendered images and raw splat
- * gradients.
+ * Then it applies identical synthetic image gradients through both the existing
+ * per-lane backward path and the batched tile-backward path, comparing rendered
+ * images and raw splat gradients.
  *
  *   bun tools/splat3d/raster_batch_forward_test.ts
  */
@@ -71,7 +71,7 @@ function diffStats(a: Float32Array, b: Float32Array): { maxAbs: number; meanAbs:
   return { maxAbs, meanAbs: sumAbs / Math.max(1, a.length) };
 }
 
-async function runBackward(
+async function runSeparateBackward(
   raster: Raster3DEngine,
   state: Awaited<ReturnType<Raster3DEngine["createBatchForwardState"]>>
 ): Promise<Float32Array> {
@@ -80,6 +80,18 @@ async function runBackward(
   for (let lane = 0; lane < VIEWS.length; lane++) {
     raster.recordBackwardAdd(enc, VIEWS[lane], state.ios[lane]);
   }
+  device.queue.submit([enc.finish()]);
+  await device.queue.onSubmittedWorkDone();
+  return readFloats(raster.gradRaw, G * PARAM_STRIDE_3D);
+}
+
+async function runBatchBackward(
+  raster: Raster3DEngine,
+  state: Awaited<ReturnType<Raster3DEngine["createBatchForwardState"]>>
+): Promise<Float32Array> {
+  const enc = device.createCommandEncoder();
+  raster.recordClearRawGrad(enc);
+  raster.recordBatchBackwardAdd(enc, state, VIEWS);
   device.queue.submit([enc.finish()]);
   await device.queue.onSubmittedWorkDone();
   return readFloats(raster.gradRaw, G * PARAM_STRIDE_3D);
@@ -118,7 +130,7 @@ const state = await raster.createBatchForwardState({
   await device.queue.onSubmittedWorkDone();
 }
 const separateImage = await readFloats(imageBuffer, IMG_FLOATS * LANES);
-const separateGrad = await runBackward(raster, state);
+const separateGrad = await runSeparateBackward(raster, state);
 
 {
   const enc = device.createCommandEncoder();
@@ -127,19 +139,24 @@ const separateGrad = await runBackward(raster, state);
   await device.queue.onSubmittedWorkDone();
 }
 const batchImage = await readFloats(imageBuffer, IMG_FLOATS * LANES);
-const batchGrad = await runBackward(raster, state);
+const batchGrad = await runSeparateBackward(raster, state);
+const batchBackwardGrad = await runBatchBackward(raster, state);
 
 const imageDiff = diffStats(separateImage, batchImage);
 const gradDiff = diffStats(separateGrad, batchGrad);
+const batchBackwardDiff = diffStats(separateGrad, batchBackwardGrad);
 console.log(`image diff: max=${imageDiff.maxAbs.toExponential(3)} mean=${imageDiff.meanAbs.toExponential(3)}`);
 console.log(`grad diff:  max=${gradDiff.maxAbs.toExponential(3)} mean=${gradDiff.meanAbs.toExponential(3)}`);
+console.log(
+  `batch backward diff: max=${batchBackwardDiff.maxAbs.toExponential(3)} mean=${batchBackwardDiff.meanAbs.toExponential(3)}`
+);
 
 raster.destroy();
 imageBuffer.destroy();
 gradBuffer.destroy();
 
-if (imageDiff.maxAbs > 2e-5 || gradDiff.maxAbs > 2e-3) {
-  console.error("GATE FAIL: view-lane raster forward does not match separate per-view path.");
+if (imageDiff.maxAbs > 2e-5 || gradDiff.maxAbs > 2e-3 || batchBackwardDiff.maxAbs > 2e-3) {
+  console.error("GATE FAIL: view-lane raster path does not match separate per-view path.");
   process.exit(1);
 }
-console.log("GATE PASS: view-lane raster forward matches separate per-view path.");
+console.log("GATE PASS: view-lane raster forward/backward matches separate per-view path.");

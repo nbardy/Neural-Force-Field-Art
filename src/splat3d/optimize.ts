@@ -39,6 +39,7 @@ export interface Splat3DOptimizerConfig {
   fuseGeluBwdIntoPw?: boolean;
   singlePassBatchRasterForward?: boolean;
   viewLaneBatchRasterForward?: boolean;
+  viewLaneBatchRasterBackward?: boolean;
 }
 
 export type Splat3DClipMode = "single" | "batch";
@@ -85,6 +86,7 @@ export class Splat3DOptimizer {
   private readonly hyper: AdamHyper;
   private readonly singlePassBatchRasterForward: boolean;
   private readonly viewLaneBatchRasterForward: boolean;
+  private readonly viewLaneBatchRasterBackward: boolean;
   private step_ = 0;
   private hasPrompts = false;
   private rngState = 1;
@@ -124,7 +126,7 @@ export class Splat3DOptimizer {
     raster.setParams(cfg.initParams ?? randomSplats3D(G, cfg.seed ?? 1, cfg.init));
     raster.zeroAdamState();
     const batchRasterForward =
-      batchTrainer && (cfg.viewLaneBatchRasterForward ?? false)
+      batchTrainer && ((cfg.viewLaneBatchRasterForward ?? false) || (cfg.viewLaneBatchRasterBackward ?? false))
         ? await raster.createBatchForwardState({
             lanes: batchTrainer.batch,
             imageBuffer: batchTrainer.inputBuffer,
@@ -160,6 +162,7 @@ export class Splat3DOptimizer {
     this.hyper = cfg.hyper ?? DEFAULT_HYPER;
     this.singlePassBatchRasterForward = cfg.singlePassBatchRasterForward ?? false;
     this.viewLaneBatchRasterForward = cfg.viewLaneBatchRasterForward ?? false;
+    this.viewLaneBatchRasterBackward = cfg.viewLaneBatchRasterBackward ?? false;
     this.rngState = ((cfg.seed ?? 1) ^ 0x9e3779b9) >>> 0 || 1;
     this.textBuffers = cameras.map((_, i) =>
       device.createBuffer({
@@ -250,6 +253,12 @@ export class Splat3DOptimizer {
         }
         timings.rasterFwd += await this.submitTimed((enc) => this.recordBatchInputs(enc, chunk));
         timings.clipBatch += await this.submitTimed((enc) => batch.encode(enc, { backward: true }));
+        if (this.viewLaneBatchRasterBackward && this.batchRasterForward && chunk.length > 1) {
+          timings.rasterBwd += await this.submitTimed((enc) => {
+            this.raster.recordBatchBackwardAdd(enc, this.batchRasterForward!, chunk);
+          });
+          continue;
+        }
         for (let lane = 0; lane < chunk.length; lane++) {
           const view = chunk[lane];
           const io = this.batchIO[lane];
@@ -330,6 +339,10 @@ export class Splat3DOptimizer {
       }
       this.recordBatchInputs(enc, chunk);
       batch.encode(enc, { backward: true });
+      if (this.viewLaneBatchRasterBackward && this.batchRasterForward && chunk.length > 1) {
+        this.raster.recordBatchBackwardAdd(enc, this.batchRasterForward, chunk);
+        continue;
+      }
       for (let lane = 0; lane < chunk.length; lane++) {
         const view = chunk[lane];
         const io = this.batchIO[lane];

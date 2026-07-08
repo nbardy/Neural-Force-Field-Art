@@ -12,6 +12,7 @@
  *   FUSE_GELU_BWD_PW=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   SINGLE_PASS_RASTER_FWD=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   VIEW_LANE_RASTER_FWD=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
+ *   VIEW_LANE_RASTER_BWD=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -34,6 +35,7 @@ const FUSE_PW_GELU = process.env.FUSE_PW_GELU !== "0";
 const FUSE_GELU_BWD_PW = process.env.FUSE_GELU_BWD_PW === "1";
 const SINGLE_PASS_RASTER_FWD = process.env.SINGLE_PASS_RASTER_FWD === "1";
 const VIEW_LANE_RASTER_FWD = process.env.VIEW_LANE_RASTER_FWD === "1";
+const VIEW_LANE_RASTER_BWD = process.env.VIEW_LANE_RASTER_BWD === "1";
 
 function f32File(path: string): Float32Array {
   const b = readFileSync(path);
@@ -79,6 +81,7 @@ const opt = await Splat3DOptimizer.create(device, plan, weights, {
   fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
   singlePassBatchRasterForward: SINGLE_PASS_RASTER_FWD,
   viewLaneBatchRasterForward: VIEW_LANE_RASTER_FWD,
+  viewLaneBatchRasterBackward: VIEW_LANE_RASTER_BWD,
 });
 console.log(
   `splat3d step bench: G=${G}, views=${VIEWS}/${opt.cameras.length}, ` +
@@ -88,6 +91,7 @@ console.log(
     `fuseGeluBwdIntoPw=${FUSE_GELU_BWD_PW ? 1 : 0}, ` +
     `singlePassBatchRasterForward=${SINGLE_PASS_RASTER_FWD ? 1 : 0}, ` +
     `viewLaneBatchRasterForward=${VIEW_LANE_RASTER_FWD ? 1 : 0}, ` +
+    `viewLaneBatchRasterBackward=${VIEW_LANE_RASTER_BWD ? 1 : 0}, ` +
     `compile+allocate=${(performance.now() - compileStart).toFixed(0)} ms`
 );
 

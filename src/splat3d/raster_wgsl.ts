@@ -639,6 +639,113 @@ fn main(@builtin(workgroup_id) wg : vec3u,
 `;
 }
 
+export function backwardBatchShader3D(cfg: Raster3DConfig): string {
+  const d = resolveDims3D(cfg);
+  const HW = d.H * d.W;
+  const IMG = 3 * HW;
+  const SC = fl(d.gradScale);
+  return /* wgsl */ `
+@group(0) @binding(0) var<storage, read>       gradImage  : array<f32>;
+@group(0) @binding(1) var<storage, read>       tileCounts : array<u32>;
+@group(0) @binding(2) var<storage, read>       binnedIds  : array<u32>;
+@group(0) @binding(3) var<storage, read>       tileStop   : array<u32>;
+@group(0) @binding(4) var<storage, read>       derived    : array<f32>;
+@group(0) @binding(5) var<storage, read_write> accGrad    : array<atomic<i32>>;
+
+var<workgroup> sh_ids : array<u32, ${d.cap}>;
+
+fn derivedBase(lane : u32, g : u32) -> u32 {
+  return lane * ${uu(d.G * DERIVED_STRIDE_3D)} + g * ${uu(DERIVED_STRIDE_3D)};
+}
+
+fn fixadd(base : u32, slot : u32, v : f32) {
+  atomicAdd(&accGrad[base + slot], i32(clamp(round(v * ${SC}), -2.14e9, 2.14e9)));
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wg : vec3u,
+        @builtin(local_invocation_index) tid : u32) {
+  let tileId = wg.x;
+  let lane = wg.z;
+  if (tileId >= ${uu(d.numTiles)}) { return; }
+  let tileCountsBase = lane * ${uu(d.numTiles)};
+  let binnedBase = lane * ${uu(d.numTiles * d.cap)};
+  let tileStopBase = lane * ${uu(d.numTiles)};
+  let gradImageBase = lane * ${uu(IMG)};
+  let count = min(tileCounts[tileCountsBase + tileId], ${uu(d.cap)});
+  let stopc = min(count, tileStop[tileStopBase + tileId]);
+  let start = binnedBase + tileId * ${uu(d.cap)};
+  for (var i = tid; i < stopc; i = i + 256u) { sh_ids[i] = binnedIds[start + i]; }
+  workgroupBarrier();
+
+  let tileX = tileId % ${uu(d.tilesX)};
+  let tileY = tileId / ${uu(d.tilesX)};
+  let x = tileX * ${TILE}u + (tid % ${TILE}u);
+  let y = tileY * ${TILE}u + (tid / ${TILE}u);
+  if (x >= ${uu(d.W)} || y >= ${uu(d.H)}) { return; }
+  let pxc = f32(x) + 0.5;
+  let pyc = f32(y) + 0.5;
+  let pix = y * ${uu(d.W)} + x;
+  let goR = gradImage[gradImageBase + 0u * ${uu(HW)} + pix];
+  let goG = gradImage[gradImageBase + 1u * ${uu(HW)} + pix];
+  let goB = gradImage[gradImageBase + 2u * ${uu(HW)} + pix];
+
+  var T = 1.0;
+  var endi = stopc;
+  for (var i = 0u; i < stopc; i = i + 1u) {
+    let gg = sh_ids[i];
+    let b = derivedBase(lane, gg);
+    let dx = pxc - derived[b + 0u];
+    let dy = pyc - derived[b + 1u];
+    let power = -0.5 * derived[b + 2u] * (dx * dx + dy * dy);
+    if (power > 0.0) { continue; }
+    let alpha = min(${fl(MAX_ALPHA)}, derived[b + 10u] * exp(power));
+    if (alpha < ${fl(ALPHA_THRESHOLD)}) { continue; }
+    T = T * (1.0 - alpha);
+    if (T < ${fl(TRANSMITTANCE_CUTOFF)}) { endi = i + 1u; break; }
+  }
+
+  var Tcur = T;
+  var gT = goR * ${fl(d.bg[0])} + goG * ${fl(d.bg[1])} + goB * ${fl(d.bg[2])};
+  for (var ii = i32(endi) - 1; ii >= 0; ii = ii - 1) {
+    let gg = sh_ids[u32(ii)];
+    let b = derivedBase(lane, gg);
+    let dx = pxc - derived[b + 0u];
+    let dy = pyc - derived[b + 1u];
+    let invR2 = derived[b + 2u];
+    let power = -0.5 * invR2 * (dx * dx + dy * dy);
+    if (power > 0.0) { continue; }
+    let op = derived[b + 10u];
+    let raw = op * exp(power);
+    let alpha = min(${fl(MAX_ALPHA)}, raw);
+    if (alpha < ${fl(ALPHA_THRESHOLD)}) { continue; }
+    let denom = max(1.0 - alpha, ${fl(EPS)});
+    let Tprev = Tcur / denom;
+    let cR = derived[b + 7u]; let cG = derived[b + 8u]; let cB = derived[b + 9u];
+    let dotgc = goR * cR + goG * cG + goB * cB;
+    let gAlpha = Tprev * (dotgc - gT);
+
+    fixadd(b, 7u, goR * Tprev * alpha);
+    fixadd(b, 8u, goG * Tprev * alpha);
+    fixadd(b, 9u, goB * Tprev * alpha);
+
+    let gate = select(0.0, 1.0, raw < ${fl(MAX_ALPHA)});
+    let gRaw = gAlpha * gate;
+    let gPower = gRaw * raw;
+    let gdx = gPower * (-invR2 * dx);
+    let gdy = gPower * (-invR2 * dy);
+    fixadd(b, 0u, -gdx);
+    fixadd(b, 1u, -gdy);
+    fixadd(b, 2u, gPower * (-0.5) * (dx * dx + dy * dy));
+    fixadd(b, 10u, gRaw * (raw / max(op, ${fl(EPS)})));
+
+    gT = alpha * dotgc + (1.0 - alpha) * gT;
+    Tcur = Tprev;
+  }
+}
+`;
+}
+
 export function chainAddShader3D(cfg: Raster3DConfig, cam: PreparedCamera3D): string {
   const d = resolveDims3D(cfg);
   const s = seg(d);

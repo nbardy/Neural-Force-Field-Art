@@ -8,6 +8,7 @@
  *   TRIALS=2 CONFIGS=3:1,3:3 RUNS=4 WARMUP=2 bun tools/splat3d/step_matrix.ts
  *   TRIALS=3 CONFIGS=base=3:3,rasterpass=3:3:rasterpass bun tools/splat3d/step_matrix.ts
  *   TRIALS=3 CONFIGS=base=3:3,viewlane=3:3:viewlane bun tools/splat3d/step_matrix.ts
+ *   TRIALS=3 CONFIGS=base=3:3,viewbwd=3:3:viewbwd bun tools/splat3d/step_matrix.ts
  *   TRIALS=3 CONFIGS=3:1,3:3,9:1,9:3,9:9 bun tools/splat3d/step_matrix.ts
  */
 import { spawnSync } from "node:child_process";
@@ -19,6 +20,7 @@ interface Config {
   fuseGeluBwdIntoPw: boolean;
   singlePassRasterForward: boolean | null;
   viewLaneRasterForward: boolean | null;
+  viewLaneRasterBackward: boolean | null;
 }
 
 interface TrialResult extends Config {
@@ -72,6 +74,11 @@ function parseConfigs(src: string): Config[] {
         : tokens.includes("noviewlane")
           ? false
           : null;
+      const viewLaneRasterBackward = tokens.includes("viewbwd")
+        ? true
+        : tokens.includes("noviewbwd")
+          ? false
+          : null;
       const suffix = tokens.length ? `:${tokens.join(":")}` : "";
       const label = labelRaw.trim() || `${views | 0}:${clipBatch | 0}${suffix}`;
       return {
@@ -81,6 +88,7 @@ function parseConfigs(src: string): Config[] {
         fuseGeluBwdIntoPw,
         singlePassRasterForward,
         viewLaneRasterForward,
+        viewLaneRasterBackward,
       };
     });
   if (!configs.length) throw new Error("step_matrix: CONFIGS produced no configs");
@@ -126,6 +134,9 @@ function runTrial(config: Config, trial: number): TrialResult {
   }
   if (config.viewLaneRasterForward !== null) {
     env.VIEW_LANE_RASTER_FWD = config.viewLaneRasterForward ? "1" : "0";
+  }
+  if (config.viewLaneRasterBackward !== null) {
+    env.VIEW_LANE_RASTER_BWD = config.viewLaneRasterBackward ? "1" : "0";
   }
   delete env.CONFIGS;
   delete env.TRIALS;
@@ -173,7 +184,7 @@ function fmt(n: number): string {
 const results: TrialResult[] = [];
 if (!JSON_OUT) {
   console.log(
-    `splat3d step matrix: configs=${CONFIGS.map((c) => `${c.label}=${c.views}:${c.clipBatch}${c.fuseGeluBwdIntoPw ? ":gelubwd" : ""}${c.singlePassRasterForward === true ? ":rasterpass" : ""}${c.singlePassRasterForward === false ? ":norasterpass" : ""}${c.viewLaneRasterForward === true ? ":viewlane" : ""}${c.viewLaneRasterForward === false ? ":noviewlane" : ""}`).join(",")} ` +
+    `splat3d step matrix: configs=${CONFIGS.map((c) => `${c.label}=${c.views}:${c.clipBatch}${c.fuseGeluBwdIntoPw ? ":gelubwd" : ""}${c.singlePassRasterForward === true ? ":rasterpass" : ""}${c.singlePassRasterForward === false ? ":norasterpass" : ""}${c.viewLaneRasterForward === true ? ":viewlane" : ""}${c.viewLaneRasterForward === false ? ":noviewlane" : ""}${c.viewLaneRasterBackward === true ? ":viewbwd" : ""}${c.viewLaneRasterBackward === false ? ":noviewbwd" : ""}`).join(",")} ` +
       `trials=${TRIALS} runs=${RUNS} warmup=${WARMUP} seed=${SEED}${G ? ` G=${G}` : ""}`
   );
 }
@@ -190,6 +201,8 @@ for (let trial = 0; trial < TRIALS; trial++) {
         config.singlePassRasterForward === false ? "rasterpass=0" : "",
         config.viewLaneRasterForward === true ? "viewlane=1" : "",
         config.viewLaneRasterForward === false ? "viewlane=0" : "",
+        config.viewLaneRasterBackward === true ? "viewbwd=1" : "",
+        config.viewLaneRasterBackward === false ? "viewbwd=0" : "",
       ].filter(Boolean);
       console.log(
         `trial ${trial} ${config.label} ${config.views}/${config.clipBatch}` +
@@ -206,7 +219,7 @@ if (JSON_OUT) {
   console.log(JSON.stringify({ trials: TRIALS, runs: RUNS, warmup: WARMUP, seed: SEED, results }, null, 2));
 } else {
   console.log("\nSummary:");
-  console.log("config           views batch gbwd rpass vlane  normal med [min,max]     profile med     clip med   raster med");
+  console.log("config           views batch gbwd rpass vlane  vbwd  normal med [min,max]     profile med     clip med   raster med");
   for (const config of CONFIGS) {
     const rows = results.filter((r) => r.label === config.label);
     const normal = rows.map((r) => r.normal);
@@ -218,6 +231,7 @@ if (JSON_OUT) {
         `${(config.fuseGeluBwdIntoPw ? "yes" : "no").padStart(4)} ` +
         `${(config.singlePassRasterForward === null ? "def" : config.singlePassRasterForward ? "yes" : "no").padStart(5)} ` +
         `${(config.viewLaneRasterForward === null ? "def" : config.viewLaneRasterForward ? "yes" : "no").padStart(5)} ` +
+        `${(config.viewLaneRasterBackward === null ? "def" : config.viewLaneRasterBackward ? "yes" : "no").padStart(5)} ` +
         `${fmt(median(normal))} [${min(normal).toFixed(2)},${max(normal).toFixed(2)}] ` +
         `${fmt(median(profile))} ${fmt(median(clip))} ${fmt(median(raster))}`
     );

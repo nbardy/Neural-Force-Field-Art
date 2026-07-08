@@ -74,6 +74,9 @@ commit-and-measure loop:
   parity-tested, but not promoted. Forward scheduling alone did not improve the
   full 3D step; the next raster attempt should target backward state or
   telemetry, not another forward-only scheduler tweak.
+- View-lane raster backward with lane-strided `accGrad` was also implemented as
+  an exact gate and parity-tested. It reduced sampled raster time in some
+  matrices but did not improve the default optimizer step, so it stays gated.
 - STAR UVT/world-tube review clarified that exact multi-view raster batching is
   a scheduler problem first; sublinear camera-bundle rendering needs a different
   primitive.
