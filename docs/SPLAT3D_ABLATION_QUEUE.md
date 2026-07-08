@@ -217,6 +217,22 @@ Promotion gate:
 - Matches conservative replay path.
 - B=3 optimizer step beats single path by a clear margin.
 
+STAR UVT / world-tube read-through:
+
+- STAR's sublinear win comes from making time a native raster dimension. One
+  tube covers many coherent frames through `ma=(u,v,t)` and `q_uvt`.
+- Our nine CLIP cameras are a discrete camera bundle, not a smooth time axis.
+  Depth order and tile footprint are per view, so a single cross-view sort or
+  shared footprint is not correct in general.
+- The transferable idea is per-lane tile state plus tile-pair/direct backward.
+  The representation-level ideas, such as projective rational tubes or camera
+  gauges, require a different primitive contract and should be treated as a
+  later research ablation.
+
+Follow-up note:
+
+- `agent_notes/optimization_session/multiview_raster_worldtube_review.md`
+
 ### 5. Shape-Gated Shared-W Pointwise
 
 Hypothesis: some pointwise CLIP layers can reuse a staged weight tile across
