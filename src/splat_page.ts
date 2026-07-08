@@ -30,7 +30,7 @@
  */
 /// <reference types="@webgpu/types" />
 import { SplatOptimizer, cosine } from "./splat/optimize";
-import { fetchArrayBufferWithProgress, formatProgress } from "./splat/fetch_progress";
+import { loadClipTrainAssets } from "./splat/model_assets";
 import type { TrainPlan } from "./clip/vision";
 
 const SIDE = 256;
@@ -377,30 +377,15 @@ async function boot(): Promise<void> {
   ctx.configure({ device, format: canvasFormat, alphaMode: "opaque" });
 
   status.phase = "weights";
-  // Prod (GitHub Pages) fetches the packed weights from the HF Hub: GitHub
-  // release assets send no CORS header, HF does — same host the text model
-  // loads from (upload via tools/splat/upload_weights.py). Local dev uses the
-  // fast same-origin static server (tools/splat/serve.mjs) so iteration
-  // doesn't re-pull 82 MB over the network.
-  const isLocal = ["localhost", "127.0.0.1"].includes(location.hostname);
-  const MODEL_BASE = isLocal
-    ? "/models/mobileclip_s0/"
-    : "https://huggingface.co/Nbardy/nff-clip-splat-weights/resolve/main/";
-  const srcLabel = isLocal ? "" : " from HF";
-  readoutEl.textContent = `fetching CLIP plan${srcLabel}…`;
-  const planRes = await fetch(MODEL_BASE + "plan_train.json");
-  if (!planRes.ok) return fail(`plan_train.json fetch ${planRes.status} from ${MODEL_BASE}`);
-  plan = (await planRes.json()) as TrainPlan;
-  // 82 MB weights with a live progress bar (Content-Length + streamed body).
-  let wbuf: ArrayBuffer;
   try {
-    wbuf = await fetchArrayBufferWithProgress(MODEL_BASE + "weights_train.bin", (p) => {
-      readoutEl.textContent = formatProgress(`loading CLIP weights${srcLabel}`, p);
+    const assets = await loadClipTrainAssets((msg) => {
+      readoutEl.textContent = msg;
     });
+    plan = assets.plan;
+    weights = assets.weights;
   } catch (e: any) {
-    return fail(`weights_train.bin fetch failed from ${MODEL_BASE}: ${e?.message ?? e}`);
+    return fail(e?.message ?? String(e));
   }
-  weights = new Float32Array(wbuf);
 
   status.phase = "optimizer";
   readoutEl.textContent = "building optimizer…";
