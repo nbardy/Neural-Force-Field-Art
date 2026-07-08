@@ -52,7 +52,6 @@
       }
 	      select { max-width: 128px; }
 	      #clipLayout { max-width: 178px; }
-	      #gridPromptMode { max-width: 156px; }
 	      #viewSampler { max-width: 148px; }
       button:hover, select:hover { border-color: #89b4fa; }
       button:disabled, select:disabled { opacity: 0.5; cursor: default; }
@@ -113,10 +112,6 @@
 	        <select id="clipLayout">
 	          <option value="per_view" selected>per-view CLIP</option>
 	          <option value="grid9_close2">3x3 grid + 2</option>
-	        </select>
-	        <select id="gridPromptMode">
-	          <option value="contact_sheet" selected>grid prompt</option>
-	          <option value="same">same grid text</option>
 	        </select>
 	        <button id="optimize">Optimize</button>
         <button id="reset">Reset</button>

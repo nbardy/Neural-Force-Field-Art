@@ -24,6 +24,7 @@ rollback review; do not import code from `snapshot/` at runtime.
 node experiments/clip_forks/diff_fork.mjs v02_f16_weights
 node experiments/clip_forks/diff_fork.mjs v04_pointwise_tile_rewrite
 node experiments/clip_forks/diff_fork.mjs v07_spatial_bwd_depthwise4
+node experiments/clip_forks/diff_fork.mjs v08_grid_contact_sheet_prompt
 ```
 
 ## Standard Gate
@@ -53,6 +54,8 @@ Use the gate-specific env vars in addition to the commands above.
 - `v06_view_sampling`: same-resolution N-of-K camera schedules.
 - `v07_spatial_bwd_depthwise4`: depthwise-only vectorized CLIP spatial
   backward lane.
+- `v08_grid_contact_sheet_prompt`: explicit text prompt for the 3x3 grid CLIP
+  lane, with a same-text toggle.
 
 ## Snapshot Coverage
 
@@ -65,6 +68,8 @@ Use the gate-specific env vars in addition to the commands above.
 - `v06_view_sampling`: 3D optimizer/page controls and 3D step benches.
 - `v07_spatial_bwd_depthwise4`: CLIP backward emitter, backward tests, 3D
   optimizer wiring, and benchmark env gates.
+- `v08_grid_contact_sheet_prompt`: 3D camera prompt builders, grid CLIP page
+  controls, and 3D benchmark context.
 
 ## Related Notes
 

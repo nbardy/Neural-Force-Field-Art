@@ -230,6 +230,21 @@ Decision: preserve the gate and keep testing it, but do not call it a 2x-class
 breakthrough. It is a real-looking ~6% integrated step win and evidence that
 kernel shape still matters.
 
+## Grid Contact Sheet Prompt
+
+`grid9_close2` already keeps the CLIP input at `256x256`, but packs the nine
+camera views into `80x80` cells inside that input and uses two extra
+full-resolution close-up lanes. The page now makes the grid lane text explicit:
+
+```text
+a 3x3 image grid showing the same subject, {prompt}, from nine different camera
+angles, centered on a black background: ...
+```
+
+The UI can toggle this against `same grid text`. This does not change kernel
+speed; it is a quality/signal ablation for whether the contact-sheet image gets
+a better CLIP target than a normal single-image prompt.
+
 ## Prompt Encoding Cache
 
 The 3D page now caches text embeddings by exact expanded prompt. In `same text`

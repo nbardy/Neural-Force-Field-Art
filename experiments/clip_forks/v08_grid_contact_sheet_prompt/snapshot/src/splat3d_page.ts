@@ -1,5 +1,5 @@
 /// <reference types="@webgpu/types" />
-import { buildBasePrompt, buildGrid9Prompt, buildViewPrompt, type Grid9PromptMode } from "./splat3d/cameras";
+import { buildBasePrompt, buildGrid9Prompt, buildViewPrompt } from "./splat3d/cameras";
 import {
   Splat3DOptimizer,
   cosine,
@@ -24,7 +24,6 @@ interface Status {
   error: string | null;
   phase: string;
   promptMode: "camera" | "same";
-  gridPromptMode: Grid9PromptMode;
   blackBgText: boolean;
   profiling: boolean;
   viewsPerStep: number;
@@ -44,7 +43,6 @@ const status: Status = {
   error: null,
   phase: "boot",
   promptMode: "camera",
-  gridPromptMode: "contact_sheet",
   blackBgText: true,
   profiling: false,
   viewsPerStep: 3,
@@ -63,7 +61,6 @@ const viewBatchSelect = document.getElementById("viewBatch") as HTMLSelectElemen
 const viewSamplerSelect = document.getElementById("viewSampler") as HTMLSelectElement;
 const clipModeSelect = document.getElementById("clipMode") as HTMLSelectElement;
 const clipLayoutSelect = document.getElementById("clipLayout") as HTMLSelectElement;
-const gridPromptModeSelect = document.getElementById("gridPromptMode") as HTMLSelectElement;
 const optimizeBtn = document.getElementById("optimize") as HTMLButtonElement;
 const resetBtn = document.getElementById("reset") as HTMLButtonElement;
 const readoutEl = document.getElementById("readout") as HTMLDivElement;
@@ -90,9 +87,6 @@ function renderReadout(): void {
   if (status.viewSampler === "random") parts.push("random");
   parts.push(status.clipBatchSize > 1 ? `clip x${status.clipBatchSize}` : "clip x1");
   if (status.clipLayout === "grid9_close2") parts.push("grid+2");
-  if (status.clipLayout === "grid9_close2") {
-    parts.push(status.gridPromptMode === "contact_sheet" ? "grid text" : "grid=same text");
-  }
   parts.push(status.promptMode === "camera" ? "camera text" : "same text");
   if (status.blackBgText) parts.push("black bg");
   if (status.cos !== null) {
@@ -173,10 +167,6 @@ function selectedViewSampler(): Splat3DViewSampler {
   return viewSamplerSelect.value === "random" ? "random" : "epoch";
 }
 
-function selectedGridPromptMode(): Grid9PromptMode {
-  return gridPromptModeSelect.value === "same" ? "same" : "contact_sheet";
-}
-
 function syncClipLayoutControls(): void {
   const grid = selectedClipLayout() === "grid9_close2";
   if (grid) {
@@ -193,7 +183,6 @@ function setControlsDisabled(disabled: boolean): void {
   promptModeSelect.disabled = disabled;
   bgTextModeSelect.disabled = disabled;
   clipLayoutSelect.disabled = disabled;
-  gridPromptModeSelect.disabled = disabled || !grid;
   viewBatchSelect.disabled = disabled || grid;
   viewSamplerSelect.disabled = disabled;
   clipModeSelect.disabled = disabled || grid;
@@ -202,7 +191,6 @@ function setControlsDisabled(disabled: boolean): void {
 async function rebuildOptimizer(nextSeed: number, phase: string): Promise<void> {
   status.phase = phase;
   status.clipLayout = selectedClipLayout();
-  status.gridPromptMode = selectedGridPromptMode();
   status.viewsPerStep = selectedViewsPerStep();
   status.viewSampler = selectedViewSampler();
   status.clipBatchSize = selectedClipBatchSize();
@@ -437,7 +425,6 @@ async function onOptimize(): Promise<void> {
   status.initialCos = null;
   latestTimings = null;
   status.clipLayout = selectedClipLayout();
-  status.gridPromptMode = selectedGridPromptMode();
   status.viewsPerStep = selectedViewsPerStep();
   status.viewSampler = selectedViewSampler();
   status.clipBatchSize = selectedClipBatchSize();
@@ -459,10 +446,10 @@ async function onOptimize(): Promise<void> {
 	    }
 	    viewEmbeds = embeds;
 	    opt.setViewPrompts(embeds);
-    if (status.clipLayout === "grid9_close2") {
-      setNotice("encoding grid prompt...");
-      opt.setGridPrompt(await encodePromptCached(buildGrid9Prompt(text, status.blackBgText, status.gridPromptMode)));
-    }
+	    if (status.clipLayout === "grid9_close2") {
+	      setNotice("encoding grid prompt...");
+	      opt.setGridPrompt(await encodePromptCached(buildGrid9Prompt(text, status.blackBgText)));
+	    }
 	    const e0 = await opt.currentEmbedding(displayView);
     status.initialCos = cosine(e0, embeds[displayView]);
     status.cos = status.initialCos;
@@ -518,7 +505,6 @@ function setDisplayView(view: number): void {
 
 function onPromptModeChange(): void {
   status.promptMode = promptModeSelect.value === "same" ? "same" : "camera";
-  status.gridPromptMode = selectedGridPromptMode();
   status.blackBgText = bgTextModeSelect.value !== "none";
   latestTimings = null;
   if (viewEmbeds) {
@@ -690,7 +676,6 @@ viewBatchSelect.addEventListener("change", onViewBatchChange);
 viewSamplerSelect.addEventListener("change", () => void onClipSettingsChange());
 clipModeSelect.addEventListener("change", () => void onClipSettingsChange());
 clipLayoutSelect.addEventListener("change", () => void onClipSettingsChange());
-gridPromptModeSelect.addEventListener("change", onPromptModeChange);
 promptInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") void onOptimize();
 });
