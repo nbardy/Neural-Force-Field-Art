@@ -13,6 +13,7 @@
  *   SINGLE_PASS_RASTER_FWD=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   VIEW_LANE_RASTER_FWD=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   VIEW_LANE_RASTER_BWD=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
+ *   CAP=1024 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -30,6 +31,7 @@ const VIEWS = Number(process.env.VIEWS ?? 3);
 const CLIP_BATCH = Number(process.env.CLIP_BATCH ?? 1);
 const SEED = Number(process.env.SEED ?? 1);
 const G = Number(process.env.G ?? LEGIBLE_3D_G);
+const CAP = Number(process.env.CAP ?? 2048);
 const STEM_SPATIAL_BWD = process.env.STEM_SPATIAL_BWD !== "0";
 const FUSE_PW_GELU = process.env.FUSE_PW_GELU !== "0";
 const FUSE_GELU_BWD_PW = process.env.FUSE_GELU_BWD_PW === "1";
@@ -73,6 +75,7 @@ const initParams = randomSplats3D(G, SEED);
 const compileStart = performance.now();
 const opt = await Splat3DOptimizer.create(device, plan, weights, {
   G,
+  cap: CAP,
   seed: SEED,
   initParams,
   clipBatchSize: CLIP_BATCH,
@@ -85,7 +88,7 @@ const opt = await Splat3DOptimizer.create(device, plan, weights, {
 });
 console.log(
   `splat3d step bench: G=${G}, views=${VIEWS}/${opt.cameras.length}, ` +
-    `clipBatch=${opt.clipBatchSize}, runs=${RUNS}, warmup=${WARMUP}, ` +
+    `clipBatch=${opt.clipBatchSize}, cap=${CAP}, runs=${RUNS}, warmup=${WARMUP}, ` +
     `stemSpatialBwd=${STEM_SPATIAL_BWD ? 1 : 0}, ` +
     `fusePointwiseGeluForward=${FUSE_PW_GELU ? 1 : 0}, ` +
     `fuseGeluBwdIntoPw=${FUSE_GELU_BWD_PW ? 1 : 0}, ` +

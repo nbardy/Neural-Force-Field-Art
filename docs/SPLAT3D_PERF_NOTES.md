@@ -435,3 +435,26 @@ Takeaway: overflow handling is not a default 4096-splat bottleneck. The current
 `2048` cap is conservative for the default scene, so the next concrete raster
 ablation should test `cap=1024` in the integrated step matrix, with telemetry as
 the safety gate.
+
+## Cap 1024 Gate
+
+`CAP=1024` was tested as a smaller tile capacity after telemetry showed default
+max tile count at `911`. The smaller cap is overflow-free for the measured
+initial default scene:
+
+```bash
+CAP=1024 bun tools/splat3d/raster_telemetry.ts
+```
+
+Integrated timing was mixed:
+
+| Views / Batch | Cap | Normal Median | Profile Median | Raster Median |
+| --- | ---: | ---: | ---: | ---: |
+| `3/3` | `2048` | `53.00 ms` | `58.08 ms` | `13.56 ms` |
+| `3/3` | `1024` | `53.44 ms` | `56.78 ms` | `13.83 ms` |
+| `9/3` | `2048` | `156.02 ms` | `166.22 ms` | `38.69 ms` |
+| `9/3` | `1024` | `156.21 ms` | `165.15 ms` | `38.41 ms` |
+
+Decision: keep `CAP` / `capNNN` benchmark controls, but do not change the
+default cap. The result is too flat, and lower cap has less safety margin during
+optimization if radii or positions concentrate.

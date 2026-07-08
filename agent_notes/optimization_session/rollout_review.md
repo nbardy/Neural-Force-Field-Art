@@ -80,6 +80,8 @@ commit-and-measure loop:
 - Raster occupancy telemetry landed after the forward/backward scheduler gates.
   It showed zero default overflow at 4096 splats and max tile count below 1024,
   making smaller-cap testing more actionable than overflow handling.
+- The follow-up `cap=1024` ablation was safe for the measured initial scene but
+  not faster in integrated timing, so default cap remains unchanged.
 - STAR UVT/world-tube review clarified that exact multi-view raster batching is
   a scheduler problem first; sublinear camera-bundle rendering needs a different
   primitive.

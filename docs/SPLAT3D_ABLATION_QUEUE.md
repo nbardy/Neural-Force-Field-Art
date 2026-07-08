@@ -878,6 +878,47 @@ Interpretation:
   on the default workload, while keeping high-splat stress telemetry as the
   safety check.
 
+Attempt 2 result: `cap=1024` was tested but not promoted.
+
+Implementation:
+
+- Added `CAP` support to `tools/splat3d/step_bench.ts`.
+- Added `capNNN` config tokens to `tools/splat3d/step_matrix.ts`.
+
+Safety check:
+
+```bash
+CAP=1024 bun tools/splat3d/raster_telemetry.ts
+```
+
+Result: default `G=4096` still had zero overflow:
+
+| Metric | Result |
+| --- | ---: |
+| Aggregate overflow pairs | `0 / 576871` |
+| Max tile count | `911` |
+| Max tile stop | `365` |
+
+Performance:
+
+```bash
+TRIALS=3 CONFIGS=base=3:3,cap1024=3:3:cap1024 RUNS=5 WARMUP=3 bun tools/splat3d/step_matrix.ts
+TRIALS=2 CONFIGS=base=9:3,cap1024=9:3:cap1024 RUNS=3 WARMUP=2 bun tools/splat3d/step_matrix.ts
+```
+
+| Views | Cap | Normal Step Median | Profile Median | CLIP Median | Raster Median |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | `2048` | `53.00 ms` | `58.08 ms` | `41.70 ms` | `13.56 ms` |
+| 3 | `1024` | `53.44 ms` | `56.78 ms` | `40.53 ms` | `13.83 ms` |
+| 9 | `2048` | `156.02 ms` | `166.22 ms` | `123.63 ms` | `38.69 ms` |
+| 9 | `1024` | `156.21 ms` | `165.15 ms` | `123.58 ms` | `38.41 ms` |
+
+Decision:
+
+- Do not change the app/default optimizer cap. The smaller cap is safe for the
+  measured initial default scene, but integrated timing is flat/mixed.
+- Keep `CAP` and `capNNN` benchmark support for future memory/safety checks.
+
 ## Already Tried
 
 ### Exact Circle-Vs-Tile Support Pruning
