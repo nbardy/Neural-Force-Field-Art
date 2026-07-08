@@ -314,3 +314,22 @@ Conclusion: the first conservative grid path is a clear speed win versus full
 slower than ordinary 3-view training because it renders/replays all 9 grid views
 plus 2 close-ups. Promotion now depends on convergence/image quality, not raw
 step speed alone.
+
+## Browser UI Gate
+
+The fork is now exposed in `src/splat3d.html` as:
+
+```text
+CLIP layout: per-view CLIP | 3x3 grid + 2
+```
+
+When `3x3 grid + 2` is selected, the page forces:
+
+```text
+batch CLIP x3
+9/9 views
+```
+
+and encodes a dedicated grid prompt with `buildGrid9Prompt(...)` for lane 0.
+The close-up lanes continue to use the normal same-text or camera-text prompt
+mode. The readout includes `grid+2` so screenshots show which layout was active.

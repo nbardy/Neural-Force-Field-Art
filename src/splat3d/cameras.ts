@@ -88,6 +88,17 @@ export function buildViewPrompt(base: string, camera: Camera3D, includeBlackBack
   return buildBasePrompt(`${base.trim() || "a photo of a cat"}, ${camera.promptSuffix}`, includeBlackBackground);
 }
 
+export function buildGrid9Prompt(base: string, includeBlackBackground = true): string {
+  const text = base.trim() || "a photo of a cat";
+  return buildBasePrompt(
+    `${text}, a 3x3 contact sheet of the same subject from nine camera angles: ` +
+      "top-down view, front-facing view, right side view, rear view, left side view, " +
+      "elevated front-left view looking down, elevated front-right view looking down, " +
+      "low rear-right view looking up, and low rear-left view looking up",
+    includeBlackBackground
+  );
+}
+
 export function prepareCamera(camera: Camera3D, side: number): PreparedCamera3D {
   const forward = normalize(sub(camera.target, camera.eye));
   const upHint = camera.up ?? [0, 1, 0];

@@ -50,7 +50,8 @@
         border: 1px solid #45475a; border-radius: 6px;
         font: inherit; font-size: 13px; cursor: pointer;
       }
-      select { max-width: 128px; }
+	      select { max-width: 128px; }
+	      #clipLayout { max-width: 178px; }
       button:hover, select:hover { border-color: #89b4fa; }
       button:disabled, select:disabled { opacity: 0.5; cursor: default; }
       #readout {
@@ -95,12 +96,16 @@
           <option value="5">5/9 views</option>
           <option value="9">9/9 views</option>
         </select>
-        <select id="clipMode">
-          <option value="1">single CLIP</option>
-          <option value="3" selected>batch CLIP x3</option>
-          <option value="9">batch CLIP x9</option>
-        </select>
-        <button id="optimize">Optimize</button>
+	        <select id="clipMode">
+	          <option value="1">single CLIP</option>
+	          <option value="3" selected>batch CLIP x3</option>
+	          <option value="9">batch CLIP x9</option>
+	        </select>
+	        <select id="clipLayout">
+	          <option value="per_view" selected>per-view CLIP</option>
+	          <option value="grid9_close2">3x3 grid + 2</option>
+	        </select>
+	        <button id="optimize">Optimize</button>
         <button id="reset">Reset</button>
       </div>
       <div id="readout">boot…</div>
