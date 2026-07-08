@@ -179,6 +179,43 @@ Interpretation:
 - Future performance attempts should use `step_matrix.ts` or GPU timestamp
   queries before promotion.
 
+Attempt 3 result:
+
+- Added `TIMESTAMP=1` support to `tools/clip/dispatch_profile.ts`.
+- When the adapter exposes `timestamp-query`, the profiler requests that feature
+  and records a begin/end timestamp pair around each isolated compute dispatch.
+- Without timestamp support it keeps the warmed split-submit wall-time fallback.
+- This is an attribution tool, not a runtime optimizer.
+
+Commands run:
+
+```bash
+TIMESTAMP=1 MODE=train BATCH=3 RUNS=1 WARMUP=1 bun tools/clip/dispatch_profile.ts
+MODE=train BATCH=3 RUNS=1 WARMUP=1 bun tools/clip/dispatch_profile.ts
+TIMESTAMP=1 STEM_SPATIAL_BWD=1 FUSE_PW_GELU=1 MODE=train BATCH=3 RUNS=1 WARMUP=1 bun tools/clip/dispatch_profile.ts
+```
+
+Observed timestamp result for the current promoted B=3 CLIP settings:
+
+| Group | Isolated GPU Timestamp Sum |
+| --- | ---: |
+| `pw_bwd` | `42.01 ms` / `26.2%` |
+| `spatial_bwd` | `30.08 ms` / `18.8%` |
+| `conv` | `25.10 ms` / `15.7%` |
+| `pw+gelu` | `23.92 ms` / `14.9%` |
+| `pw` | `23.20 ms` / `14.5%` |
+| `attn_core_bwd` | `4.33 ms` / `2.7%` |
+
+Interpretation:
+
+- The timestamp path confirms that attention backward is visible but still not
+  the first 4x lever.
+- The highest-probability CLIP speed work remains pointwise backward/forward,
+  spatial backward, conv-family kernels, precision, and reducing the number of
+  CLIP calls.
+- Use `TIMESTAMP=1` for future CLIP kernel choices when the local WebGPU adapter
+  supports it.
+
 ### 3. Raster/CLIP Buffer Aliasing
 
 Hypothesis: removing image and gradient copies between raster and CLIP saves

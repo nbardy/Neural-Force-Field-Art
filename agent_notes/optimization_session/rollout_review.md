@@ -85,6 +85,9 @@ commit-and-measure loop:
 - STAR UVT/world-tube review clarified that exact multi-view raster batching is
   a scheduler problem first; sublinear camera-bundle rendering needs a different
   primitive.
+- CLIP dispatch profiling now has an opt-in timestamp-query path. On the
+  promoted B=3 CLIP settings it still ranks pointwise backward/forward, spatial
+  backward, and conv-family kernels above attention backward.
 
 The highest-value process lesson remains: every attractive GPU idea needs both
 a local correctness gate and a full-chain optimizer timing gate. The shared-W

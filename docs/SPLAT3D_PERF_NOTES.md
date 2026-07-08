@@ -15,7 +15,10 @@ steps. The overlay reports:
 
 This is intentionally labeled as sampled wall time. It is good enough to decide
 whether CLIP or raster is the current bottleneck, but it is not exact GPU
-timestamp attribution for the normal single-submit `step()` path.
+timestamp attribution for the normal single-submit `step()` path. For CLIP
+kernel ranking, `tools/clip/dispatch_profile.ts` now has an opt-in
+`TIMESTAMP=1` path that uses WebGPU timestamp queries when the adapter supports
+them.
 
 ## Measurements
 
@@ -63,7 +66,8 @@ Most promising CLIP experiments:
 - Try f16 weights/activations with f32 reductions behind feature gating.
 - Stage weights in `spatial_bwd`.
 - Fuse pointwise/GELU/residual blocks if dispatch and scratch traffic show up.
-- Add per-dispatch timestamp-query profiling to the batch benches.
+- Use per-dispatch timestamp-query profiling before choosing the next CLIP
+  rewrite.
 
 ### Raster
 
@@ -140,11 +144,13 @@ raster/CLIP buffer binding.
 ```bash
 MODE=train BATCH=1 RUNS=3 WARMUP=1 bun tools/clip/dispatch_profile.ts
 MODE=train BATCH=3 RUNS=3 WARMUP=1 bun tools/clip/dispatch_profile.ts
+TIMESTAMP=1 STEM_SPATIAL_BWD=1 FUSE_PW_GELU=1 MODE=train BATCH=3 RUNS=3 WARMUP=1 bun tools/clip/dispatch_profile.ts
 CSV=1 MODE=train BATCH=3 bun tools/clip/dispatch_profile.ts > /tmp/clip_b3.csv
 ```
 
-This is a kernel-ranking tool, not exact full-chain attribution. First warmed
-results:
+Without `TIMESTAMP=1`, this remains a warmed split-submit wall-time ranking.
+With `TIMESTAMP=1`, it resolves one begin/end timestamp pair around each
+isolated compute dispatch. First warmed split-submit results:
 
 | Batch | Dominant Groups |
 | ---: | --- |
@@ -154,6 +160,22 @@ results:
 The profiler changes the priority slightly: `spatial_bwd` is at least as
 important as pointwise in B=3, while attention backward is too small for the
 first wave.
+
+Timestamp-query smoke on the current promoted B=3 CLIP settings
+(`STEM_SPATIAL_BWD=1 FUSE_PW_GELU=1`, `RUNS=1`, `WARMUP=1`) reported:
+
+| Group | Timestamp Isolated Sum |
+| --- | ---: |
+| `pw_bwd` | `42.01 ms` / `26.2%` |
+| `spatial_bwd` | `30.08 ms` / `18.8%` |
+| `conv` | `25.10 ms` / `15.7%` |
+| `pw+gelu` | `23.92 ms` / `14.9%` |
+| `pw` | `23.20 ms` / `14.5%` |
+| `attn_core_bwd` | `4.33 ms` / `2.7%` |
+
+Total isolated timestamp sum was `160.30 ms`. The main conclusion is unchanged:
+optimize pointwise backward/forward, spatial backward, and conv-family kernels
+before spending serious time on attention backward.
 
 ## Prompt Encoding Cache
 

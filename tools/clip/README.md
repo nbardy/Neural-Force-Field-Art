@@ -271,13 +271,16 @@ dispatches:
 ```bash
 MODE=train BATCH=1 RUNS=3 WARMUP=1 bun tools/clip/dispatch_profile.ts
 MODE=train BATCH=3 RUNS=3 WARMUP=1 bun tools/clip/dispatch_profile.ts
+TIMESTAMP=1 STEM_SPATIAL_BWD=1 FUSE_PW_GELU=1 MODE=train BATCH=3 RUNS=3 WARMUP=1 bun tools/clip/dispatch_profile.ts
 CSV=1 MODE=train BATCH=3 bun tools/clip/dispatch_profile.ts > /tmp/clip_b3.csv
 BATCHES=1,3 TRIALS=2 RUNS=3 WARMUP=1 bun tools/clip/spatial_bwd_profile_matrix.ts
 ```
 
-Treat it as a kernel-priority tool, not exact full-chain GPU timestamp
-attribution. First profiles put `pw`, `pw_bwd`, `spatial_bwd`, and `conv` at
-the top; attention backward is not first-wave work.
+Use `TIMESTAMP=1` on adapters with `timestamp-query` for true GPU pass timing;
+otherwise it falls back to warmed split-submit wall time. Treat it as a
+kernel-priority tool, not exact full-chain attribution. First profiles put
+`pw`, `pw_bwd`, `spatial_bwd`, and `conv` at the top; attention backward is not
+first-wave work.
 
 ## prompt→splats browser page (Task #7 phase 2)
 

@@ -1,12 +1,15 @@
 /**
  * Isolated CLIP dispatch profiler.
  *
- * This times each generated WGSL dispatch with warmed split submits. It is not a
- * perfect full-chain GPU timestamp profile, but it gives a concrete kernel
- * ranking before we attempt shared-W pointwise, spatial_bwd, f16, or fusion.
+ * This times each generated WGSL dispatch with warmed split submits, or real
+ * per-dispatch GPU timestamps when TIMESTAMP=1 and the adapter supports
+ * timestamp-query. It is not perfect full-chain attribution, but it gives a
+ * concrete kernel ranking before shared-W pointwise, spatial_bwd, f16, or
+ * fusion attempts.
  *
  *   MODE=train BATCH=1 RUNS=3 WARMUP=1 bun tools/clip/dispatch_profile.ts
  *   MODE=train BATCH=3 RUNS=3 WARMUP=1 bun tools/clip/dispatch_profile.ts
+ *   TIMESTAMP=1 MODE=train BATCH=3 RUNS=3 WARMUP=1 bun tools/clip/dispatch_profile.ts
  *   MODE=forward PLAN=plan.json RUNS=5 WARMUP=2 bun tools/clip/dispatch_profile.ts
  *   CSV=1 MODE=train BATCH=1 bun tools/clip/dispatch_profile.ts > /tmp/clip.csv
  */
@@ -34,9 +37,16 @@ const CSV = process.env.CSV === "1";
 const STEM_SPATIAL_BWD = process.env.STEM_SPATIAL_BWD === "1";
 const FUSE_PW_GELU = process.env.FUSE_PW_GELU === "1";
 const FUSE_GELU_BWD_PW = process.env.FUSE_GELU_BWD_PW === "1";
+const TIMESTAMP = process.env.TIMESTAMP === "1";
 const PLAN_FILE =
   process.env.PLAN ?? (MODE === "forward" ? "plan.json" : "plan_train.json");
 const WEIGHTS_FILE = process.env.WEIGHTS ?? (PLAN_FILE.includes("train") ? "weights_train.bin" : "weights.bin");
+
+type PassTimestampWrites = {
+  querySet: GPUQuerySet;
+  beginningOfPassWriteIndex?: number;
+  endOfPassWriteIndex?: number;
+};
 
 interface Row {
   index: number;
@@ -90,14 +100,65 @@ function sumWorkgroups(w: [number, number, number]): number {
   return w[0] * w[1] * w[2];
 }
 
+class DispatchTimer {
+  private readonly querySet: GPUQuerySet;
+  private readonly resolveBuffer: GPUBuffer;
+  private readonly readBuffer: GPUBuffer;
+
+  constructor(private readonly device: GPUDevice) {
+    this.querySet = device.createQuerySet({ type: "timestamp", count: 2 });
+    this.resolveBuffer = device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+    });
+    this.readBuffer = device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+    });
+  }
+
+  timestampWrites(): PassTimestampWrites {
+    return {
+      querySet: this.querySet,
+      beginningOfPassWriteIndex: 0,
+      endOfPassWriteIndex: 1,
+    };
+  }
+
+  async timeDispatch(record: (encoder: GPUCommandEncoder) => void): Promise<number> {
+    const enc = this.device.createCommandEncoder();
+    record(enc);
+    enc.resolveQuerySet(this.querySet, 0, 2, this.resolveBuffer, 0);
+    enc.copyBufferToBuffer(this.resolveBuffer, 0, this.readBuffer, 0, 16);
+    this.device.queue.submit([enc.finish()]);
+    await this.readBuffer.mapAsync(GPUMapMode.READ);
+    const ts = new BigUint64Array(this.readBuffer.getMappedRange().slice(0));
+    this.readBuffer.unmap();
+    return Number(ts[1] - ts[0]) / 1e6;
+  }
+
+  destroy(): void {
+    this.querySet.destroy();
+    this.resolveBuffer.destroy();
+    this.readBuffer.destroy();
+  }
+}
+
 const adapter = await (navigator as any).gpu.requestAdapter();
 if (!adapter) {
   console.error("FATAL: no WebGPU adapter (bun-webgpu found no GPU)");
   process.exit(1);
 }
-const device: GPUDevice = await adapter.requestDevice();
+const timestampSupported = adapter.features.has("timestamp-query");
+const device: GPUDevice = await adapter.requestDevice({
+  requiredFeatures: TIMESTAMP && timestampSupported ? (["timestamp-query"] as GPUFeatureName[]) : [],
+});
+const useTimestamps = TIMESTAMP && device.features.has("timestamp-query");
 const info = adapter.info ?? {};
 if (!CSV) console.log(`adapter: ${info.vendor ?? "?"} ${info.architecture ?? "?"}`);
+if (TIMESTAMP && !useTimestamps && !CSV) {
+  console.log("dispatch profile: timestamp-query unavailable, falling back to split-submit wall time");
+}
 
 const plan = JSON.parse(readFileSync(join(MODEL_DIR, PLAN_FILE), "utf8")) as TrainPlan;
 const weights = f32File(join(MODEL_DIR, WEIGHTS_FILE));
@@ -167,7 +228,8 @@ function resolve(ref: BufferRef): GPUBuffer {
 if (!CSV) {
   console.log(
     `dispatch profile: mode=${MODE}, plan=${PLAN_FILE}, batch=${BATCH}, ` +
-      `dispatches=${specs.length}, runs=${RUNS}, warmup=${WARMUP}` +
+      `dispatches=${specs.length}, runs=${RUNS}, warmup=${WARMUP}, ` +
+      `timing=${useTimestamps ? "gpu-timestamp" : "split-submit-wall"}` +
       (STEM_SPATIAL_BWD ? `, stemSpatialBwd=1` : "") +
       (FUSE_PW_GELU ? `, fusePointwiseGeluForward=1` : "") +
       (FUSE_GELU_BWD_PW ? `, fuseGeluBwdIntoPw=1` : "")
@@ -175,6 +237,7 @@ if (!CSV) {
 }
 
 const rows: Row[] = [];
+const timer = useTimestamps ? new DispatchTimer(device) : null;
 for (let i = 0; i < specs.length; i++) {
   const spec = specs[i];
   const pipeline = await makePipeline(device, spec);
@@ -183,6 +246,17 @@ for (let i = 0; i < specs.length; i++) {
     entries: spec.buffers.map((ref, binding) => ({ binding, resource: { buffer: resolve(ref) } })),
   });
   const runOnce = async (): Promise<number> => {
+    if (timer) {
+      return timer.timeDispatch((enc) => {
+        const pass = enc.beginComputePass({
+          timestampWrites: timer.timestampWrites(),
+        } as GPUComputePassDescriptor);
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(0, bind);
+        pass.dispatchWorkgroups(...spec.workgroups);
+        pass.end();
+      });
+    }
     const enc = device.createCommandEncoder();
     const pass = enc.beginComputePass();
     pass.setPipeline(pipeline);
@@ -242,6 +316,7 @@ if (CSV) {
   console.log(`\nTotal isolated median sum: ${total.toFixed(3)} ms`);
 }
 
+timer?.destroy();
 weightsBuffer.destroy();
 textBuffer.destroy();
 for (const b of slotBuffers) b.destroy();
