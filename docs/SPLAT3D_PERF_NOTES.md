@@ -210,6 +210,26 @@ Takeaway: integrated GPU attribution agrees with the CLIP dispatch profiler.
 The next large win is still CLIP, not Adam/display and not shallow raster
 scheduling.
 
+## CLIP Depthwise Spatial Backward Fork
+
+`SPATIAL_BWD_VARIANT=depthwise4` adds a gated depthwise-only CLIP backward
+shader that computes four adjacent horizontal input pixels per thread. It passed
+the backward correctness suite, including the end-to-end directional derivative
+gate.
+
+Isolated timestamp profiling was mixed: the `spatial_bwd` bucket improved
+`15.47 ms -> 13.63 ms`, but total isolated median sum moved
+`69.99 ms -> 75.76 ms` in that run. Integrated 3D step timing was more useful:
+
+| Variant | Normal Median | Profile Median | CLIP Median | Raster Median |
+| --- | ---: | ---: | ---: | ---: |
+| baseline | `53.12 ms` | `54.37 ms` | `40.00 ms` | `11.59 ms` |
+| `depthwise4` | `49.96 ms` | `51.80 ms` | `38.24 ms` | `11.26 ms` |
+
+Decision: preserve the gate and keep testing it, but do not call it a 2x-class
+breakthrough. It is a real-looking ~6% integrated step win and evidence that
+kernel shape still matters.
+
 ## Prompt Encoding Cache
 
 The 3D page now caches text embeddings by exact expanded prompt. In `same text`

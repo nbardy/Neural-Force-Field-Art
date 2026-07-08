@@ -18,6 +18,20 @@ profiles and wall-time benches, but we have not yet used Metal shader counters
 for memory bandwidth, occupancy, register pressure, cache behavior, or
 threadgroup-memory pressure.
 
+The code-level experiment trail is now in `experiments/clip_forks/`. Important
+current outcomes:
+
+- `v02_f16_weights`: f16 CLIP weight storage is not promotable yet. It halves
+  weight storage, but input-gradient cosine failed the strict gate and timestamp
+  speed was slightly worse in the measured run.
+- `v06_view_sampling`: N-of-K view sampling is the biggest practical wall-time
+  lever so far because it reduces CLIP calls per optimizer step while preserving
+  camera coverage over time.
+- `v07_spatial_bwd_depthwise4`: vectorizing depthwise spatial backward four
+  horizontal pixels at a time passed correctness and improved integrated 3D
+  step median `53.12 ms -> 49.96 ms`, but it is still gated because the
+  isolated timestamp profile was mixed.
+
 ## Tooling Reality
 
 This machine currently has Command Line Tools selected:
@@ -97,11 +111,11 @@ still plausible, but probably needs stacked changes:
    - Grid9+closeup schedule.
    - Alternate full-view passes and cheaper proxy passes.
 
-2. Add CLIP f16 storage.
-   - Start with f16 weights and f32 accumulators.
-   - Then try selective f16 activations/grad slots.
-   - This may give 10-30% if memory traffic is material, but it needs counters
-     or hard timestamp proof.
+2. Revisit precision more selectively.
+   - All-weight f16 was tested and did not pass the gradient-quality/speed gate.
+   - The remaining possible lane is selective f16 for activations or specific
+     read-mostly buffers with f32 accumulation, but this needs tighter
+     per-kernel proof before broad edits.
 
 3. Rewrite the hot pointwise/spatial kernels with a profiling target.
    - Current hot groups are `pw_bwd`, `pw`, `pw+gelu`, `spatial_bwd`, and
@@ -152,7 +166,12 @@ events.
 
 ## Decision
 
-The next ambitious CLIP speed fork should be f16 weights first, then selective
-f16 activations if it wins or clearly reduces memory pressure. In parallel, keep
-N-of-K/grid schedules because they are the only near-term path with realistic
-2x+ wall-time potential without changing the model.
+Keep chasing two tracks:
+
+- Productive schedule wins: N-of-K random/epoch views, grid/contact-sheet CLIP,
+  and lower-frequency all-view refreshes. This is the only near-term path with
+  realistic 2x+ wall-time potential without changing the CLIP model.
+- Narrow shader forks: pointwise backward/forward tiling, conv/depthwise
+  spatial variants, and selective precision. The `depthwise4` result shows
+  there is real shader headroom, but the size of the win argues for stacked
+  5-15% improvements, not a single magic 4x kernel.

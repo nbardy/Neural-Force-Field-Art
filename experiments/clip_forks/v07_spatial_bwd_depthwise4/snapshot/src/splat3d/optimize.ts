@@ -40,7 +40,6 @@ export interface Splat3DOptimizerConfig {
   viewSampler?: Splat3DViewSampler;
   clipWeightPrecision?: WeightPrecision;
   stemSpatialBwd?: boolean;
-  spatialBwdVariant?: "generic" | "depthwise4";
   fusePointwiseGeluForward?: boolean;
   fuseGeluBwdIntoPw?: boolean;
   fuseResidualBwdIntoPw?: boolean;
@@ -135,7 +134,6 @@ export class Splat3DOptimizer {
     const clipDispatchOptions = {
       weightPrecision: cfg.clipWeightPrecision,
       stemSpatialBwd: cfg.stemSpatialBwd ?? true,
-      spatialBwdVariant: cfg.spatialBwdVariant,
       fusePointwiseGeluForward: cfg.fusePointwiseGeluForward ?? true,
       fuseGeluBwdIntoPw: cfg.fuseGeluBwdIntoPw ?? false,
       fuseResidualBwdIntoPw: cfg.fuseResidualBwdIntoPw ?? false,
@@ -148,7 +146,6 @@ export class Splat3DOptimizer {
         ? await BatchMajorVisionTrainer.create(device, trainPlan, weights, clipBatchSize, {
             weightPrecision: cfg.clipWeightPrecision,
             stemSpatialBwd: clipDispatchOptions.stemSpatialBwd,
-            spatialBwdVariant: clipDispatchOptions.spatialBwdVariant,
             fusePointwiseGeluForward: clipDispatchOptions.fusePointwiseGeluForward,
             fuseGeluBwdIntoPw: clipDispatchOptions.fuseGeluBwdIntoPw,
             fuseResidualBwdIntoPw: clipDispatchOptions.fuseResidualBwdIntoPw,

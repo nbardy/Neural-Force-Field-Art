@@ -44,7 +44,6 @@ const SEED = Number(process.env.SEED ?? 1);
 const G = Number(process.env.G ?? LEGIBLE_3D_G);
 const CAP = Number(process.env.CAP ?? 2048);
 const STEM_SPATIAL_BWD = process.env.STEM_SPATIAL_BWD !== "0";
-const SPATIAL_BWD_VARIANT = process.env.SPATIAL_BWD_VARIANT === "depthwise4" ? "depthwise4" : undefined;
 const FUSE_PW_GELU = process.env.FUSE_PW_GELU !== "0";
 const FUSE_GELU_BWD_PW = process.env.FUSE_GELU_BWD_PW === "1";
 const FUSE_RESIDUAL_BWD_PW = process.env.FUSE_RESIDUAL_BWD_PW === "1";
@@ -120,7 +119,6 @@ const opt = await Splat3DOptimizer.create(device, plan, weights, {
   viewSampler: VIEW_SAMPLER,
   clipWeightPrecision: CLIP_PRECISION,
   stemSpatialBwd: STEM_SPATIAL_BWD,
-  spatialBwdVariant: SPATIAL_BWD_VARIANT,
   fusePointwiseGeluForward: FUSE_PW_GELU,
   fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
   fuseResidualBwdIntoPw: FUSE_RESIDUAL_BWD_PW,
@@ -133,7 +131,6 @@ console.log(
     `clipBatch=${opt.clipBatchSize}, clipLayout=${opt.clipLayout}, clipPrecision=${CLIP_PRECISION}, ` +
     `viewSampler=${opt.viewSampler}, weights=${WEIGHTS_FILE}, cap=${CAP}, runs=${RUNS}, warmup=${WARMUP}, ` +
     `stemSpatialBwd=${STEM_SPATIAL_BWD ? 1 : 0}, ` +
-    `spatialBwdVariant=${SPATIAL_BWD_VARIANT ?? "generic"}, ` +
     `fusePointwiseGeluForward=${FUSE_PW_GELU ? 1 : 0}, ` +
     `fuseGeluBwdIntoPw=${FUSE_GELU_BWD_PW ? 1 : 0}, ` +
     `fuseResidualBwdIntoPw=${FUSE_RESIDUAL_BWD_PW ? 1 : 0}, ` +

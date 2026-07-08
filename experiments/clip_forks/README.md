@@ -23,6 +23,7 @@ rollback review; do not import code from `snapshot/` at runtime.
 ```bash
 node experiments/clip_forks/diff_fork.mjs v02_f16_weights
 node experiments/clip_forks/diff_fork.mjs v04_pointwise_tile_rewrite
+node experiments/clip_forks/diff_fork.mjs v07_spatial_bwd_depthwise4
 ```
 
 ## Standard Gate
@@ -50,6 +51,8 @@ Use the gate-specific env vars in addition to the commands above.
 - `v05_gpu_counter_trace`: Chrome / Xcode / Metal trace plan for real shader
   bottleneck evidence.
 - `v06_view_sampling`: same-resolution N-of-K camera schedules.
+- `v07_spatial_bwd_depthwise4`: depthwise-only vectorized CLIP spatial
+  backward lane.
 
 ## Snapshot Coverage
 
@@ -60,6 +63,8 @@ Use the gate-specific env vars in addition to the commands above.
 - `v04_pointwise_tile_rewrite`: CLIP pointwise emitters and pointwise benches.
 - `v05_gpu_counter_trace`: integrated 3D profiler and CLIP dispatch profiler.
 - `v06_view_sampling`: 3D optimizer/page controls and 3D step benches.
+- `v07_spatial_bwd_depthwise4`: CLIP backward emitter, backward tests, 3D
+  optimizer wiring, and benchmark env gates.
 
 ## Related Notes
 

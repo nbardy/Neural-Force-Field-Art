@@ -376,12 +376,6 @@ async function testSpatial(name: string, cin: number, cout: number, k: number, s
   const spec = bwdStepDispatch(step);
   const got = await runDispatch(spec, [pk.f32(), Float32Array.from(dY), null], 2, cin * H * W);
   report(name, relLinf(got, analytic), fdCheck(L, x0, analytic, mulberry32(5)));
-
-  if (groups === cin && cout === cin && (stride === 1 || stride === 2) && H % 4 === 0 && W % 4 === 0) {
-    const spec4 = bwdStepDispatch(step, { spatialBwdVariant: "depthwise4" });
-    const got4 = await runDispatch(spec4, [pk.f32(), Float32Array.from(dY), null], 2, cin * H * W);
-    report(`${name} depthwise4`, relLinf(got4, analytic), 0);
-  }
 }
 
 // ---- se_bwd ----------------------------------------------------------------

@@ -121,7 +121,6 @@ export interface TrainPlan extends VisionPlan {
 
 export interface BwdDispatchOptions extends DispatchOptions {
   stemSpatialBwd?: boolean;
-  spatialBwdVariant?: "generic" | "depthwise4";
   fuseGeluBwdIntoPw?: boolean;
   fuseResidualBwdIntoPw?: boolean;
 }
@@ -370,91 +369,6 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     label: `spatial_bwd k${s.k}s${s.stride} ${s.cin}<-${s.cout} g${s.groups} @${s.h}x${s.w}${s.accumulate ? " +=" : ""}`,
     code,
     workgroups: [Math.ceil(P / 64), s.cin, 1],
-    buffers: [{ kind: "weights" }, gradSlot(s.dY), gradSlot(s.dX)],
-  };
-}
-
-function canUseDepthwise4SpatialBwd(s: SpatialBwdStep): boolean {
-  return (
-    (s.stride === 1 || s.stride === 2) &&
-    s.groups === s.cin &&
-    s.cout === s.cin &&
-    s.h % 4 === 0 &&
-    s.w % 4 === 0 &&
-    s.outW > 0
-  );
-}
-
-function spatialBwdDepthwise4(s: SpatialBwdStep, opts: BwdDispatchOptions = {}): DispatchSpec {
-  assertStep(canUseDepthwise4SpatialBwd(s), `${s.name}: depthwise4 spatial_bwd received wrong shape`);
-  const P = s.h * s.w;
-  const Q = P / 4;
-  const outP = s.outH * s.outW;
-  const store = s.accumulate ? `dx[ci * ${Q}u + q] + acc` : `acc`;
-  const rowSolve = s.stride === 1
-    ? /* wgsl */ `
-  let oy = ty;
-  if (oy < 0 || oy >= ${s.outH}) { continue; }`
-    : /* wgsl */ `
-  if ((ty & 1) != 0) { continue; }
-  let oy = ty >> 1;
-  if (oy < 0 || oy >= ${s.outH}) { continue; }`;
-  const sampleX = (lane: number): string =>
-    s.stride === 1
-      ? /* wgsl */ `
-      {
-        let ox${lane} = tx${lane};
-        if (ox${lane} >= 0 && ox${lane} < ${s.outW}) { y${lane} = dy[rowY + u32(ox${lane})]; }
-      }`
-      : /* wgsl */ `
-      {
-        if ((tx${lane} & 1) == 0) {
-          let ox${lane} = tx${lane} >> 1;
-          if (ox${lane} >= 0 && ox${lane} < ${s.outW}) { y${lane} = dy[rowY + u32(ox${lane})]; }
-        }
-      }`;
-  const code = /* wgsl */ `
-${weightsDecl(0, opts.weightPrecision)}
-@group(0) @binding(1) var<storage, read> dy : array<f32>;            // [C][outH][outW]
-@group(0) @binding(2) var<storage, read_write> dx : array<vec4f>;    // [C][H*W/4]
-@compute @workgroup_size(64, 1)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let ci = gid.y;
-  let q = gid.x;
-  if (q >= ${Q}u) { return; }
-  let iy = i32(q / ${s.w / 4}u);
-  let ix0 = i32((q % ${s.w / 4}u) * 4u);
-  let wbase = ${s.wOff}u + ci * ${s.k * s.k}u;
-  let dybase = ci * ${outP}u;
-  var acc = vec4f(0.0);
-  for (var ky = 0; ky < ${s.k}; ky = ky + 1) {
-    let ty = iy + ${s.pad} - ky;
-${rowSolve}
-    let rowY = dybase + u32(oy) * ${s.outW}u;
-    let rowW = wbase + u32(ky) * ${s.k}u;
-    for (var kx = 0; kx < ${s.k}; kx = kx + 1) {
-      let kxi = i32(kx);
-      let tx0 = ix0 + ${s.pad} - kxi;
-      let tx1 = tx0 + 1;
-      let tx2 = tx0 + 2;
-      let tx3 = tx0 + 3;
-      var y0 = 0.0;
-      var y1 = 0.0;
-      var y2 = 0.0;
-      var y3 = 0.0;
-${sampleX(0)}
-${sampleX(1)}
-${sampleX(2)}
-${sampleX(3)}
-      acc = fma(vec4f(W(rowW + u32(kx))), vec4f(y0, y1, y2, y3), acc);
-    }
-  }
-  dx[ci * ${Q}u + q] = ${store};
-}`;
-  return {
-    label: `spatial_bwd_dw4 k${s.k}s${s.stride} ${s.cin}<-${s.cout} g${s.groups} @${s.h}x${s.w}${s.accumulate ? " +=" : ""}`,
-    code,
-    workgroups: [Math.ceil(Q / 64), s.cin, 1],
     buffers: [{ kind: "weights" }, gradSlot(s.dY), gradSlot(s.dX)],
   };
 }
@@ -837,12 +751,7 @@ export function bwdStepDispatch(step: BwdStep, opts: BwdDispatchOptions = {}): D
     case "gelu_bwd":      return geluBwd(step);
     case "pw_bwd":        return pwBwd(step, opts);
     case "residual_bwd":  return residualBwd(step);
-    case "spatial_bwd":
-      if (opts.stemSpatialBwd && isStemSpatialBwd(step)) return spatialBwdStem4(step, opts);
-      if (opts.spatialBwdVariant === "depthwise4" && canUseDepthwise4SpatialBwd(step)) {
-        return spatialBwdDepthwise4(step, opts);
-      }
-      return spatialBwd(step, opts);
+    case "spatial_bwd":   return opts.stemSpatialBwd && isStemSpatialBwd(step) ? spatialBwdStem4(step, opts) : spatialBwd(step, opts);
     case "se_bwd":        return seBwd(step, opts);
     case "attn_core_bwd": return attnCoreBwd(step);
   }

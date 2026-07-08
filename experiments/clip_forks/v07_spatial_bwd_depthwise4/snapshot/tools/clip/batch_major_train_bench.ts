@@ -24,7 +24,6 @@ const RUNS = Number(process.env.RUNS ?? 3);
 const WARMUP = Number(process.env.WARMUP ?? 3);
 const SHARED_W_FWD_STEPS = parseStepSet(process.env.SHARED_W_FWD_STEPS ?? "");
 const STEM_SPATIAL_BWD = process.env.STEM_SPATIAL_BWD === "1";
-const SPATIAL_BWD_VARIANT = process.env.SPATIAL_BWD_VARIANT === "depthwise4" ? "depthwise4" : undefined;
 const FUSE_PW_GELU = process.env.FUSE_PW_GELU === "1";
 const FUSE_GELU_BWD_PW = process.env.FUSE_GELU_BWD_PW === "1";
 const FUSE_RESIDUAL_BWD_PW = process.env.FUSE_RESIDUAL_BWD_PW === "1";
@@ -152,7 +151,6 @@ console.log(
     `precision=${PRECISION}, weights=${WEIGHTS_FILE}, dispatches=${plan.steps.length}+${plan.backward.length}` +
     (SHARED_W_FWD_STEPS.size ? `, sharedWForwardSteps=${[...SHARED_W_FWD_STEPS].join(",")}` : "") +
     (STEM_SPATIAL_BWD ? `, stemSpatialBwd=1` : "") +
-    (SPATIAL_BWD_VARIANT ? `, spatialBwdVariant=${SPATIAL_BWD_VARIANT}` : "") +
     (FUSE_PW_GELU ? `, fusePointwiseGeluForward=1` : "") +
     (FUSE_GELU_BWD_PW ? `, fuseGeluBwdIntoPw=1` : "") +
     (FUSE_RESIDUAL_BWD_PW ? `, fuseResidualBwdIntoPw=1` : "")
@@ -162,7 +160,6 @@ let t0 = performance.now();
 const single = await VisionTrainer.create(device, plan, weights, {
   weightPrecision: PRECISION,
   stemSpatialBwd: STEM_SPATIAL_BWD,
-  spatialBwdVariant: SPATIAL_BWD_VARIANT,
   fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
   fuseResidualBwdIntoPw: FUSE_RESIDUAL_BWD_PW,
 });
@@ -193,7 +190,6 @@ const batch = await BatchMajorVisionTrainer.create(device, plan, weights, BATCH,
   weightPrecision: PRECISION,
   sharedWForwardSteps: SHARED_W_FWD_STEPS,
   stemSpatialBwd: STEM_SPATIAL_BWD,
-  spatialBwdVariant: SPATIAL_BWD_VARIANT,
   fusePointwiseGeluForward: FUSE_PW_GELU,
   fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
   fuseResidualBwdIntoPw: FUSE_RESIDUAL_BWD_PW,

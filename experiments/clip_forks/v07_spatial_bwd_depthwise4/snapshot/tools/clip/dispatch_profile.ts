@@ -36,7 +36,6 @@ const RUNS = Number(process.env.RUNS ?? 3);
 const WARMUP = Number(process.env.WARMUP ?? 1);
 const CSV = process.env.CSV === "1";
 const STEM_SPATIAL_BWD = process.env.STEM_SPATIAL_BWD === "1";
-const SPATIAL_BWD_VARIANT = process.env.SPATIAL_BWD_VARIANT === "depthwise4" ? "depthwise4" : undefined;
 const FUSE_PW_GELU = process.env.FUSE_PW_GELU === "1";
 const FUSE_GELU_BWD_PW = process.env.FUSE_GELU_BWD_PW === "1";
 const FUSE_RESIDUAL_BWD_PW = process.env.FUSE_RESIDUAL_BWD_PW === "1";
@@ -199,7 +198,6 @@ if (BATCH > 1) {
     const out = batchTrainDispatches(plan, BATCH, {
       weightPrecision: PRECISION,
       stemSpatialBwd: STEM_SPATIAL_BWD,
-      spatialBwdVariant: SPATIAL_BWD_VARIANT,
       fusePointwiseGeluForward: FUSE_PW_GELU,
       fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
       fuseResidualBwdIntoPw: FUSE_RESIDUAL_BWD_PW,
@@ -215,7 +213,6 @@ if (BATCH > 1) {
   const bwd = planBwdDispatches(plan, {
     weightPrecision: PRECISION,
     stemSpatialBwd: STEM_SPATIAL_BWD,
-    spatialBwdVariant: SPATIAL_BWD_VARIANT,
     fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
     fuseResidualBwdIntoPw: FUSE_RESIDUAL_BWD_PW,
   });
@@ -263,7 +260,6 @@ if (!CSV) {
     `precision=${PRECISION}, weights=${WEIGHTS_FILE}, dispatches=${specs.length}, runs=${RUNS}, warmup=${WARMUP}, ` +
       `timing=${useTimestamps ? "gpu-timestamp" : "split-submit-wall"}` +
       (STEM_SPATIAL_BWD ? `, stemSpatialBwd=1` : "") +
-      (SPATIAL_BWD_VARIANT ? `, spatialBwdVariant=${SPATIAL_BWD_VARIANT}` : "") +
       (FUSE_PW_GELU ? `, fusePointwiseGeluForward=1` : "") +
       (FUSE_GELU_BWD_PW ? `, fuseGeluBwdIntoPw=1` : "") +
       (FUSE_RESIDUAL_BWD_PW ? `, fuseResidualBwdIntoPw=1` : "")
