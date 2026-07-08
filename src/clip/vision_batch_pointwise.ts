@@ -13,6 +13,8 @@ import {
   weightsDecl,
   type ConvStep,
   type DispatchSpec,
+  type BufferRef,
+  type VisionPlan,
 } from "./vision_wgsl";
 
 function pointwiseBuffers(hasRes: boolean): DispatchSpec["buffers"] {
@@ -23,6 +25,24 @@ function pointwiseBuffers(hasRes: boolean): DispatchSpec["buffers"] {
   ];
   if (hasRes) buffers.push({ kind: "slot", slot: 2 });
   return buffers;
+}
+
+function actualPointwiseBuffers(s: ConvStep): BufferRef[] {
+  const buffers: BufferRef[] = [
+    { kind: "weights" },
+    { kind: "slot", slot: s.src },
+    { kind: "slot", slot: s.dst },
+  ];
+  if (s.residual !== null) buffers.push({ kind: "slot", slot: s.residual });
+  return buffers;
+}
+
+function slotStride4(plan: VisionPlan, slot: number, label: string): number {
+  const floats = plan.slots[slot];
+  if (floats % 4 !== 0) {
+    throw new Error(`pointwise_shared_w: ${label} slot ${slot} has non-vec4 stride ${floats}`);
+  }
+  return floats / 4;
 }
 
 function postExpr(s: ConvStep, P4: number, j: number, value: string, batched = true): string {
@@ -167,5 +187,80 @@ fn main(@builtin(workgroup_id) wid : vec3u,
     code,
     workgroups: [P4 / 8, s.cout / 32, 1],
     buffers: pointwiseBuffers(hasRes),
+  };
+}
+
+/** Production shared-W forward pointwise: real CLIP slots laid out as
+ * `[batch][slotFloats]`, with batch lanes inside one workgroup. */
+export function pointwiseSharedWBatchForwardDispatch(
+  plan: VisionPlan,
+  s: ConvStep,
+  batch: number
+): DispatchSpec {
+  if (!Number.isInteger(batch) || batch < 1 || batch > 3) {
+    throw new Error(`pointwise_shared_w_forward: batch ${batch} outside [1, 3]`);
+  }
+  const P = s.outH * s.outW;
+  assertPointwiseTiles(s.name, s.cin, s.cout, P, s.wOff);
+  const P4 = P / 4;
+  const srcStride = slotStride4(plan, s.src, "src");
+  const dstStride = slotStride4(plan, s.dst, "dst");
+  const hasRes = s.residual !== null;
+  const resStride = hasRes ? slotStride4(plan, s.residual as number, "residual") : dstStride;
+  const code = /* wgsl */ `
+${weightsDecl(0)}
+@group(0) @binding(1) var<storage, read> src : array<vec4f>;
+@group(0) @binding(2) var<storage, read_write> dst : array<vec4f>;
+${hasRes ? `@group(0) @binding(3) var<storage, read> res : array<vec4f>;` : ``}
+${GELU}
+var<workgroup> xS : array<vec4f, ${256 * batch}>;
+var<workgroup> wS : array<vec4f, 256>;
+@compute @workgroup_size(8, 8, ${batch})
+fn main(@builtin(workgroup_id) wid : vec3u,
+        @builtin(local_invocation_id) lid : vec3u) {
+  let lane = lid.z;
+  let li = lid.y * 8u + lid.x;
+  let xTile = lane * 256u;
+  let srcBase = lane * ${srcStride}u;
+  let dstBase = lane * ${dstStride}u;
+  let resBase = lane * ${resStride}u;
+  let p4 = wid.x * 8u + lid.x;
+  let co = (wid.y * 8u + lid.y) * 4u;
+  let p4base = wid.x * 8u;
+  let cobase = wid.y * 32u;
+  var acc0 = vec4f(W(${s.bOff}u + co));
+  var acc1 = vec4f(W(${s.bOff}u + co + 1u));
+  var acc2 = vec4f(W(${s.bOff}u + co + 2u));
+  var acc3 = vec4f(W(${s.bOff}u + co + 3u));
+  for (var ci0 = 0u; ci0 < ${s.cin}u; ci0 = ci0 + 32u) {
+    for (var t = li; t < 256u; t = t + 64u) {
+      let ci = t >> 3u;
+      let px = t & 7u;
+      xS[xTile + t] = src[srcBase + (ci0 + ci) * ${P4}u + p4base + px];
+      if (lane == 0u) {
+        wS[t] = W4((${s.wOff}u + (ci0 + ci) * ${s.cout}u + cobase + px * 4u) / 4u);
+      }
+    }
+    workgroupBarrier();
+    for (var ci = 0u; ci < 32u; ci = ci + 1u) {
+      let xv = xS[xTile + ci * 8u + lid.x];
+      let wv = wS[ci * 8u + lid.y];
+      acc0 = fma(vec4f(wv.x), xv, acc0);
+      acc1 = fma(vec4f(wv.y), xv, acc1);
+      acc2 = fma(vec4f(wv.z), xv, acc2);
+      acc3 = fma(vec4f(wv.w), xv, acc3);
+    }
+    workgroupBarrier();
+  }
+  dst[dstBase + co * ${P4}u + p4] = ${postExpr(s, P4, 0, "acc0")};
+  dst[dstBase + (co + 1u) * ${P4}u + p4] = ${postExpr(s, P4, 1, "acc1")};
+  dst[dstBase + (co + 2u) * ${P4}u + p4] = ${postExpr(s, P4, 2, "acc2")};
+  dst[dstBase + (co + 3u) * ${P4}u + p4] = ${postExpr(s, P4, 3, "acc3")};
+}`;
+  return {
+    label: `pw-shared-w-fwd B${batch} ${s.cin}->${s.cout} @${s.outH}x${s.outW}`,
+    code,
+    workgroups: [P4 / 8, s.cout / 32, 1],
+    buffers: actualPointwiseBuffers(s),
   };
 }

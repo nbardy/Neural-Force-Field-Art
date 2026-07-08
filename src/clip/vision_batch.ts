@@ -20,7 +20,7 @@ import {
   type VisionPlan,
 } from "./vision_wgsl";
 import { planBwdDispatches, type TrainPlan } from "./vision_bwd_wgsl";
-import { batchForwardDispatches, batchTrainDispatches } from "./vision_batch_wgsl";
+import { batchForwardDispatches, batchTrainDispatches, type BatchDispatchOptions } from "./vision_batch_wgsl";
 
 const USAGE = { MAP_READ: 1, COPY_SRC: 4, COPY_DST: 8, STORAGE: 128 };
 
@@ -278,7 +278,8 @@ export class BatchMajorVisionEncoder {
     device: GPUDevice,
     plan: VisionPlan,
     weights: Float32Array,
-    batch: number
+    batch: number,
+    opts: BatchDispatchOptions = {}
   ): Promise<BatchMajorVisionEncoder> {
     if (!Number.isInteger(batch) || batch < 1) {
       throw new Error(`vision_batch: invalid batch ${batch}`);
@@ -288,7 +289,7 @@ export class BatchMajorVisionEncoder {
         `vision_batch: weights blob ${weights.length} floats != plan ${plan.weightsFloats}`
       );
     }
-    const built = await compilePipelines(device, batchForwardDispatches(plan, batch));
+    const built = await compilePipelines(device, batchForwardDispatches(plan, batch, opts));
     return new BatchMajorVisionEncoder(device, plan, weights, batch, built);
   }
 
@@ -409,7 +410,8 @@ export class BatchMajorVisionTrainer {
     device: GPUDevice,
     plan: TrainPlan,
     weights: Float32Array,
-    batch: number
+    batch: number,
+    opts: BatchDispatchOptions = {}
   ): Promise<BatchMajorVisionTrainer> {
     if (!Number.isInteger(batch) || batch < 1) {
       throw new Error(`vision_batch: invalid batch ${batch}`);
@@ -419,7 +421,7 @@ export class BatchMajorVisionTrainer {
         `vision_batch: weights blob ${weights.length} floats != plan ${plan.weightsFloats}`
       );
     }
-    const { specs, fwdCount } = batchTrainDispatches(plan, batch);
+    const { specs, fwdCount } = batchTrainDispatches(plan, batch, opts);
     const built = await compilePipelines(device, specs);
     return new BatchMajorVisionTrainer(device, plan, weights, batch, built, fwdCount);
   }

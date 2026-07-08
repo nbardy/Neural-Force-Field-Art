@@ -289,6 +289,52 @@ test selectively: `pw 64->192 @64x64`, `pw_bwd 64->192 @64x64`,
 dispatches. But `spatial_bwd` is still the largest single group, so shared-W is
 not the only remaining CLIP target.
 
+## Iteration 4c - Selective Production Shared-W Forward
+
+Implemented:
+
+- `pointwiseSharedWBatchForwardDispatch()` in `src/clip/vision_batch_pointwise.ts`
+- optional `sharedWForwardSteps` in `batchForwardDispatches()` /
+  `batchTrainDispatches()`
+- `SHARED_W_FWD_STEPS` in `tools/clip/batch_major_train_bench.ts`
+- `tools/clip/batch_major_train_matrix.ts`
+
+Default behavior is unchanged. The shared-W production path is only used when a
+caller passes an explicit forward-step allowlist.
+
+Verification:
+
+```bash
+BATCH=3 RUNS=1 WARMUP=1 bun tools/clip/batch_major_train_bench.ts
+SHARED_W_FWD_STEPS=8,10,111,115 BATCH=3 RUNS=1 WARMUP=1 bun tools/clip/batch_major_train_bench.ts
+```
+
+Both paths passed gradient parity for all lanes with `cos=1.000000` and
+`relLinf=0.00e+0`.
+
+Full-chain matrix:
+
+```bash
+TRIALS=2 RUNS=3 WARMUP=3 CONFIGS='base=;early=8,10;candidates=8,10,111,115' bun tools/clip/batch_major_train_matrix.ts
+BATCH=2 TRIALS=2 RUNS=3 WARMUP=3 CONFIGS='base=;b2wins=8,57' bun tools/clip/batch_major_train_matrix.ts
+```
+
+Results:
+
+| batch | config | shared-W steps | median batch-major |
+| ---: | --- | --- | ---: |
+| 3 | base | none | `75.13 ms` |
+| 3 | early | `8,10` | `76.36 ms` |
+| 3 | candidates | `8,10,111,115` | `76.34 ms` |
+| 2 | base | none | `41.52 ms` |
+| 2 | b2wins | `8,57` | `41.66 ms` |
+
+Decision: do not promote selective shared-W forward into the app or default
+optimizer path. The isolated microbench wins do not survive full-chain
+batch-major training. Keep the gated path and matrix runner for future variants,
+but move the next performance attempt to `spatial_bwd`, raster view dispatch, or
+another full-chain-visible target.
+
 ## Next Five Iterations
 
 1. **Production speed win:** add `views/step` N-of-K to the 3D page, default 3

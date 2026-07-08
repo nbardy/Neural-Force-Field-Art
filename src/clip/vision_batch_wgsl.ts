@@ -12,16 +12,23 @@
 /// <reference types="@webgpu/types" />
 import {
   planDispatches,
+  stepDispatches,
   type BufferRef,
+  type ConvStep,
   type DispatchSpec,
   type VisionPlan,
 } from "./vision_wgsl";
 import { planBwdDispatches, type TrainPlan } from "./vision_bwd_wgsl";
+import { pointwiseSharedWBatchForwardDispatch } from "./vision_batch_pointwise";
 
 interface BatchBinding {
   name: string;
   elem: "f32" | "vec4f";
   strideFloats: number;
+}
+
+export interface BatchDispatchOptions {
+  sharedWForwardSteps?: ReadonlySet<number>;
 }
 
 function mainSignature(code: string): { start: number; openBrace: number; signature: string } {
@@ -107,41 +114,69 @@ function addBatchOffsets(plan: VisionPlan, spec: DispatchSpec): string {
   return code;
 }
 
-export function batchForwardDispatches(plan: VisionPlan, batch: number): DispatchSpec[] {
-  if (!Number.isInteger(batch) || batch < 1) {
-    throw new Error(`vision_batch_wgsl: invalid batch ${batch}`);
-  }
-  return planDispatches(plan).map((spec) => {
-    if (spec.workgroups[2] !== 1) {
-      throw new Error(`vision_batch_wgsl: ${spec.label} already uses workgroup z=${spec.workgroups[2]}`);
+function forwardDispatches(plan: VisionPlan, batch: number, opts: BatchDispatchOptions): DispatchSpec[] {
+  return plan.steps.flatMap((step, index) => {
+    if (
+      opts.sharedWForwardSteps?.has(index) &&
+      step.kind === "conv" &&
+      step.variant === "pointwise"
+    ) {
+      return [pointwiseSharedWBatchForwardDispatch(plan, step as ConvStep, batch)];
     }
-    return {
-      ...spec,
-      code: addBatchOffsets(plan, spec),
-      workgroups: [spec.workgroups[0], spec.workgroups[1], batch],
-    };
+    return stepDispatches(step).map((spec) => {
+      if (spec.workgroups[2] !== 1) {
+        throw new Error(`vision_batch_wgsl: ${spec.label} already uses workgroup z=${spec.workgroups[2]}`);
+      }
+      return {
+        ...spec,
+        code: addBatchOffsets(plan, spec),
+        workgroups: [spec.workgroups[0], spec.workgroups[1], batch] as [number, number, number],
+      };
+    });
   });
 }
 
-export function batchTrainDispatches(plan: TrainPlan, batch: number): {
+function batchSpec(plan: VisionPlan, spec: DispatchSpec, batch: number): DispatchSpec {
+  if (spec.workgroups[2] !== 1) {
+    throw new Error(`vision_batch_wgsl: ${spec.label} already uses workgroup z=${spec.workgroups[2]}`);
+  }
+  return {
+    ...spec,
+    code: addBatchOffsets(plan, spec),
+    workgroups: [spec.workgroups[0], spec.workgroups[1], batch] as [number, number, number],
+  };
+}
+
+export function batchForwardDispatches(
+  plan: VisionPlan,
+  batch: number,
+  opts: BatchDispatchOptions = {}
+): DispatchSpec[] {
+  if (!Number.isInteger(batch) || batch < 1) {
+    throw new Error(`vision_batch_wgsl: invalid batch ${batch}`);
+  }
+  if (!opts.sharedWForwardSteps?.size) {
+    return planDispatches(plan).map((spec) => batchSpec(plan, spec, batch));
+  }
+  return forwardDispatches(plan, batch, opts);
+}
+
+export function batchTrainDispatches(
+  plan: TrainPlan,
+  batch: number,
+  opts: BatchDispatchOptions = {}
+): {
   specs: DispatchSpec[];
   fwdCount: number;
 } {
   if (!Number.isInteger(batch) || batch < 1) {
     throw new Error(`vision_batch_wgsl: invalid batch ${batch}`);
   }
-  const fwd = planDispatches(plan);
-  const bwd = planBwdDispatches(plan);
-  const all = [...fwd, ...bwd].map((spec) => {
-    if (spec.workgroups[2] !== 1) {
-      throw new Error(`vision_batch_wgsl: ${spec.label} already uses workgroup z=${spec.workgroups[2]}`);
-    }
-    return {
-      ...spec,
-      code: addBatchOffsets(plan, spec),
-      workgroups: [spec.workgroups[0], spec.workgroups[1], batch],
-    };
-  });
+  const fwd = opts.sharedWForwardSteps?.size
+    ? forwardDispatches(plan, batch, opts)
+    : planDispatches(plan).map((spec) => batchSpec(plan, spec, batch));
+  const bwd = planBwdDispatches(plan).map((spec) => batchSpec(plan, spec, batch));
+  const all = [...fwd, ...bwd];
   return { specs: all, fwdCount: fwd.length };
 }
 

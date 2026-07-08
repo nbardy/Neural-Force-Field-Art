@@ -20,10 +20,22 @@ const MODEL_DIR = fileURLToPath(new URL("../../models/mobileclip_s0", import.met
 const BATCH = Number(process.env.BATCH ?? 3);
 const RUNS = Number(process.env.RUNS ?? 3);
 const WARMUP = Number(process.env.WARMUP ?? 3);
+const SHARED_W_FWD_STEPS = parseStepSet(process.env.SHARED_W_FWD_STEPS ?? "");
 
 function f32File(path: string): Float32Array {
   const b = readFileSync(path);
   return new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4).slice();
+}
+
+function parseStepSet(src: string): ReadonlySet<number> {
+  const steps = src
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => Number(part))
+    .filter((n) => Number.isFinite(n))
+    .map((n) => n | 0);
+  return new Set(steps);
 }
 
 function textEmbedding(seed: number, dim: number): Float32Array {
@@ -114,7 +126,8 @@ const inputFloats = plan.inputShape[0] * plan.inputShape[1] * plan.inputShape[2]
 
 console.log(
   `batch-major train: batch=${BATCH}, runs=${RUNS}, warmup=${WARMUP}, ` +
-    `dispatches=${plan.steps.length}+${plan.backward.length}`
+    `dispatches=${plan.steps.length}+${plan.backward.length}` +
+    (SHARED_W_FWD_STEPS.size ? `, sharedWForwardSteps=${[...SHARED_W_FWD_STEPS].join(",")}` : "")
 );
 
 let t0 = performance.now();
@@ -142,7 +155,9 @@ console.log(
 );
 
 t0 = performance.now();
-const batch = await BatchMajorVisionTrainer.create(device, plan, weights, BATCH);
+const batch = await BatchMajorVisionTrainer.create(device, plan, weights, BATCH, {
+  sharedWForwardSteps: SHARED_W_FWD_STEPS,
+});
 console.log(`batch compile+allocate : ${(performance.now() - t0).toFixed(0)} ms`);
 
 for (let lane = 0; lane < BATCH; lane++) {

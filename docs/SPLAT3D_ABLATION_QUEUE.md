@@ -360,6 +360,36 @@ Implementation boundary for the next attempt:
 - Start forward-only for the first 64-channel block, measure full B=3 train
   wall time, then add `pw_bwd` only if the forward path does not regress.
 
+Attempt 2 result: implemented but not promoted.
+
+- Added a gated production forward path:
+  `pointwiseSharedWBatchForwardDispatch()` plus `sharedWForwardSteps`.
+- Default optimizer behavior is unchanged unless a caller passes the allowlist.
+- Exact gradient parity passed in `tools/clip/batch_major_train_bench.ts` for
+  both baseline and `SHARED_W_FWD_STEPS=8,10,111,115`.
+
+Commands:
+
+```bash
+TRIALS=2 RUNS=3 WARMUP=3 CONFIGS='base=;early=8,10;candidates=8,10,111,115' bun tools/clip/batch_major_train_matrix.ts
+BATCH=2 TRIALS=2 RUNS=3 WARMUP=3 CONFIGS='base=;b2wins=8,57' bun tools/clip/batch_major_train_matrix.ts
+```
+
+Results:
+
+- B=3 baseline median: `75.13 ms`.
+- B=3 `8,10` median: `76.36 ms`.
+- B=3 `8,10,111,115` median: `76.34 ms`.
+- B=2 baseline median: `41.52 ms`.
+- B=2 `8,57` median: `41.66 ms`.
+
+Decision:
+
+- Do not enable selective shared-W forward in the app or default optimizer.
+- The compact-kernel wins do not survive full-chain train timing.
+- Keep the gated path and matrix tool for future variants, but move active work
+  to a target that shows up more clearly in full-chain profiling.
+
 ### 6. `spatial_bwd` Staging
 
 Hypothesis: selected spatial backward kernels may be bandwidth-bound and benefit

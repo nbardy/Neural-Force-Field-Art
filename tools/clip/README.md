@@ -234,6 +234,7 @@ The batch-major train fork verifies the optimizer-relevant gradient path:
 ```bash
 BATCH=3 RUNS=2 WARMUP=3 bun tools/clip/batch_major_train_bench.ts
 BATCH=9 RUNS=2 WARMUP=2 bun tools/clip/batch_major_train_bench.ts
+TRIALS=2 CONFIGS='base=;early=8,10;candidates=8,10,111,115' bun tools/clip/batch_major_train_matrix.ts
 ```
 
 Gradient parity is exact for tested B=2/3/9. In the warmed train bench,
