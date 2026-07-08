@@ -30,6 +30,7 @@ export interface Splat3DOptimizerConfig {
   clipBatchSize?: number;
   stemSpatialBwd?: boolean;
   fusePointwiseGeluForward?: boolean;
+  fuseGeluBwdIntoPw?: boolean;
 }
 
 export type Splat3DClipMode = "single" | "batch";
@@ -106,6 +107,7 @@ export class Splat3DOptimizer {
         ? await BatchMajorVisionTrainer.create(device, trainPlan, weights, clipBatchSize, {
             stemSpatialBwd: cfg.stemSpatialBwd ?? true,
             fusePointwiseGeluForward: cfg.fusePointwiseGeluForward ?? true,
+            fuseGeluBwdIntoPw: cfg.fuseGeluBwdIntoPw ?? false,
           })
         : null;
     raster.setParams(cfg.initParams ?? randomSplats3D(G, cfg.seed ?? 1, cfg.init));

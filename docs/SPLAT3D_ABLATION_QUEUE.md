@@ -580,6 +580,54 @@ Decision:
 - Keep it scoped to pointwise forward GELU. Do not fuse spatial/SE GELUs or
   GELU backward until a separate full-chain-visible gate justifies it.
 
+Attempt 2 result: GELU backward into pointwise backward was implemented but not
+promoted.
+
+- `fuseGeluBwdIntoPw` detects adjacent `gelu_bwd` + `pw_bwd` pairs where the
+  GELU intermediate has one writer and the following pointwise backward consumes
+  it immediately.
+- The fused dispatch stages `dY * geluGrad(pre)` directly inside the pointwise
+  tile load and skips the standalone `gelu_bwd` dispatch.
+- `FUSE_GELU_BWD_PW=1` enables the ablation in CLIP and 3D step benches.
+
+Correctness and CLIP-only timing:
+
+```bash
+FUSE_PW_GELU=1 FUSE_GELU_BWD_PW=1 STEM_SPATIAL_BWD=1 BATCH=3 RUNS=1 WARMUP=1 bun tools/clip/batch_major_train_bench.ts
+TRIALS=2 RUNS=3 WARMUP=3 CONFIGS='default=stem,gelu;gelubwd=stem,gelu,gelubwd' bun tools/clip/batch_major_train_matrix.ts
+```
+
+| Variant | B=3 CLIP Train Median |
+| --- | ---: |
+| default forward GELU fusion | `68.22 ms` |
+| + GELU backward fusion | `61.70 ms` |
+
+Dispatch profile:
+
+```bash
+FUSE_PW_GELU=1 FUSE_GELU_BWD_PW=1 STEM_SPATIAL_BWD=1 MODE=train BATCH=3 RUNS=3 WARMUP=1 TOP=16 bun tools/clip/dispatch_profile.ts
+```
+
+- Dispatch count dropped from `257` to `233`.
+- Standalone `gelu_bwd` isolated median sum dropped to `2.191 ms`.
+
+Integrated 3D alternating matrix:
+
+```bash
+TRIALS=3 CONFIGS=base=3:3,gelubwd=3:3:gelubwd RUNS=5 WARMUP=3 bun tools/splat3d/step_matrix.ts
+```
+
+| Variant | Normal Step Median | Profile Median | CLIP Median | Raster Median |
+| --- | ---: | ---: | ---: | ---: |
+| default | `78.30 ms` | `93.50 ms` | `67.51 ms` | `23.38 ms` |
+| `FUSE_GELU_BWD_PW=1` | `76.83 ms` | `94.71 ms` | `67.02 ms` | `24.81 ms` |
+
+Decision:
+
+- Keep the fused backward code and benchmark flag for future experiments.
+- Do not enable by default: the CLIP-only matrix won, but the integrated 3D
+  split profile was flat to slightly worse.
+
 ### 8. F16 Weights With F32 Math
 
 Hypothesis: f16 weights reduce memory traffic and payload size without changing

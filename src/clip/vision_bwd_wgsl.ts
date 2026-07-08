@@ -120,6 +120,7 @@ export interface TrainPlan extends VisionPlan {
 
 export interface BwdDispatchOptions {
   stemSpatialBwd?: boolean;
+  fuseGeluBwdIntoPw?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +163,43 @@ ${pointwiseTiledMain({
     code,
     workgroups: [P4 / 8, s.cout / 32, 1],
     buffers: [{ kind: "weights" }, gradSlot(s.dY), gradSlot(s.dX)],
+  };
+}
+
+function canFuseGeluBwdIntoPw(gelu: GeluBwdStep, pw: BwdStep | undefined): pw is PwBwdStep {
+  return !!pw &&
+    pw.kind === "pw_bwd" &&
+    !gelu.accumulate &&
+    gelu.dX === pw.dY &&
+    gelu.n === pw.cin * pw.outH * pw.outW;
+}
+
+function pwBwdAfterGelu(gelu: GeluBwdStep, pw: PwBwdStep): DispatchSpec {
+  assertStep(canFuseGeluBwdIntoPw(gelu, pw), `${gelu.name}: cannot fuse GELU backward into ${pw.name}`);
+  const P = pw.outH * pw.outW;
+  assertPointwiseTiles(pw.name, pw.cin, pw.cout, P, pw.wOffT);
+  const P4 = P / 4;
+  const store = (j: number): string =>
+    pw.accumulate ? `dst[(co + ${j}u) * ${P4}u + p4] + acc${j}` : `acc${j}`;
+  const code = /* wgsl */ `
+${weightsDecl(0)}
+@group(0) @binding(1) var<storage, read> src : array<vec4f>;         // dY before GELU derivative [Cin][P4]
+@group(0) @binding(2) var<storage, read> pre : array<vec4f>;         // saved GELU pre-activation [Cin][P4]
+@group(0) @binding(3) var<storage, read_write> dst : array<vec4f>;   // dX [Cout][P4]
+${GELU}
+${GELU_GRAD}
+${PW_TILE_DECLS}
+${pointwiseTiledMain({
+    cin: pw.cin, cout: pw.cout, P4, wOff: pw.wOffT,
+    init: () => `vec4f(0.0)`,
+    loadSrc: (index) => `src[${index}] * geluGrad4(pre[${index}])`,
+    store,
+  })}`;
+  return {
+    label: `pw_bwd+gelu ${pw.cin}->${pw.cout} @${pw.outH}x${pw.outW}${pw.accumulate ? " +=" : ""}`,
+    code,
+    workgroups: [P4 / 8, pw.cout / 32, 1],
+    buffers: [{ kind: "weights" }, gradSlot(gelu.dY), { kind: "slot", slot: gelu.pre }, gradSlot(pw.dX)],
   };
 }
 
@@ -669,5 +707,17 @@ export function bwdStepDispatch(step: BwdStep, opts: BwdDispatchOptions = {}): D
 
 /** All backward dispatches (loss head + reverse step list), in execution order. */
 export function planBwdDispatches(plan: TrainPlan, opts: BwdDispatchOptions = {}): DispatchSpec[] {
-  return plan.backward.map((step) => bwdStepDispatch(step, opts));
+  if (!opts.fuseGeluBwdIntoPw) return plan.backward.map((step) => bwdStepDispatch(step, opts));
+  const out: DispatchSpec[] = [];
+  for (let i = 0; i < plan.backward.length; i++) {
+    const step = plan.backward[i];
+    const next = plan.backward[i + 1];
+    if (step.kind === "gelu_bwd" && canFuseGeluBwdIntoPw(step, next)) {
+      out.push(pwBwdAfterGelu(step, next));
+      i += 1;
+      continue;
+    }
+    out.push(bwdStepDispatch(step, opts));
+  }
+  return out;
 }

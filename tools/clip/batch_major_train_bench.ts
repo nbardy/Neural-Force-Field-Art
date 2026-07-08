@@ -23,6 +23,7 @@ const WARMUP = Number(process.env.WARMUP ?? 3);
 const SHARED_W_FWD_STEPS = parseStepSet(process.env.SHARED_W_FWD_STEPS ?? "");
 const STEM_SPATIAL_BWD = process.env.STEM_SPATIAL_BWD === "1";
 const FUSE_PW_GELU = process.env.FUSE_PW_GELU === "1";
+const FUSE_GELU_BWD_PW = process.env.FUSE_GELU_BWD_PW === "1";
 
 function f32File(path: string): Float32Array {
   const b = readFileSync(path);
@@ -131,7 +132,8 @@ console.log(
     `dispatches=${plan.steps.length}+${plan.backward.length}` +
     (SHARED_W_FWD_STEPS.size ? `, sharedWForwardSteps=${[...SHARED_W_FWD_STEPS].join(",")}` : "") +
     (STEM_SPATIAL_BWD ? `, stemSpatialBwd=1` : "") +
-    (FUSE_PW_GELU ? `, fusePointwiseGeluForward=1` : "")
+    (FUSE_PW_GELU ? `, fusePointwiseGeluForward=1` : "") +
+    (FUSE_GELU_BWD_PW ? `, fuseGeluBwdIntoPw=1` : "")
 );
 
 let t0 = performance.now();
@@ -163,6 +165,7 @@ const batch = await BatchMajorVisionTrainer.create(device, plan, weights, BATCH,
   sharedWForwardSteps: SHARED_W_FWD_STEPS,
   stemSpatialBwd: STEM_SPATIAL_BWD,
   fusePointwiseGeluForward: FUSE_PW_GELU,
+  fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
 });
 console.log(`batch compile+allocate : ${(performance.now() - t0).toFixed(0)} ms`);
 

@@ -430,6 +430,47 @@ Decision: promote for the 3D batch optimizer. The fused path is exact under
 batch-major parity and is enabled by default for `Splat3DOptimizer` batch CLIP.
 Use `FUSE_PW_GELU=0` as the integrated negative control.
 
+## Iteration 5d - GELU Backward Into Pointwise Backward
+
+Implemented:
+
+- `fuseGeluBwdIntoPw` in backward dispatch options
+- `pw_bwd+gelu` fused backward dispatch
+- `FUSE_GELU_BWD_PW` benchmark flag
+- named/flagged `tools/splat3d/step_matrix.ts` configs such as
+  `base=3:3,gelubwd=3:3:gelubwd`
+
+This targets the reverse pattern after ConvFFN: standalone `gelu_bwd` followed
+by the matching `pw_bwd`. The fused dispatch loads `dY * geluGrad(pre)` into
+the existing pointwise tile and skips the intermediate GELU-gradient slot. It
+only fires for exact adjacent pairs with no GELU accumulation.
+
+Correctness:
+
+```bash
+FUSE_PW_GELU=1 FUSE_GELU_BWD_PW=1 STEM_SPATIAL_BWD=1 BATCH=3 RUNS=1 WARMUP=1 bun tools/clip/batch_major_train_bench.ts
+bun tools/clip/bwd_test.ts
+```
+
+Batch-major gradient parity passed for all B=3 lanes.
+
+CLIP-only matrix:
+
+| Variant | B=3 CLIP Train Median |
+| --- | ---: |
+| default forward GELU fusion | `68.22 ms` |
+| + GELU backward fusion | `61.70 ms` |
+
+Integrated 3D alternating matrix:
+
+| Variant | Normal Step Median | Profile Median | CLIP Median |
+| --- | ---: | ---: | ---: |
+| default | `78.30 ms` | `93.50 ms` | `67.51 ms` |
+| `FUSE_GELU_BWD_PW=1` | `76.83 ms` | `94.71 ms` | `67.02 ms` |
+
+Decision: keep gated, do not promote. The CLIP-only win did not survive as a
+clear integrated 3D step win.
+
 ## Next Five Iterations
 
 1. **Raster view-lane dispatch:** move camera constants into a buffer and run

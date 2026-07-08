@@ -237,6 +237,7 @@ BATCH=9 RUNS=2 WARMUP=2 bun tools/clip/batch_major_train_bench.ts
 TRIALS=2 CONFIGS='base=;early=8,10;candidates=8,10,111,115' bun tools/clip/batch_major_train_matrix.ts
 TRIALS=2 CONFIGS='base=;stem=stem' bun tools/clip/batch_major_train_matrix.ts
 TRIALS=2 CONFIGS='stem=stem;gelu=stem,gelu' bun tools/clip/batch_major_train_matrix.ts
+TRIALS=2 CONFIGS='default=stem,gelu;gelubwd=stem,gelu,gelubwd' bun tools/clip/batch_major_train_matrix.ts
 ```
 
 Gradient parity is exact for tested B=2/3/9. In the warmed train bench,
@@ -249,6 +250,8 @@ The 3D optimizer enables the stem spatial-backward specialization by default for
 batch-major CLIP. Use `STEM_SPATIAL_BWD=0` in benches for the negative control.
 It also enables pointwise + GELU forward fusion for batch-major CLIP; use
 `FUSE_PW_GELU=0` in integrated 3D benches for that negative control.
+GELU-backward into pointwise-backward fusion is available as a gated ablation
+with `FUSE_GELU_BWD_PW=1`, but is not currently enabled by default.
 
 The shared-weight pointwise microbench tests whether multiple image lanes can
 reuse one staged W tile inside the same workgroup:

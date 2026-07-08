@@ -178,9 +178,11 @@ export function pointwiseTiledMain(o: {
   cin: number; cout: number; P4: number; wOff: number;
   init: (j: number) => string;
   store: (j: number) => string;
+  loadSrc?: (index: string) => string;
   extraStore?: (j: number) => string;
 }): string {
   const extra = (j: number) => o.extraStore ? `\n  ${o.extraStore(j)}` : "";
+  const loadSrc = o.loadSrc ? o.loadSrc("srcIndex") : "src[srcIndex]";
   return /* wgsl */ `
 @compute @workgroup_size(8, 8)
 fn main(@builtin(workgroup_id) wid : vec3u,
@@ -199,7 +201,8 @@ fn main(@builtin(workgroup_id) wid : vec3u,
     for (var t = li; t < 256u; t = t + 64u) {
       let ci = t >> 3u;
       let lane = t & 7u;
-      xS[t] = src[(ci0 + ci) * ${o.P4}u + p4base + lane];
+      let srcIndex = (ci0 + ci) * ${o.P4}u + p4base + lane;
+      xS[t] = ${loadSrc};
       wS[t] = W4((${o.wOff}u + (ci0 + ci) * ${o.cout}u + cobase + lane * 4u) / 4u);
     }
     workgroupBarrier();

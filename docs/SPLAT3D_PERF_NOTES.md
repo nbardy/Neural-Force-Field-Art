@@ -296,3 +296,24 @@ Integrated 3D step matrix:
 
 The 3D batch optimizer enables this by default. Use `FUSE_PW_GELU=0` in
 `tools/splat3d/step_bench.ts` / `step_matrix.ts` as the negative control.
+
+## GELU Backward Fusion Gate
+
+A follow-on ablation fused exact adjacent `gelu_bwd` + `pw_bwd` pairs by loading
+`dY * geluGrad(pre)` directly into the pointwise backward tile. This reduced
+B=3 CLIP train median in isolation:
+
+| Variant | B=3 CLIP Train Median |
+| --- | ---: |
+| default forward GELU fusion | `68.22 ms` |
+| + GELU backward fusion | `61.70 ms` |
+
+The integrated alternating 3D matrix did not clear the promotion bar:
+
+| Variant | Normal Step Median | Profile Median | CLIP Median |
+| --- | ---: | ---: | ---: |
+| default | `78.30 ms` | `93.50 ms` | `67.51 ms` |
+| `FUSE_GELU_BWD_PW=1` | `76.83 ms` | `94.71 ms` | `67.02 ms` |
+
+Decision: keep `FUSE_GELU_BWD_PW=1` as a gated ablation, but do not enable it
+by default in the 3D optimizer.

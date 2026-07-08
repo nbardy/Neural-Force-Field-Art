@@ -63,6 +63,9 @@ commit-and-measure loop:
 - Stem spatial backward specialization was promoted for 3D batch CLIP.
 - Pointwise + GELU forward fusion was promoted for 3D batch CLIP after it
   reduced B=3 train median and integrated CLIP split time.
+- GELU-backward into pointwise-backward fusion was implemented as a gate but not
+  promoted, because the CLIP-only win did not produce a clear integrated 3D
+  step win.
 - STAR UVT/world-tube review clarified that exact multi-view raster batching is
   a scheduler problem first; sublinear camera-bundle rendering needs a different
   primitive.

@@ -6,13 +6,16 @@
  * during manual ablations while preventing accidental parallel GPU contention.
  *
  *   TRIALS=2 CONFIGS=3:1,3:3 RUNS=4 WARMUP=2 bun tools/splat3d/step_matrix.ts
+ *   TRIALS=3 CONFIGS=base=3:3,gelubwd=3:3:gelubwd bun tools/splat3d/step_matrix.ts
  *   TRIALS=3 CONFIGS=3:1,3:3,9:1,9:3,9:9 bun tools/splat3d/step_matrix.ts
  */
 import { spawnSync } from "node:child_process";
 
 interface Config {
+  label: string;
   views: number;
   clipBatch: number;
+  fuseGeluBwdIntoPw: boolean;
 }
 
 interface TrialResult extends Config {
@@ -48,13 +51,17 @@ function parseConfigs(src: string): Config[] {
     .map((part) => part.trim())
     .filter(Boolean)
     .map((part) => {
-      const [viewsRaw, batchRaw] = part.split(/[:x]/);
+      const [labelRaw, bodyRaw] = part.includes("=") ? part.split("=") : ["", part];
+      const [viewsRaw, batchRaw, ...tokens] = bodyRaw.split(/[:x]/);
       const views = Number(viewsRaw);
       const clipBatch = Number(batchRaw);
       if (!Number.isFinite(views) || !Number.isFinite(clipBatch)) {
         throw new Error(`step_matrix: bad config '${part}', expected views:clipBatch`);
       }
-      return { views: views | 0, clipBatch: clipBatch | 0 };
+      const fuseGeluBwdIntoPw = tokens.includes("gelubwd");
+      const suffix = tokens.length ? `:${tokens.join(":")}` : "";
+      const label = labelRaw.trim() || `${views | 0}:${clipBatch | 0}${suffix}`;
+      return { label, views: views | 0, clipBatch: clipBatch | 0, fuseGeluBwdIntoPw };
     });
   if (!configs.length) throw new Error("step_matrix: CONFIGS produced no configs");
   return configs;
@@ -92,6 +99,7 @@ function runTrial(config: Config, trial: number): TrialResult {
     RUNS: String(RUNS),
     WARMUP: String(WARMUP),
     SEED: String(SEED),
+    FUSE_GELU_BWD_PW: config.fuseGeluBwdIntoPw ? "1" : "0",
   };
   delete env.CONFIGS;
   delete env.TRIALS;
@@ -139,7 +147,7 @@ function fmt(n: number): string {
 const results: TrialResult[] = [];
 if (!JSON_OUT) {
   console.log(
-    `splat3d step matrix: configs=${CONFIGS.map((c) => `${c.views}:${c.clipBatch}`).join(",")} ` +
+    `splat3d step matrix: configs=${CONFIGS.map((c) => `${c.label}=${c.views}:${c.clipBatch}${c.fuseGeluBwdIntoPw ? ":gelubwd" : ""}`).join(",")} ` +
       `trials=${TRIALS} runs=${RUNS} warmup=${WARMUP} seed=${SEED}${G ? ` G=${G}` : ""}`
   );
 }
@@ -151,7 +159,8 @@ for (let trial = 0; trial < TRIALS; trial++) {
     results.push(result);
     if (!JSON_OUT) {
       console.log(
-        `trial ${trial} ${config.views}/${config.clipBatch}: ` +
+        `trial ${trial} ${config.label} ${config.views}/${config.clipBatch}` +
+          `${config.fuseGeluBwdIntoPw ? " gelubwd=1" : ""}: ` +
           `normal=${result.normal.toFixed(2)} profile=${result.profileTotal.toFixed(2)} ` +
           `clip=${(result.clipBatchMs || result.clipFwd + result.clipBwd).toFixed(2)} ` +
           `raster=${(result.rasterFwd + result.rasterReplay + result.rasterBwd).toFixed(2)}`
@@ -164,15 +173,16 @@ if (JSON_OUT) {
   console.log(JSON.stringify({ trials: TRIALS, runs: RUNS, warmup: WARMUP, seed: SEED, results }, null, 2));
 } else {
   console.log("\nSummary:");
-  console.log("views batch   normal med [min,max]     profile med     clip med   raster med");
+  console.log("config           views batch gbwd   normal med [min,max]     profile med     clip med   raster med");
   for (const config of CONFIGS) {
-    const rows = results.filter((r) => r.views === config.views && r.clipBatch === config.clipBatch);
+    const rows = results.filter((r) => r.label === config.label);
     const normal = rows.map((r) => r.normal);
     const profile = rows.map((r) => r.profileTotal);
     const clip = rows.map((r) => r.clipBatchMs || r.clipFwd + r.clipBwd);
     const raster = rows.map((r) => r.rasterFwd + r.rasterReplay + r.rasterBwd);
     console.log(
-      `${String(config.views).padStart(5)} ${String(config.clipBatch).padStart(5)} ` +
+      `${config.label.padEnd(16).slice(0, 16)} ${String(config.views).padStart(5)} ${String(config.clipBatch).padStart(5)} ` +
+        `${(config.fuseGeluBwdIntoPw ? "yes" : "no").padStart(4)} ` +
         `${fmt(median(normal))} [${min(normal).toFixed(2)},${max(normal).toFixed(2)}] ` +
         `${fmt(median(profile))} ${fmt(median(clip))} ${fmt(median(raster))}`
     );

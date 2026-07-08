@@ -33,6 +33,7 @@ const WARMUP = Number(process.env.WARMUP ?? 1);
 const CSV = process.env.CSV === "1";
 const STEM_SPATIAL_BWD = process.env.STEM_SPATIAL_BWD === "1";
 const FUSE_PW_GELU = process.env.FUSE_PW_GELU === "1";
+const FUSE_GELU_BWD_PW = process.env.FUSE_GELU_BWD_PW === "1";
 const PLAN_FILE =
   process.env.PLAN ?? (MODE === "forward" ? "plan.json" : "plan_train.json");
 const WEIGHTS_FILE = process.env.WEIGHTS ?? (PLAN_FILE.includes("train") ? "weights_train.bin" : "weights.bin");
@@ -61,6 +62,7 @@ async function makePipeline(device: GPUDevice, spec: DispatchSpec): Promise<GPUC
 }
 
 function groupLabel(label: string): string {
+  if (label.startsWith("pw_bwd+gelu")) return "pw_bwd+gelu";
   if (label.startsWith("pw_bwd")) return "pw_bwd";
   if (label.startsWith("pw+gelu")) return "pw+gelu";
   if (label.startsWith("pw ")) return "pw";
@@ -113,6 +115,7 @@ if (BATCH > 1) {
     const out = batchTrainDispatches(plan, BATCH, {
       stemSpatialBwd: STEM_SPATIAL_BWD,
       fusePointwiseGeluForward: FUSE_PW_GELU,
+      fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
     });
     specs = out.specs;
     fwdCount = out.fwdCount;
@@ -166,7 +169,8 @@ if (!CSV) {
     `dispatch profile: mode=${MODE}, plan=${PLAN_FILE}, batch=${BATCH}, ` +
       `dispatches=${specs.length}, runs=${RUNS}, warmup=${WARMUP}` +
       (STEM_SPATIAL_BWD ? `, stemSpatialBwd=1` : "") +
-      (FUSE_PW_GELU ? `, fusePointwiseGeluForward=1` : "")
+      (FUSE_PW_GELU ? `, fusePointwiseGeluForward=1` : "") +
+      (FUSE_GELU_BWD_PW ? `, fuseGeluBwdIntoPw=1` : "")
   );
 }
 
