@@ -60,10 +60,23 @@
       #notice {
         width: min(768px, calc(100vw - 48px)); color: #f38ba8; font-size: 13px; min-height: 16px;
       }
+      #timings {
+        position: fixed; top: 12px; right: 12px; z-index: 10;
+        width: 248px; box-sizing: border-box;
+        padding: 10px 11px; border: 1px solid #313244; border-radius: 8px;
+        background: rgba(11, 13, 18, 0.86); color: #cdd6f4;
+        font-size: 11px; line-height: 1.45;
+        white-space: pre; pointer-events: none;
+      }
+      #timings .muted { color: #7f849c; }
+      @media (max-width: 1180px) {
+        #timings { position: static; width: min(768px, calc(100vw - 48px)); order: 3; }
+      }
     </style>
   </head>
   <body>
     <div id="wrap">
+      <div id="timings"><span class="muted">sampled wall profile waiting...</span></div>
       <div id="grid"></div>
       <div id="controls">
         <input id="prompt" type="text" placeholder="a photo of a cat"
@@ -76,6 +89,11 @@
         <select id="bgTextMode">
           <option value="black">black bg</option>
           <option value="none">no bg text</option>
+        </select>
+        <select id="viewBatch">
+          <option value="3" selected>3/9 views</option>
+          <option value="5">5/9 views</option>
+          <option value="9">9/9 views</option>
         </select>
         <button id="optimize">Optimize</button>
         <button id="reset">Reset</button>

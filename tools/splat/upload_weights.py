@@ -15,7 +15,18 @@ from huggingface_hub import HfApi
 
 REPO = "Nbardy/nff-clip-splat-weights"
 MODEL_DIR = Path("models/mobileclip_s0")
-FILES = ["weights_train.bin", "plan_train.json"]
+# Vision: our packed WGSL weights. Text: the stock ONNX text tower + tokenizer/
+# config so transformers.js can load the text encoder from THIS repo too (fp16,
+# 84 MB, verified lossless in-browser at graphOptimizationLevel:"basic"). One
+# origin for everything the page fetches — no dependency on the Xenova repo.
+FILES = [
+    "weights_train.bin",
+    "plan_train.json",
+    "config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "onnx/text_model_fp16.onnx",
+]
 
 api = HfApi()
 api.create_repo(REPO, repo_type="model", exist_ok=True, private=False)

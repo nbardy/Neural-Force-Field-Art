@@ -1,6 +1,6 @@
 /// <reference types="@webgpu/types" />
 import { buildBasePrompt, buildViewPrompt } from "./splat3d/cameras";
-import { Splat3DOptimizer, cosine } from "./splat3d/optimize";
+import { Splat3DOptimizer, cosine, type Splat3DStepTimings } from "./splat3d/optimize";
 import { fetchArrayBufferWithProgress, formatProgress } from "./splat/fetch_progress";
 import type { TrainPlan } from "./clip/vision";
 
@@ -19,6 +19,8 @@ interface Status {
   phase: string;
   promptMode: "camera" | "same";
   blackBgText: boolean;
+  profiling: boolean;
+  viewsPerStep: number;
 }
 
 const status: Status = {
@@ -33,6 +35,8 @@ const status: Status = {
   phase: "boot",
   promptMode: "camera",
   blackBgText: true,
+  profiling: false,
+  viewsPerStep: 3,
 };
 (window as any).__splat3d = status;
 
@@ -41,10 +45,12 @@ const promptInput = document.getElementById("prompt") as HTMLInputElement;
 const viewSelect = document.getElementById("view") as HTMLSelectElement;
 const promptModeSelect = document.getElementById("promptMode") as HTMLSelectElement;
 const bgTextModeSelect = document.getElementById("bgTextMode") as HTMLSelectElement;
+const viewBatchSelect = document.getElementById("viewBatch") as HTMLSelectElement;
 const optimizeBtn = document.getElementById("optimize") as HTMLButtonElement;
 const resetBtn = document.getElementById("reset") as HTMLButtonElement;
 const readoutEl = document.getElementById("readout") as HTMLDivElement;
 const noticeEl = document.getElementById("notice") as HTMLDivElement;
+const timingsEl = document.getElementById("timings") as HTMLDivElement;
 
 function setNotice(msg: string): void {
   noticeEl.textContent = msg;
@@ -62,6 +68,7 @@ function renderReadout(): void {
   status.step = opt ? opt.stepCount : 0;
   const camera = opt?.cameras[displayView]?.name ?? "view";
   const parts: string[] = [`step ${status.step}`, camera];
+  if (opt) parts.push(`${status.viewsPerStep}/${opt.cameras.length} views`);
   parts.push(status.promptMode === "camera" ? "camera text" : "same text");
   if (status.blackBgText) parts.push("black bg");
   if (status.cos !== null) {
@@ -75,6 +82,34 @@ function renderReadout(): void {
   readoutEl.textContent = parts.join("  ·  ");
 }
 
+function renderTimings(): void {
+  if (!latestTimings) {
+    timingsEl.textContent = "sampled wall profile waiting...";
+    return;
+  }
+  const t = latestTimings;
+  const total = Math.max(t.total, 0.001);
+  const line = (name: string, ms: number): string => {
+    const pct = (100 * ms) / total;
+    return `${name.padEnd(11)} ${ms.toFixed(1).padStart(6)} ms ${pct.toFixed(0).padStart(3)}%`;
+  };
+  timingsEl.textContent = [
+    `sampled wall step ${status.step}`,
+    `${t.views}/${t.totalViews} views · split submit path`,
+    line("opt total", t.total),
+    line("raster", t.rasterFwd + t.rasterBwd),
+    line("  fwd", t.rasterFwd),
+    line("  bwd", t.rasterBwd),
+    line("clip", t.clipFwd + t.clipBwd),
+    line("  fwd", t.clipFwd),
+    line("  bwd", t.clipBwd),
+    line("adam", t.adam),
+    line("display", t.display),
+    line("clear", t.clear),
+    `sample every ${PROFILE_PERIOD} steps`,
+  ].join("\n");
+}
+
 let device!: GPUDevice;
 let plan!: TrainPlan;
 let weights!: Float32Array;
@@ -82,6 +117,9 @@ let opt!: Splat3DOptimizer;
 let seed = 1;
 let displayView = 0;
 let gridDirty = false;
+let latestTimings: Splat3DStepTimings | null = null;
+let profileBusy = false;
+const PROFILE_PERIOD = 30;
 
 let blitPipe!: GPURenderPipeline;
 let blitBind: GPUBindGroup | null = null;
@@ -165,15 +203,25 @@ const nativeImport = new Function("u", "return import(u)") as (u: string) => Pro
 let tokenizer: any = null;
 let textModel: any = null;
 
-async function loadTextModel(): Promise<void> {
+async function loadTextModel(onProgress?: (msg: string) => void): Promise<void> {
   if (textModel) return;
   const tf: any = await nativeImport(TF_URL);
   tf.env.allowRemoteModels = true;
-  const id = "Xenova/mobileclip_s0";
-  tokenizer = await tf.AutoTokenizer.from_pretrained(id);
+  const id = "Nbardy/nff-clip-splat-weights"; // self-hosted alongside the vision weights
+  const progress_callback = (p: any) => {
+    if (p.status === "progress" && p.total) {
+      const pct = Math.round(p.progress ?? (p.loaded / p.total) * 100);
+      const fill = Math.round((pct / 100) * 16);
+      const bar = "█".repeat(fill) + "░".repeat(16 - fill);
+      onProgress?.(`loading text encoder  [${bar}] ${pct}%  ·  ${(p.loaded / 1e6).toFixed(1)}/${(p.total / 1e6).toFixed(0)} MB`);
+    }
+  };
+  tokenizer = await tf.AutoTokenizer.from_pretrained(id, { progress_callback });
   textModel = await tf.CLIPTextModelWithProjection.from_pretrained(id, {
-    dtype: "fp32",
-    device: "wasm",
+    dtype: "fp16", // 84 MB, lossless vs fp32
+    device: "wasm", // keep text off the shared render GPU
+    session_options: { graphOptimizationLevel: "basic" }, // dodges the LayerNormFusion bug
+    progress_callback,
   });
 }
 
@@ -195,6 +243,37 @@ let viewEmbeds: Float32Array[] | null = null;
 let stepsSinceReadout = 0;
 let cosBusy = false;
 
+async function runProfiledStep(): Promise<void> {
+  if (!viewEmbeds || profileBusy) return;
+  const profiledOpt = opt;
+  const profiledView = displayView;
+  const profiledViewsPerStep = status.viewsPerStep;
+  profileBusy = true;
+  status.profiling = true;
+  status.phase = "profile";
+  renderReadout();
+  try {
+    const timings = await profiledOpt.profileStep(profiledView, profiledViewsPerStep);
+    if (profiledOpt !== opt || !status.running) return;
+    latestTimings = timings;
+    status.step = profiledOpt.stepCount;
+    stepsSinceReadout += 1;
+    gridDirty = true;
+    renderTimings();
+    if (stepsSinceReadout >= 3) {
+      stepsSinceReadout = 0;
+      void updateCos();
+    }
+  } catch (e: any) {
+    fail(`profile step failed: ${e?.message ?? e}`);
+  } finally {
+    status.profiling = false;
+    if (status.phase === "profile") status.phase = status.running ? "run" : "idle";
+    profileBusy = false;
+    renderReadout();
+  }
+}
+
 async function updateCos(): Promise<void> {
   if (!viewEmbeds || cosBusy) return;
   cosBusy = true;
@@ -210,14 +289,19 @@ async function updateCos(): Promise<void> {
 }
 
 function frame(): void {
-  if (status.running && viewEmbeds) {
-    opt.step(displayView);
-    gridDirty = true;
-    stepsSinceReadout += 1;
-    status.step = opt.stepCount;
-    if (stepsSinceReadout >= 3) {
-      stepsSinceReadout = 0;
-      void updateCos();
+  if (status.running && viewEmbeds && !profileBusy) {
+    const shouldProfile = opt.stepCount > 0 && opt.stepCount % PROFILE_PERIOD === 0;
+    if (shouldProfile) {
+      void runProfiledStep();
+    } else {
+      opt.step(displayView, status.viewsPerStep);
+      gridDirty = true;
+      stepsSinceReadout += 1;
+      status.step = opt.stepCount;
+      if (stepsSinceReadout >= 3) {
+        stepsSinceReadout = 0;
+        void updateCos();
+      }
     }
   }
   if (gridDirty) {
@@ -229,18 +313,22 @@ function frame(): void {
 
 async function onOptimize(): Promise<void> {
   if (!status.ready) return;
+  if (profileBusy) return;
   const text = promptInput.value.trim() || "a photo of a cat";
   optimizeBtn.disabled = true;
   resetBtn.disabled = true;
   viewSelect.disabled = true;
   promptModeSelect.disabled = true;
   bgTextModeSelect.disabled = true;
+  viewBatchSelect.disabled = true;
   status.running = false;
   status.phase = "encoding";
   status.cos = null;
   status.initialCos = null;
+  latestTimings = null;
   status.promptMode = promptModeSelect.value === "same" ? "same" : "camera";
   status.blackBgText = bgTextModeSelect.value !== "none";
+  renderTimings();
   renderReadout();
   try {
     const embeds: Float32Array[] = [];
@@ -271,15 +359,21 @@ async function onOptimize(): Promise<void> {
     viewSelect.disabled = false;
     promptModeSelect.disabled = false;
     bgTextModeSelect.disabled = false;
+    viewBatchSelect.disabled = false;
   }
 }
 
 async function onReset(): Promise<void> {
   if (!status.ready) return;
+  if (profileBusy) {
+    setNotice("wait for profiling sample to finish before reset");
+    return;
+  }
   status.running = false;
   viewEmbeds = null;
   status.cos = null;
   status.initialCos = null;
+  latestTimings = null;
   status.phase = "reset";
   seed += 1;
   const old = opt;
@@ -289,6 +383,7 @@ async function onReset(): Promise<void> {
   gridDirty = true;
   status.step = 0;
   setNotice("");
+  renderTimings();
   renderReadout();
 }
 
@@ -313,6 +408,7 @@ function setDisplayView(view: number): void {
 function onPromptModeChange(): void {
   status.promptMode = promptModeSelect.value === "same" ? "same" : "camera";
   status.blackBgText = bgTextModeSelect.value !== "none";
+  latestTimings = null;
   if (viewEmbeds) {
     status.running = false;
     viewEmbeds = null;
@@ -321,6 +417,16 @@ function onPromptModeChange(): void {
     status.phase = "idle";
     setNotice("");
   }
+  renderTimings();
+  renderReadout();
+}
+
+function onViewBatchChange(): void {
+  const n = Number(viewBatchSelect.value);
+  const maxViews = opt?.cameras.length ?? 9;
+  status.viewsPerStep = Number.isFinite(n) ? Math.max(1, Math.min(maxViews, n | 0)) : 3;
+  latestTimings = null;
+  renderTimings();
   renderReadout();
 }
 
@@ -370,6 +476,7 @@ async function boot(): Promise<void> {
     viewSelect.disabled = true;
     promptModeSelect.disabled = true;
     bgTextModeSelect.disabled = true;
+    viewBatchSelect.disabled = true;
     return;
   }
   status.phase = "adapter";
@@ -416,6 +523,11 @@ async function boot(): Promise<void> {
   rebuildBlitBind();
   gridDirty = true;
 
+  // Preload the text encoder at boot (with its own progress bar) so the first
+  // Optimize is instant instead of stalling on an 84 MB download (× the 9 views).
+  status.phase = "textmodel";
+  await loadTextModel((msg) => { readoutEl.textContent = msg; });
+
   status.ready = true;
   status.phase = "idle";
   optimizeBtn.disabled = false;
@@ -423,6 +535,7 @@ async function boot(): Promise<void> {
   viewSelect.disabled = false;
   promptModeSelect.disabled = false;
   bgTextModeSelect.disabled = false;
+  viewBatchSelect.disabled = false;
   setNotice("");
   renderReadout();
   requestAnimationFrame(frame);
@@ -433,6 +546,7 @@ resetBtn.addEventListener("click", () => void onReset());
 viewSelect.addEventListener("change", () => void onViewChange());
 promptModeSelect.addEventListener("change", onPromptModeChange);
 bgTextModeSelect.addEventListener("change", onPromptModeChange);
+viewBatchSelect.addEventListener("change", onViewBatchChange);
 promptInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") void onOptimize();
 });

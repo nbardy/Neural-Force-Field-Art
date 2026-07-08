@@ -29,6 +29,19 @@ export interface Splat3DOptimizerConfig {
   hyper?: AdamHyper;
 }
 
+export interface Splat3DStepTimings {
+  views: number;
+  totalViews: number;
+  total: number;
+  clear: number;
+  rasterFwd: number;
+  clipFwd: number;
+  clipBwd: number;
+  rasterBwd: number;
+  adam: number;
+  display: number;
+}
+
 export const LEGIBLE_3D_G = 4096;
 export const LEGIBLE_3D_INIT: Required<Splat3DInit> = {
   radius: 0.075,
@@ -49,6 +62,9 @@ export class Splat3DOptimizer {
   private readonly hyper: AdamHyper;
   private step_ = 0;
   private hasPrompts = false;
+  private rngState = 1;
+  private viewOrder: number[] = [];
+  private viewCursor = 0;
 
   static async create(
     device: GPUDevice,
@@ -89,6 +105,7 @@ export class Splat3DOptimizer {
     this.cameras = cameras;
     this.lrs = cfg.lrs ?? DEFAULT_3D_LRS;
     this.hyper = cfg.hyper ?? DEFAULT_HYPER;
+    this.rngState = ((cfg.seed ?? 1) ^ 0x9e3779b9) >>> 0 || 1;
     this.textBuffers = cameras.map((_, i) =>
       device.createBuffer({
         label: `splat3d-text-${i}`,
@@ -111,11 +128,12 @@ export class Splat3DOptimizer {
     this.hasPrompts = true;
   }
 
-  step(displayView = 0): void {
+  step(displayView = 0, viewsPerStep = this.cameras.length): void {
     if (!this.hasPrompts) throw new Error("splat3d: setViewPrompts() before step()");
+    const views = this.sampleViews(viewsPerStep);
     const enc = this.device.createCommandEncoder();
     this.raster.recordClearRawGrad(enc);
-    for (let v = 0; v < this.cameras.length; v++) {
+    for (const v of views) {
       enc.copyBufferToBuffer(this.textBuffers[v], 0, this.trainer.textBuffer, 0, this.trainer.plan.textDim * 4);
       this.raster.recordForward(enc, v);
       enc.copyBufferToBuffer(this.raster.image, 0, this.trainer.inputBuffer, 0, IMG_BYTES);
@@ -127,6 +145,57 @@ export class Splat3DOptimizer {
     this.raster.recordAdam(enc, this.step_, this.lrs, this.hyper);
     this.raster.recordForward(enc, displayView);
     this.device.queue.submit([enc.finish()]);
+  }
+
+  async profileStep(displayView = 0, viewsPerStep = this.cameras.length): Promise<Splat3DStepTimings> {
+    if (!this.hasPrompts) throw new Error("splat3d: setViewPrompts() before profileStep()");
+    await this.device.queue.onSubmittedWorkDone();
+    const views = this.sampleViews(viewsPerStep);
+    const timings: Splat3DStepTimings = {
+      views: views.length,
+      totalViews: this.cameras.length,
+      total: 0,
+      clear: 0,
+      rasterFwd: 0,
+      clipFwd: 0,
+      clipBwd: 0,
+      rasterBwd: 0,
+      adam: 0,
+      display: 0,
+    };
+    const totalStart = performance.now();
+
+    timings.clear += await this.submitTimed((enc) => {
+      this.raster.recordClearRawGrad(enc);
+    });
+
+    for (const v of views) {
+      timings.rasterFwd += await this.submitTimed((enc) => {
+        this.raster.recordForward(enc, v);
+        enc.copyBufferToBuffer(this.raster.image, 0, this.trainer.inputBuffer, 0, IMG_BYTES);
+      });
+      timings.clipFwd += await this.submitTimed((enc) => {
+        this.trainer.encodeForward(enc);
+      });
+      timings.clipBwd += await this.submitTimed((enc) => {
+        enc.copyBufferToBuffer(this.textBuffers[v], 0, this.trainer.textBuffer, 0, this.trainer.plan.textDim * 4);
+        this.trainer.encodeBackward(enc);
+      });
+      timings.rasterBwd += await this.submitTimed((enc) => {
+        enc.copyBufferToBuffer(this.trainer.inputGradBuffer, 0, this.raster.gradImage, 0, IMG_BYTES);
+        this.raster.recordBackwardAdd(enc, v);
+      });
+    }
+
+    this.step_ += 1;
+    timings.adam += await this.submitTimed((enc) => {
+      this.raster.recordAdam(enc, this.step_, this.lrs, this.hyper);
+    });
+    timings.display += await this.submitTimed((enc) => {
+      this.raster.recordForward(enc, displayView);
+    });
+    timings.total = performance.now() - totalStart;
+    return timings;
   }
 
   get stepCount(): number {
@@ -158,6 +227,44 @@ export class Splat3DOptimizer {
         b.destroy();
       } catch (_) {}
     }
+  }
+
+  private async submitTimed(record: (enc: GPUCommandEncoder) => void): Promise<number> {
+    const enc = this.device.createCommandEncoder();
+    record(enc);
+    const t0 = performance.now();
+    this.device.queue.submit([enc.finish()]);
+    await this.device.queue.onSubmittedWorkDone();
+    return performance.now() - t0;
+  }
+
+  private sampleViews(viewsPerStep: number): number[] {
+    const n = this.cameras.length;
+    const k = Math.max(1, Math.min(n, viewsPerStep | 0));
+    if (k >= n) return Array.from({ length: n }, (_unused, i) => i);
+    const views: number[] = [];
+    while (views.length < k) {
+      if (this.viewCursor >= this.viewOrder.length) this.shuffleViewOrder();
+      views.push(this.viewOrder[this.viewCursor]);
+      this.viewCursor += 1;
+    }
+    return views;
+  }
+
+  private shuffleViewOrder(): void {
+    this.viewOrder = Array.from({ length: this.cameras.length }, (_unused, i) => i);
+    for (let i = this.viewOrder.length - 1; i > 0; i--) {
+      const j = this.nextRandomU32() % (i + 1);
+      const tmp = this.viewOrder[i];
+      this.viewOrder[i] = this.viewOrder[j];
+      this.viewOrder[j] = tmp;
+    }
+    this.viewCursor = 0;
+  }
+
+  private nextRandomU32(): number {
+    this.rngState = (Math.imul(this.rngState, 1664525) + 1013904223) >>> 0;
+    return this.rngState;
   }
 }
 

@@ -305,6 +305,30 @@ export class VisionTrainer {
     pass.end();
   }
 
+  /** Encode only the verified forward pass, preserving activations for backward. */
+  encodeForward(encoder: GPUCommandEncoder): void {
+    const pass = encoder.beginComputePass();
+    for (let i = 0; i < this.fwdCount; i++) {
+      const d = this.dispatches[i];
+      pass.setPipeline(d.pipeline);
+      pass.setBindGroup(0, d.bind);
+      pass.dispatchWorkgroups(...d.workgroups);
+    }
+    pass.end();
+  }
+
+  /** Encode only the loss head + backward. Requires a prior forward. */
+  encodeBackward(encoder: GPUCommandEncoder): void {
+    const pass = encoder.beginComputePass();
+    for (let i = this.fwdCount; i < this.dispatches.length; i++) {
+      const d = this.dispatches[i];
+      pass.setPipeline(d.pipeline);
+      pass.setBindGroup(0, d.bind);
+      pass.dispatchWorkgroups(...d.workgroups);
+    }
+    pass.end();
+  }
+
   /** Forward + backward. dL/dpixels is left in `inputGradBuffer`. */
   run(opts: { backward?: boolean } = {}): void {
     const enc = this.device.createCommandEncoder();

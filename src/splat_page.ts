@@ -200,15 +200,25 @@ const nativeImport = new Function("u", "return import(u)") as (u: string) => Pro
 let tokenizer: any = null;
 let textModel: any = null;
 
-async function loadTextModel(): Promise<void> {
+async function loadTextModel(onProgress?: (msg: string) => void): Promise<void> {
   if (textModel) return;
   const tf: any = await nativeImport(TF_URL);
   tf.env.allowRemoteModels = true;
-  const id = "Xenova/mobileclip_s0";
-  tokenizer = await tf.AutoTokenizer.from_pretrained(id);
+  const id = "Nbardy/nff-clip-splat-weights"; // self-hosted alongside the vision weights
+  const progress_callback = (p: any) => {
+    if (p.status === "progress" && p.total) {
+      const pct = Math.round(p.progress ?? (p.loaded / p.total) * 100);
+      const fill = Math.round((pct / 100) * 16);
+      const bar = "█".repeat(fill) + "░".repeat(16 - fill);
+      onProgress?.(`loading text encoder  [${bar}] ${pct}%  ·  ${(p.loaded / 1e6).toFixed(1)}/${(p.total / 1e6).toFixed(0)} MB`);
+    }
+  };
+  tokenizer = await tf.AutoTokenizer.from_pretrained(id, { progress_callback });
   textModel = await tf.CLIPTextModelWithProjection.from_pretrained(id, {
-    dtype: "fp32",
-    device: "wasm",
+    dtype: "fp16", // 84 MB, lossless vs fp32
+    device: "wasm", // keep text off the shared render GPU
+    session_options: { graphOptimizationLevel: "basic" }, // dodges the LayerNormFusion bug
+    progress_callback,
   });
 }
 
@@ -398,6 +408,11 @@ async function boot(): Promise<void> {
   opt = await SplatOptimizer.create(device, plan, weights, { seed });
   rebuildBlitBind();
   await opt.renderImage(); // populate raster.image so the canvas isn't blank pre-optimize
+
+  // Preload the text encoder at boot (with its own progress bar) so the first
+  // Optimize is instant instead of stalling on an 84 MB download.
+  status.phase = "textmodel";
+  await loadTextModel((msg) => { readoutEl.textContent = msg; });
 
   status.ready = true;
   status.phase = "idle";
