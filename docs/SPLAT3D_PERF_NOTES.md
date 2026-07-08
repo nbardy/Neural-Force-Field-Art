@@ -234,6 +234,14 @@ walk. A true STAR-style sublinear multi-camera primitive would be a separate
 representation project: projective rational camera bundles or atlas-residual
 splats with a new backward chain.
 
+Follow-up note: `agent_notes/optimization_session/static_multiview_worldtube_followup.md`
+re-checked the STAR UVT/PRT world-tube math against the current browser raster.
+The exact next ablation does not require a new splat object: move camera data
+into a buffer and dispatch raster kernels over `workgroup_id.z = view lane`.
+The only backward wrinkle is that `accGrad` is currently shared and cleared per
+view, so a true batched backward needs lane-strided `accGrad` first, or a larger
+fixed-point raw-gradient atomic rewrite later.
+
 ## Stem Spatial Backward Specialization
 
 The B=3 dispatch profile made the MobileCLIP stem backward the largest single
