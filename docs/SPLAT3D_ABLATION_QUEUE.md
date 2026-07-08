@@ -435,6 +435,35 @@ Decision:
   decomposition, such as vectorized horizontal pixels or a special stem kernel,
   and must be gated by the integrated 3D step bench.
 
+Attempt 2 result: profiling gate added.
+
+- Added `tools/clip/spatial_bwd_profile_matrix.ts` to aggregate exact
+  `spatial_bwd` dispatch labels across sequential `dispatch_profile.ts` runs.
+- This does not change runtime behavior; it ranks candidate kernels for the next
+  shader ablation.
+
+Command:
+
+```bash
+BATCHES=1,3 TRIALS=2 RUNS=3 WARMUP=1 TOP=12 bun tools/clip/spatial_bwd_profile_matrix.ts
+```
+
+Results:
+
+- B=1 total `spatial_bwd` median sum: `22.878 ms`.
+- B=3 total `spatial_bwd` median sum: `40.495 ms`.
+- Top B=3 single label: `spatial_bwd k3s2 3<-64 g1 @256x256`, median
+  `7.667 ms`.
+- Next B=3 labels were much smaller: `k7s2 64<-128 @64x64` at `2.381 ms` and
+  repeated `k7s1 64<-64 @64x64 +=` at `2.001 ms` median per dispatch.
+
+Decision:
+
+- The next `spatial_bwd` code attempt should specialize the stem or vectorize
+  horizontal pixels. It should not retry generic workgroup weight staging.
+- Any variant must pass `bun tools/clip/bwd_test.ts` and improve full
+  `BATCH=3` batch-major train or integrated 3D step timing before promotion.
+
 ### 7. F16 Weights With F32 Math
 
 Hypothesis: f16 weights reduce memory traffic and payload size without changing

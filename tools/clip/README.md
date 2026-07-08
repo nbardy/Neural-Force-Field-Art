@@ -262,6 +262,7 @@ dispatches:
 MODE=train BATCH=1 RUNS=3 WARMUP=1 bun tools/clip/dispatch_profile.ts
 MODE=train BATCH=3 RUNS=3 WARMUP=1 bun tools/clip/dispatch_profile.ts
 CSV=1 MODE=train BATCH=3 bun tools/clip/dispatch_profile.ts > /tmp/clip_b3.csv
+BATCHES=1,3 TRIALS=2 RUNS=3 WARMUP=1 bun tools/clip/spatial_bwd_profile_matrix.ts
 ```
 
 Treat it as a kernel-priority tool, not exact full-chain GPU timestamp

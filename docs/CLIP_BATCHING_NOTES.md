@@ -335,6 +335,32 @@ batch-major training. Keep the gated path and matrix runner for future variants,
 but move the next performance attempt to `spatial_bwd`, raster view dispatch, or
 another full-chain-visible target.
 
+## Iteration 5 - Spatial Backward Profile Matrix
+
+Implemented:
+
+- `tools/clip/spatial_bwd_profile_matrix.ts`
+
+This wraps `dispatch_profile.ts` in CSV mode, filters `spatial_bwd`, and
+aggregates by exact generated label across sequential trials.
+
+Command:
+
+```bash
+BATCHES=1,3 TRIALS=2 RUNS=3 WARMUP=1 TOP=12 bun tools/clip/spatial_bwd_profile_matrix.ts
+```
+
+Results:
+
+| batch | total `spatial_bwd` median sum | top label | top median |
+| ---: | ---: | --- | ---: |
+| 1 | `22.878 ms` | `k3s2 3<-64 g1 @256x256` | `2.954 ms` |
+| 3 | `40.495 ms` | `k3s2 3<-64 g1 @256x256` | `7.667 ms` |
+
+The stem spatial backward is the clear single-kernel target. The next shader
+attempt should be a stem-specialized or horizontal-vectorized kernel, not a
+repeat of generic workgroup weight staging.
+
 ## Next Five Iterations
 
 1. **Production speed win:** add `views/step` N-of-K to the 3D page, default 3
