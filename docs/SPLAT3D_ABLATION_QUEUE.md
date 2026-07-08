@@ -302,6 +302,40 @@ Promotion gate:
 - `bun tools/clip/bwd_test.ts` passes.
 - Full B=3 CLIP train time improves.
 
+Attempt 1 result: rejected.
+
+- Tried staging each `spatial_bwd` workgroup's per-input-channel weight footprint
+  into workgroup memory.
+- Correctness passed, including per-kernel spatial backward checks and the
+  end-to-end directional derivative gate.
+- Integrated optimizer timing did not produce a reliable speed win. The first
+  staged run was much slower, and subsequent clean-code reruns also showed GPU
+  timing instability, so the safe conclusion is "no proven win".
+
+Commands run:
+
+```bash
+bun tools/clip/bwd_test.ts
+BATCH=3 RUNS=3 WARMUP=3 bun tools/clip/batch_major_train_bench.ts
+CLIP_BATCH=3 VIEWS=3 RUNS=6 WARMUP=3 bun tools/splat3d/step_bench.ts
+```
+
+Observed integrated runs:
+
+| Variant | 3/9 batch x3 normal step | Profile total | CLIP batch |
+| --- | ---: | ---: | ---: |
+| per-lane raster baseline | 58.40 ms | 62.39 ms | 46.22 ms |
+| staged `spatial_bwd` | 140.80 ms | 140.64 ms | 110.61 ms |
+| reverted clean code rerun | 219.63 ms | 163.71 ms | 129.81 ms |
+
+Decision:
+
+- Reverted the staged-weight shader change.
+- Do not retry this exact staging shape without GPU timestamp queries or a more
+  controlled bench harness. Future `spatial_bwd` work should try a different
+  decomposition, such as vectorized horizontal pixels or a special stem kernel,
+  and must be gated by the integrated 3D step bench.
+
 ### 7. F16 Weights With F32 Math
 
 Hypothesis: f16 weights reduce memory traffic and payload size without changing
