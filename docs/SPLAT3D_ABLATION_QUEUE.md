@@ -350,6 +350,16 @@ Decision:
 - Promotion still requires full batch-major CLIP train wall time to improve by
   at least 5%.
 
+Implementation boundary for the next attempt:
+
+- Do not string-patch the generic `batchTrainDispatches()` output. It only sees
+  generated `DispatchSpec`s.
+- Add an emitter-level selective path that still has `ConvStep` metadata and
+  emits production shared-W dispatches with the real source, destination, and
+  residual slot refs.
+- Start forward-only for the first 64-channel block, measure full B=3 train
+  wall time, then add `pw_bwd` only if the forward path does not regress.
+
 ### 6. `spatial_bwd` Staging
 
 Hypothesis: selected spatial backward kernels may be bandwidth-bound and benefit
