@@ -28,11 +28,23 @@ export type { VisionPlan, TrainPlan };
 
 const USAGE = { MAP_READ: 1, COPY_SRC: 4, COPY_DST: 8, STORAGE: 128 };
 
+type PassTimestampWrites = {
+  querySet: GPUQuerySet;
+  beginningOfPassWriteIndex?: number;
+  endOfPassWriteIndex?: number;
+};
+
 interface Encoded {
   pipeline: GPUComputePipeline;
   bind: GPUBindGroup;
   workgroups: [number, number, number];
   label: string;
+}
+
+function beginComputePass(enc: GPUCommandEncoder, timestampWrites?: PassTimestampWrites): GPUComputePassEncoder {
+  return timestampWrites
+    ? enc.beginComputePass({ timestampWrites } as GPUComputePassDescriptor)
+    : enc.beginComputePass();
 }
 
 export class VisionEncoder {
@@ -129,11 +141,15 @@ export class VisionEncoder {
    * Encode the whole forward (optionally only the first `stepLimit` plan
    * steps — the per-step verification hook) into one compute pass.
    */
-  encode(encoder: GPUCommandEncoder, dispatchLimit = this.dispatches.length): void {
+  encode(
+    encoder: GPUCommandEncoder,
+    dispatchLimit = this.dispatches.length,
+    timestampWrites?: PassTimestampWrites
+  ): void {
     // One compute pass for the whole forward — WebGPU guarantees storage
     // write visibility BETWEEN dispatches in a pass (each dispatch is its own
     // usage scope), verified on Dawn/Metal by the per-step suite.
-    const pass = encoder.beginComputePass();
+    const pass = beginComputePass(encoder, timestampWrites);
     for (let i = 0; i < dispatchLimit; i++) {
       const d = this.dispatches[i];
       pass.setPipeline(d.pipeline);
@@ -293,9 +309,12 @@ export class VisionTrainer {
   }
 
   /** Encode forward, then (optionally) the loss head + backward, one pass. */
-  encode(encoder: GPUCommandEncoder, opts: { backward?: boolean } = {}): void {
+  encode(
+    encoder: GPUCommandEncoder,
+    opts: { backward?: boolean; timestampWrites?: PassTimestampWrites } = {}
+  ): void {
     const limit = opts.backward === false ? this.fwdCount : this.dispatches.length;
-    const pass = encoder.beginComputePass();
+    const pass = beginComputePass(encoder, opts.timestampWrites);
     for (let i = 0; i < limit; i++) {
       const d = this.dispatches[i];
       pass.setPipeline(d.pipeline);
@@ -306,8 +325,8 @@ export class VisionTrainer {
   }
 
   /** Encode only the verified forward pass, preserving activations for backward. */
-  encodeForward(encoder: GPUCommandEncoder): void {
-    const pass = encoder.beginComputePass();
+  encodeForward(encoder: GPUCommandEncoder, timestampWrites?: PassTimestampWrites): void {
+    const pass = beginComputePass(encoder, timestampWrites);
     for (let i = 0; i < this.fwdCount; i++) {
       const d = this.dispatches[i];
       pass.setPipeline(d.pipeline);
@@ -318,8 +337,8 @@ export class VisionTrainer {
   }
 
   /** Encode only the loss head + backward. Requires a prior forward. */
-  encodeBackward(encoder: GPUCommandEncoder): void {
-    const pass = encoder.beginComputePass();
+  encodeBackward(encoder: GPUCommandEncoder, timestampWrites?: PassTimestampWrites): void {
+    const pass = beginComputePass(encoder, timestampWrites);
     for (let i = this.fwdCount; i < this.dispatches.length; i++) {
       const d = this.dispatches[i];
       pass.setPipeline(d.pipeline);

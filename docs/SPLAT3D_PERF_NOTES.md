@@ -177,6 +177,39 @@ Total isolated timestamp sum was `160.30 ms`. The main conclusion is unchanged:
 optimize pointwise backward/forward, spatial backward, and conv-family kernels
 before spending serious time on attention backward.
 
+## Integrated Timestamp Step Profile
+
+`tools/splat3d/step_bench.ts` now also accepts `TIMESTAMP=1` for integrated step
+profiling. This requests `timestamp-query` and attaches begin/end timestamp
+writes to the actual raster, CLIP, and Adam compute passes.
+
+Important gotcha: a marker-pass approach was tested and rejected. Empty or tiny
+timestamped passes did not bracket intervening GPU work reliably on this
+Dawn/Metal runtime. Timestamp writes must live on the compute pass being timed.
+
+Commands:
+
+```bash
+TIMESTAMP=1 CLIP_BATCH=3 VIEWS=3 RUNS=1 WARMUP=1 bun tools/splat3d/step_bench.ts
+CLIP_BATCH=3 VIEWS=3 RUNS=1 WARMUP=1 bun tools/splat3d/step_bench.ts
+TIMESTAMP=1 VIEW_LANE_RASTER_BWD=1 CLIP_BATCH=3 VIEWS=3 RUNS=1 WARMUP=1 bun tools/splat3d/step_bench.ts
+```
+
+Default `3/9`, `batch CLIP x3` smoke:
+
+| Timing Mode | Normal Step Avg | Profile Total | Raster Fwd | Raster Bwd | CLIP Batch | Adam | Display |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| GPU timestamp | `79.80 ms` | `52.82 ms` | `1.31 ms` | `10.03 ms` | `41.03 ms` | `0.00 ms` | `0.46 ms` |
+| split-submit wall | `64.72 ms` | `60.13 ms` | `2.07 ms` | `11.41 ms` | `43.91 ms` | `0.34 ms` | `0.93 ms` |
+
+View-lane backward timestamp smoke moved raster backward from `10.03 ms` to
+`9.24 ms` while CLIP batch stayed around `43 ms`, reinforcing the earlier
+non-promotion decision for raster scheduler work.
+
+Takeaway: integrated GPU attribution agrees with the CLIP dispatch profiler.
+The next large win is still CLIP, not Adam/display and not shallow raster
+scheduling.
+
 ## Prompt Encoding Cache
 
 The 3D page now caches text embeddings by exact expanded prompt. In `same text`

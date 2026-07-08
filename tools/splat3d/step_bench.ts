@@ -14,6 +14,7 @@
  *   VIEW_LANE_RASTER_FWD=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   VIEW_LANE_RASTER_BWD=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   CAP=1024 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
+ *   TIMESTAMP=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -38,6 +39,7 @@ const FUSE_GELU_BWD_PW = process.env.FUSE_GELU_BWD_PW === "1";
 const SINGLE_PASS_RASTER_FWD = process.env.SINGLE_PASS_RASTER_FWD === "1";
 const VIEW_LANE_RASTER_FWD = process.env.VIEW_LANE_RASTER_FWD === "1";
 const VIEW_LANE_RASTER_BWD = process.env.VIEW_LANE_RASTER_BWD === "1";
+const TIMESTAMP = process.env.TIMESTAMP === "1";
 
 function f32File(path: string): Float32Array {
   const b = readFileSync(path);
@@ -64,9 +66,16 @@ if (!adapter) {
   console.error("FATAL: no WebGPU adapter (bun-webgpu found no GPU)");
   process.exit(1);
 }
-const device: GPUDevice = await adapter.requestDevice();
+const timestampSupported = adapter.features.has("timestamp-query");
+const device: GPUDevice = await adapter.requestDevice({
+  requiredFeatures: TIMESTAMP && timestampSupported ? (["timestamp-query"] as GPUFeatureName[]) : [],
+});
+const useTimestamps = TIMESTAMP && device.features.has("timestamp-query");
 const info = adapter.info ?? {};
 console.log(`adapter: ${info.vendor ?? "?"} ${info.architecture ?? "?"}`);
+if (TIMESTAMP && !useTimestamps) {
+  console.log("splat3d step bench: timestamp-query unavailable, falling back to split-submit wall time");
+}
 
 const plan: TrainPlan = JSON.parse(readFileSync(join(MODEL_DIR, "plan_train.json"), "utf8"));
 const weights = f32File(join(MODEL_DIR, "weights_train.bin"));
@@ -95,6 +104,7 @@ console.log(
     `singlePassBatchRasterForward=${SINGLE_PASS_RASTER_FWD ? 1 : 0}, ` +
     `viewLaneBatchRasterForward=${VIEW_LANE_RASTER_FWD ? 1 : 0}, ` +
     `viewLaneBatchRasterBackward=${VIEW_LANE_RASTER_BWD ? 1 : 0}, ` +
+    `timing=${useTimestamps ? "gpu-timestamp" : "split-submit-wall"}, ` +
     `compile+allocate=${(performance.now() - compileStart).toFixed(0)} ms`
 );
 
@@ -113,7 +123,7 @@ for (let i = 0; i < RUNS; i++) {
 const avg = (performance.now() - t0) / Math.max(1, RUNS);
 console.log(`normal step avg: ${avg.toFixed(2)} ms`);
 
-const profile = await opt.profileStep(0, VIEWS);
+const profile = await opt.profileStep(0, VIEWS, { gpuTimestamps: useTimestamps });
 console.log(
   `profile: total=${profile.total.toFixed(2)} ms ` +
     `rasterFwd=${profile.rasterFwd.toFixed(2)} ` +
@@ -122,7 +132,8 @@ console.log(
     `clipFwd=${profile.clipFwd.toFixed(2)} ` +
     `clipBwd=${profile.clipBwd.toFixed(2)} ` +
     `clipBatch=${profile.clipBatch.toFixed(2)} ` +
-    `adam=${profile.adam.toFixed(2)} display=${profile.display.toFixed(2)}`
+    `adam=${profile.adam.toFixed(2)} display=${profile.display.toFixed(2)} ` +
+    `timing=${profile.timing}`
 );
 
 opt.destroy();

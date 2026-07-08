@@ -26,6 +26,12 @@ const USAGE = { MAP_READ: 1, COPY_SRC: 4, COPY_DST: 8, STORAGE: 128 };
 
 export type BatchSchedule = "lane-major" | "step-major";
 
+type PassTimestampWrites = {
+  querySet: GPUQuerySet;
+  beginningOfPassWriteIndex?: number;
+  endOfPassWriteIndex?: number;
+};
+
 interface BatchEncoded {
   pipeline: GPUComputePipeline;
   binds: GPUBindGroup[];
@@ -38,6 +44,12 @@ interface SingleEncoded {
   bind: GPUBindGroup;
   workgroups: [number, number, number];
   label: string;
+}
+
+function beginComputePass(enc: GPUCommandEncoder, timestampWrites?: PassTimestampWrites): GPUComputePassEncoder {
+  return timestampWrites
+    ? enc.beginComputePass({ timestampWrites } as GPUComputePassDescriptor)
+    : enc.beginComputePass();
 }
 
 async function compilePipelines(
@@ -196,11 +208,11 @@ export class ReplicatedBatchVisionTrainer {
   encodeLane(
     encoder: GPUCommandEncoder,
     lane: number,
-    opts: { backward?: boolean } = {}
+    opts: { backward?: boolean; timestampWrites?: PassTimestampWrites } = {}
   ): void {
     checkLane(lane, this.batch);
     const limit = opts.backward === false ? this.fwdCount : this.dispatches.length;
-    const pass = encoder.beginComputePass();
+    const pass = beginComputePass(encoder, opts.timestampWrites);
     for (let i = 0; i < limit; i++) {
       const d = this.dispatches[i];
       pass.setPipeline(d.pipeline);
@@ -212,11 +224,11 @@ export class ReplicatedBatchVisionTrainer {
 
   encode(
     encoder: GPUCommandEncoder,
-    opts: { backward?: boolean; schedule?: BatchSchedule } = {}
+    opts: { backward?: boolean; schedule?: BatchSchedule; timestampWrites?: PassTimestampWrites } = {}
   ): void {
     const limit = opts.backward === false ? this.fwdCount : this.dispatches.length;
     const schedule = opts.schedule ?? "step-major";
-    const pass = encoder.beginComputePass();
+    const pass = beginComputePass(encoder, opts.timestampWrites);
     if (schedule === "lane-major") {
       for (let lane = 0; lane < this.batch; lane++) {
         for (let i = 0; i < limit; i++) {
@@ -369,8 +381,8 @@ export class BatchMajorVisionEncoder {
     );
   }
 
-  encode(encoder: GPUCommandEncoder): void {
-    const pass = encoder.beginComputePass();
+  encode(encoder: GPUCommandEncoder, timestampWrites?: PassTimestampWrites): void {
+    const pass = beginComputePass(encoder, timestampWrites);
     for (const d of this.dispatches) {
       pass.setPipeline(d.pipeline);
       pass.setBindGroup(0, d.bind);
@@ -535,9 +547,12 @@ export class BatchMajorVisionTrainer {
     );
   }
 
-  encode(encoder: GPUCommandEncoder, opts: { backward?: boolean } = {}): void {
+  encode(
+    encoder: GPUCommandEncoder,
+    opts: { backward?: boolean; timestampWrites?: PassTimestampWrites } = {}
+  ): void {
     const limit = opts.backward === false ? this.fwdCount : this.dispatches.length;
-    const pass = encoder.beginComputePass();
+    const pass = beginComputePass(encoder, opts.timestampWrites);
     for (let i = 0; i < limit; i++) {
       const d = this.dispatches[i];
       pass.setPipeline(d.pipeline);

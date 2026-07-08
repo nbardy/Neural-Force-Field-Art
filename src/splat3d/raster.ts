@@ -25,6 +25,11 @@ const WG = 256;
 const STORAGE_OFFSET_ALIGN = 256;
 const ceil = (n: number) => Math.ceil(n / WG);
 type BufferBindingInput = GPUBuffer | { buffer: GPUBuffer; offset?: number; size?: number };
+type PassTimestampWrites = {
+  querySet: GPUQuerySet;
+  beginningOfPassWriteIndex?: number;
+  endOfPassWriteIndex?: number;
+};
 
 export interface Raster3DEngineConfig extends Raster3DConfig {
   cameras: PreparedCamera3D[];
@@ -114,6 +119,12 @@ async function makeCompute(device: GPUDevice, code: string, label: string): Prom
     throw new Error(`raster3d pipeline validation (${label}): ${(err as GPUValidationError).message}`);
   }
   return pipeline;
+}
+
+function beginComputePass(enc: GPUCommandEncoder, timestampWrites?: PassTimestampWrites): GPUComputePassEncoder {
+  return timestampWrites
+    ? enc.beginComputePass({ timestampWrites } as GPUComputePassDescriptor)
+    : enc.beginComputePass();
 }
 
 export class Raster3DEngine {
@@ -366,32 +377,42 @@ export class Raster3DEngine {
     };
   }
 
-  recordClearRawGrad(enc: GPUCommandEncoder): void {
-    const p = enc.beginComputePass();
+  recordClearRawGrad(enc: GPUCommandEncoder, timestampWrites?: PassTimestampWrites): void {
+    const p = beginComputePass(enc, timestampWrites);
     p.setPipeline(this.clearRawPipe);
     p.setBindGroup(0, this.clearRawBind);
     p.dispatchWorkgroups(ceil(this.dims.G * PARAM_STRIDE_3D));
     p.end();
   }
 
-  recordForward(enc: GPUCommandEncoder, view = 0, io?: Raster3DIOState): void {
-    const p = enc.beginComputePass();
+  recordForward(enc: GPUCommandEncoder, view = 0, io?: Raster3DIOState, timestampWrites?: PassTimestampWrites): void {
+    const p = beginComputePass(enc, timestampWrites);
     this.encodeForwardPass(p, view, io);
     p.end();
   }
 
-  recordForwards(enc: GPUCommandEncoder, views: number[], ios: Raster3DIOState[]): void {
+  recordForwards(
+    enc: GPUCommandEncoder,
+    views: number[],
+    ios: Raster3DIOState[],
+    timestampWrites?: PassTimestampWrites
+  ): void {
     if (views.length !== ios.length) {
       throw new Error(`raster3d: ${views.length} views but ${ios.length} IO states`);
     }
-    const p = enc.beginComputePass();
+    const p = beginComputePass(enc, timestampWrites);
     for (let i = 0; i < views.length; i++) {
       this.encodeForwardPass(p, views[i], ios[i]);
     }
     p.end();
   }
 
-  recordBatchForward(enc: GPUCommandEncoder, state: Raster3DBatchForwardState, views: number[]): void {
+  recordBatchForward(
+    enc: GPUCommandEncoder,
+    state: Raster3DBatchForwardState,
+    views: number[],
+    timestampWrites?: PassTimestampWrites
+  ): void {
     if (views.length < 1 || views.length > state.lanes) {
       throw new Error(`raster3d: ${views.length} batch-forward views for ${state.lanes} lanes`);
     }
@@ -399,7 +420,7 @@ export class Raster3DEngine {
     for (let lane = 0; lane < views.length; lane++) active[lane] = this.viewIndex(views[lane]);
     this.device.queue.writeBuffer(state.activeViews, 0, active as unknown as BufferSource);
     const d = this.dims;
-    const p = enc.beginComputePass();
+    const p = beginComputePass(enc, timestampWrites);
     p.setPipeline(state.prepPipe);
     p.setBindGroup(0, state.prepBind);
     p.dispatchWorkgroups(ceil(d.G), 1, views.length);
@@ -415,12 +436,17 @@ export class Raster3DEngine {
     p.end();
   }
 
-  recordBatchBackwardAdd(enc: GPUCommandEncoder, state: Raster3DBatchForwardState, views: number[]): void {
+  recordBatchBackwardAdd(
+    enc: GPUCommandEncoder,
+    state: Raster3DBatchForwardState,
+    views: number[],
+    timestampWrites?: PassTimestampWrites
+  ): void {
     if (views.length < 1 || views.length > state.lanes) {
       throw new Error(`raster3d: ${views.length} batch-backward views for ${state.lanes} lanes`);
     }
     const d = this.dims;
-    const p = enc.beginComputePass();
+    const p = beginComputePass(enc, timestampWrites);
     p.setPipeline(state.clearGradsPipe);
     p.setBindGroup(0, state.clearGradsBind);
     p.dispatchWorkgroups(ceil(d.G * DERIVED_STRIDE_3D * views.length));
@@ -453,10 +479,10 @@ export class Raster3DEngine {
     p.dispatchWorkgroups(d.numTiles);
   }
 
-  recordBackwardAdd(enc: GPUCommandEncoder, view = 0, io?: Raster3DIOState): void {
+  recordBackwardAdd(enc: GPUCommandEncoder, view = 0, io?: Raster3DIOState, timestampWrites?: PassTimestampWrites): void {
     const d = this.dims;
     const v = this.viewIndex(view);
-    const p = enc.beginComputePass();
+    const p = beginComputePass(enc, timestampWrites);
     p.setPipeline(this.clearGradsPipe);
     p.setBindGroup(0, io?.clearGradsBind ?? this.clearGradsBind);
     p.dispatchWorkgroups(ceil(d.G * DERIVED_STRIDE_3D));
@@ -473,7 +499,8 @@ export class Raster3DEngine {
     enc: GPUCommandEncoder,
     step: number,
     lrs: AdamLRs3D = DEFAULT_3D_LRS,
-    hyper: AdamHyper = DEFAULT_HYPER
+    hyper: AdamHyper = DEFAULT_HYPER,
+    timestampWrites?: PassTimestampWrites
   ): void {
     const segs = paramSegments3D(this.dims.G);
     const lrByName: Record<string, number> = {
@@ -499,7 +526,7 @@ export class Raster3DEngine {
       this.device.queue.writeBuffer(this.adamUni[i], 0, buf);
     });
 
-    const p = enc.beginComputePass();
+    const p = beginComputePass(enc, timestampWrites);
     p.setPipeline(this.adamPipe);
     segs.forEach((s, i) => {
       p.setBindGroup(0, this.adamBind[i]);

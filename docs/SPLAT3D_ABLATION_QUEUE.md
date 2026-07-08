@@ -216,6 +216,43 @@ Interpretation:
 - Use `TIMESTAMP=1` for future CLIP kernel choices when the local WebGPU adapter
   supports it.
 
+Attempt 4 result:
+
+- Added `TIMESTAMP=1` support to `tools/splat3d/step_bench.ts` for integrated
+  step attribution.
+- CLIP/raster pass recorders now accept optional timestamp descriptors at the
+  actual compute-pass creation sites.
+- A marker-pass bracketing approach was tested and rejected because timestamped
+  no-op/tiny marker passes did not measure intervening work on Dawn/Metal.
+
+Commands run:
+
+```bash
+TIMESTAMP=1 CLIP_BATCH=3 VIEWS=3 RUNS=1 WARMUP=1 bun tools/splat3d/step_bench.ts
+CLIP_BATCH=3 VIEWS=3 RUNS=1 WARMUP=1 bun tools/splat3d/step_bench.ts
+TIMESTAMP=1 VIEW_LANE_RASTER_BWD=1 CLIP_BATCH=3 VIEWS=3 RUNS=1 WARMUP=1 bun tools/splat3d/step_bench.ts
+```
+
+Observed default `3/9`, `batch CLIP x3` smoke:
+
+| Timing Mode | Normal Step Avg | Profile Total | Raster Fwd | Raster Bwd | CLIP Batch |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| GPU timestamp | `79.80 ms` | `52.82 ms` | `1.31 ms` | `10.03 ms` | `41.03 ms` |
+| split-submit wall | `64.72 ms` | `60.13 ms` | `2.07 ms` | `11.41 ms` | `43.91 ms` |
+
+The timestamp view-lane raster backward smoke moved raster backward from
+`10.03 ms` to `9.24 ms`, but total timestamp profile stayed CLIP-dominated.
+
+Interpretation:
+
+- Integrated GPU attribution confirms CLIP batch is the dominant segment in the
+  default 3-view batch path.
+- Raster backward is real, but the existing view-lane backward gate only saves
+  about `0.8 ms` of timestamped raster time on this smoke.
+- Future speed work should target CLIP precision, pointwise/backward matmul
+  structure, or signal-reducing strategies such as grid/proxy CLIP before more
+  shallow raster scheduler changes.
+
 ### 3. Raster/CLIP Buffer Aliasing
 
 Hypothesis: removing image and gradient copies between raster and CLIP saves

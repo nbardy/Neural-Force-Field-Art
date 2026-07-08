@@ -98,8 +98,8 @@ function renderTimings(): void {
     return `${name.padEnd(11)} ${ms.toFixed(1).padStart(6)} ms ${pct.toFixed(0).padStart(3)}%`;
   };
   const lines = [
-    `sampled wall step ${status.step}`,
-    `${t.views}/${t.totalViews} views · ${t.clipMode === "batch" ? `batch CLIP x${t.clipBatchSize}` : "single CLIP"} · split submit path`,
+    `${t.timing === "gpu-timestamp" ? "sampled GPU step" : "sampled wall step"} ${status.step}`,
+    `${t.views}/${t.totalViews} views · ${t.clipMode === "batch" ? `batch CLIP x${t.clipBatchSize}` : "single CLIP"} · ${t.timing}`,
     line("opt total", t.total),
     line("raster", t.rasterFwd + t.rasterReplay + t.rasterBwd),
     line("  fwd", t.rasterFwd),

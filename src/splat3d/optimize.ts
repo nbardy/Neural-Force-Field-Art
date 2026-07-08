@@ -43,12 +43,18 @@ export interface Splat3DOptimizerConfig {
 }
 
 export type Splat3DClipMode = "single" | "batch";
+export type Splat3DStepTimingMode = "split-submit-wall" | "gpu-timestamp";
+
+export interface Splat3DProfileOptions {
+  gpuTimestamps?: boolean;
+}
 
 export interface Splat3DStepTimings {
   views: number;
   totalViews: number;
   clipMode: Splat3DClipMode;
   clipBatchSize: number;
+  timing: Splat3DStepTimingMode;
   total: number;
   clear: number;
   rasterFwd: number;
@@ -212,15 +218,21 @@ export class Splat3DOptimizer {
     this.device.queue.submit([enc.finish()]);
   }
 
-  async profileStep(displayView = 0, viewsPerStep = this.cameras.length): Promise<Splat3DStepTimings> {
+  async profileStep(
+    displayView = 0,
+    viewsPerStep = this.cameras.length,
+    opts: Splat3DProfileOptions = {}
+  ): Promise<Splat3DStepTimings> {
     if (!this.hasPrompts) throw new Error("splat3d: setViewPrompts() before profileStep()");
     await this.device.queue.onSubmittedWorkDone();
     const views = this.sampleViews(viewsPerStep);
+    const timer = opts.gpuTimestamps ? GpuPassTimer.create(this.device) : null;
     const timings: Splat3DStepTimings = {
       views: views.length,
       totalViews: this.cameras.length,
       clipMode: this.useBatchFor(views) ? "batch" : "single",
       clipBatchSize: this.clipBatchSize,
+      timing: timer ? "gpu-timestamp" : "split-submit-wall",
       total: 0,
       clear: 0,
       rasterFwd: 0,
@@ -234,59 +246,65 @@ export class Splat3DOptimizer {
     };
     const totalStart = performance.now();
 
-    timings.clear += await this.submitTimed((enc) => {
-      this.raster.recordClearRawGrad(enc);
-    });
+    try {
+      timings.clear += await this.submitTimed((enc, ts) => {
+        this.raster.recordClearRawGrad(enc, ts);
+      }, timer);
 
-    if (this.useBatchFor(views)) {
-      const batch = this.batchTrainer!;
-      for (let start = 0; start < views.length; start += batch.batch) {
-        const chunk = views.slice(start, start + batch.batch);
-        if (chunk.length < batch.batch) {
-          for (const view of chunk) {
-            timings.rasterFwd += await this.submitTimed((enc) => this.recordSingleForwardToTrainer(enc, view));
-            timings.clipFwd += await this.submitTimed((enc) => this.trainer.encodeForward(enc));
-            timings.clipBwd += await this.submitTimed((enc) => this.recordSingleTextAndBackward(enc, view));
-            timings.rasterBwd += await this.submitTimed((enc) => this.recordSingleRasterBackward(enc, view));
+      if (this.useBatchFor(views)) {
+        const batch = this.batchTrainer!;
+        for (let start = 0; start < views.length; start += batch.batch) {
+          const chunk = views.slice(start, start + batch.batch);
+          if (chunk.length < batch.batch) {
+            for (const view of chunk) {
+              timings.rasterFwd += await this.submitTimed((enc, ts) => this.recordSingleForwardToTrainer(enc, view, ts), timer);
+              timings.clipFwd += await this.submitTimed((enc, ts) => this.trainer.encodeForward(enc, ts), timer);
+              timings.clipBwd += await this.submitTimed((enc, ts) => this.recordSingleTextAndBackward(enc, view, ts), timer);
+              timings.rasterBwd += await this.submitTimed((enc, ts) => this.recordSingleRasterBackward(enc, view, ts), timer);
+            }
+            continue;
           }
-          continue;
+          timings.rasterFwd += await this.profileBatchInputs(chunk, timer);
+          timings.clipBatch += await this.submitTimed((enc, ts) => {
+            batch.encode(enc, { backward: true, timestampWrites: ts });
+          }, timer);
+          if (this.viewLaneBatchRasterBackward && this.batchRasterForward && chunk.length > 1) {
+            timings.rasterBwd += await this.submitTimed((enc, ts) => {
+              this.raster.recordBatchBackwardAdd(enc, this.batchRasterForward!, chunk, ts);
+            }, timer);
+            continue;
+          }
+          for (let lane = 0; lane < chunk.length; lane++) {
+            const view = chunk[lane];
+            const io = this.batchIO[lane];
+            timings.rasterBwd += await this.submitTimed((enc, ts) => {
+              this.raster.recordBackwardAdd(enc, view, io, ts);
+            }, timer);
+          }
         }
-        timings.rasterFwd += await this.submitTimed((enc) => this.recordBatchInputs(enc, chunk));
-        timings.clipBatch += await this.submitTimed((enc) => batch.encode(enc, { backward: true }));
-        if (this.viewLaneBatchRasterBackward && this.batchRasterForward && chunk.length > 1) {
-          timings.rasterBwd += await this.submitTimed((enc) => {
-            this.raster.recordBatchBackwardAdd(enc, this.batchRasterForward!, chunk);
-          });
-          continue;
-        }
-        for (let lane = 0; lane < chunk.length; lane++) {
-          const view = chunk[lane];
-          const io = this.batchIO[lane];
-          timings.rasterBwd += await this.submitTimed((enc) => {
-            this.raster.recordBackwardAdd(enc, view, io);
-          });
+      } else {
+        for (const v of views) {
+          timings.rasterFwd += await this.submitTimed((enc, ts) => this.recordSingleForwardToTrainer(enc, v, ts), timer);
+          timings.clipFwd += await this.submitTimed((enc, ts) => {
+            this.trainer.encodeForward(enc, ts);
+          }, timer);
+          timings.clipBwd += await this.submitTimed((enc, ts) => this.recordSingleTextAndBackward(enc, v, ts), timer);
+          timings.rasterBwd += await this.submitTimed((enc, ts) => this.recordSingleRasterBackward(enc, v, ts), timer);
         }
       }
-    } else {
-      for (const v of views) {
-        timings.rasterFwd += await this.submitTimed((enc) => this.recordSingleForwardToTrainer(enc, v));
-        timings.clipFwd += await this.submitTimed((enc) => {
-          this.trainer.encodeForward(enc);
-        });
-        timings.clipBwd += await this.submitTimed((enc) => this.recordSingleTextAndBackward(enc, v));
-        timings.rasterBwd += await this.submitTimed((enc) => this.recordSingleRasterBackward(enc, v));
-      }
-    }
 
-    this.step_ += 1;
-    timings.adam += await this.submitTimed((enc) => {
-      this.raster.recordAdam(enc, this.step_, this.lrs, this.hyper);
-    });
-    timings.display += await this.submitTimed((enc) => {
-      this.raster.recordForward(enc, displayView);
-    });
-    timings.total = performance.now() - totalStart;
-    return timings;
+      this.step_ += 1;
+      timings.adam += await this.submitTimed((enc, ts) => {
+        this.raster.recordAdam(enc, this.step_, this.lrs, this.hyper, ts);
+      }, timer);
+      timings.display += await this.submitTimed((enc, ts) => {
+        this.raster.recordForward(enc, displayView, undefined, ts);
+      }, timer);
+      timings.total = timer ? timedTotal(timings) : performance.now() - totalStart;
+      return timings;
+    } finally {
+      timer?.destroy();
+    }
   }
 
   get stepCount(): number {
@@ -359,11 +377,7 @@ export class Splat3DOptimizer {
   }
 
   private recordBatchInputs(enc: GPUCommandEncoder, views: number[]): void {
-    const batch = this.batchTrainer!;
-    for (let lane = 0; lane < views.length; lane++) {
-      const view = views[lane];
-      enc.copyBufferToBuffer(this.textBuffers[view], 0, batch.textBuffer, batch.textOffsetBytes(lane), batch.plan.textDim * 4);
-    }
+    this.recordBatchTextCopies(enc, views);
     if (this.singlePassBatchRasterForward && views.length > 1) {
       this.raster.recordForwards(enc, views, this.batchIO.slice(0, views.length));
       return;
@@ -377,20 +391,60 @@ export class Splat3DOptimizer {
     }
   }
 
-  private recordSingleForwardToTrainer(enc: GPUCommandEncoder, view: number): void {
-    this.raster.recordForward(enc, view, this.singleIO);
+  private async profileBatchInputs(views: number[], timer: GpuPassTimer | null): Promise<number> {
+    if (!timer) {
+      return this.submitTimed((enc) => this.recordBatchInputs(enc, views));
+    }
+    const copyEnc = this.device.createCommandEncoder();
+    this.recordBatchTextCopies(copyEnc, views);
+    this.device.queue.submit([copyEnc.finish()]);
+    await this.device.queue.onSubmittedWorkDone();
+
+    if (this.singlePassBatchRasterForward && views.length > 1) {
+      return this.submitTimed((enc, ts) => {
+        this.raster.recordForwards(enc, views, this.batchIO.slice(0, views.length), ts);
+      }, timer);
+    }
+    if (this.viewLaneBatchRasterForward && this.batchRasterForward && views.length > 1) {
+      return this.submitTimed((enc, ts) => {
+        this.raster.recordBatchForward(enc, this.batchRasterForward!, views, ts);
+      }, timer);
+    }
+    let ms = 0;
+    for (let lane = 0; lane < views.length; lane++) {
+      ms += await this.submitTimed((enc, ts) => {
+        this.raster.recordForward(enc, views[lane], this.batchIO[lane], ts);
+      }, timer);
+    }
+    return ms;
   }
 
-  private recordSingleTextAndBackward(enc: GPUCommandEncoder, view: number): void {
+  private recordBatchTextCopies(enc: GPUCommandEncoder, views: number[]): void {
+    const batch = this.batchTrainer!;
+    for (let lane = 0; lane < views.length; lane++) {
+      const view = views[lane];
+      enc.copyBufferToBuffer(this.textBuffers[view], 0, batch.textBuffer, batch.textOffsetBytes(lane), batch.plan.textDim * 4);
+    }
+  }
+
+  private recordSingleForwardToTrainer(enc: GPUCommandEncoder, view: number, timestampWrites?: PassTimestampWrites): void {
+    this.raster.recordForward(enc, view, this.singleIO, timestampWrites);
+  }
+
+  private recordSingleTextAndBackward(enc: GPUCommandEncoder, view: number, timestampWrites?: PassTimestampWrites): void {
     enc.copyBufferToBuffer(this.textBuffers[view], 0, this.trainer.textBuffer, 0, this.trainer.plan.textDim * 4);
-    this.trainer.encodeBackward(enc);
+    this.trainer.encodeBackward(enc, timestampWrites);
   }
 
-  private recordSingleRasterBackward(enc: GPUCommandEncoder, view: number): void {
-    this.raster.recordBackwardAdd(enc, view, this.singleIO);
+  private recordSingleRasterBackward(enc: GPUCommandEncoder, view: number, timestampWrites?: PassTimestampWrites): void {
+    this.raster.recordBackwardAdd(enc, view, this.singleIO, timestampWrites);
   }
 
-  private async submitTimed(record: (enc: GPUCommandEncoder) => void): Promise<number> {
+  private async submitTimed(
+    record: (enc: GPUCommandEncoder, timestampWrites?: PassTimestampWrites) => void,
+    timer: GpuPassTimer | null = null
+  ): Promise<number> {
+    if (timer) return timer.time(record);
     const enc = this.device.createCommandEncoder();
     record(enc);
     const t0 = performance.now();
@@ -432,6 +486,70 @@ export class Splat3DOptimizer {
 function normalizeClipBatchSize(value: number | undefined): number {
   const n = Number.isFinite(value) ? value! | 0 : 1;
   return n > 1 ? Math.min(9, n) : 1;
+}
+
+function timedTotal(t: Splat3DStepTimings): number {
+  return (
+    t.clear +
+    t.rasterFwd +
+    t.rasterReplay +
+    t.clipFwd +
+    t.clipBwd +
+    t.clipBatch +
+    t.rasterBwd +
+    t.adam +
+    t.display
+  );
+}
+
+type PassTimestampWrites = {
+  querySet: GPUQuerySet;
+  beginningOfPassWriteIndex?: number;
+  endOfPassWriteIndex?: number;
+};
+
+class GpuPassTimer {
+  static create(device: GPUDevice): GpuPassTimer | null {
+    return device.features.has("timestamp-query") ? new GpuPassTimer(device) : null;
+  }
+
+  private readonly querySet: GPUQuerySet;
+  private readonly resolveBuffer: GPUBuffer;
+  private readonly readBuffer: GPUBuffer;
+
+  private constructor(private readonly device: GPUDevice) {
+    this.querySet = device.createQuerySet({ type: "timestamp", count: 2 });
+    this.resolveBuffer = device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+    });
+    this.readBuffer = device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+    });
+  }
+
+  async time(record: (enc: GPUCommandEncoder, timestampWrites: PassTimestampWrites) => void): Promise<number> {
+    const enc = this.device.createCommandEncoder();
+    record(enc, {
+      querySet: this.querySet,
+      beginningOfPassWriteIndex: 0,
+      endOfPassWriteIndex: 1,
+    });
+    enc.resolveQuerySet(this.querySet, 0, 2, this.resolveBuffer, 0);
+    enc.copyBufferToBuffer(this.resolveBuffer, 0, this.readBuffer, 0, 16);
+    this.device.queue.submit([enc.finish()]);
+    await this.readBuffer.mapAsync(GPUMapMode.READ);
+    const ts = new BigUint64Array(this.readBuffer.getMappedRange().slice(0));
+    this.readBuffer.unmap();
+    return Number(ts[1] - ts[0]) / 1e6;
+  }
+
+  destroy(): void {
+    this.querySet.destroy();
+    this.resolveBuffer.destroy();
+    this.readBuffer.destroy();
+  }
 }
 
 export function randomSplats3D(G: number, seed = 1, init: Splat3DInit = {}): Float32Array {
