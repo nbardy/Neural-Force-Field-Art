@@ -26,8 +26,27 @@ export interface Raster3DEngineConfig extends Raster3DConfig {
 }
 
 export interface Raster3DIOState {
+  prepBind: GPUBindGroup[];
+  chainBind: GPUBindGroup[];
+  emitBind: GPUBindGroup;
+  clearBinsBind: GPUBindGroup;
   fwdBind: GPUBindGroup;
   bwdBind: GPUBindGroup;
+}
+
+export interface Raster3DIOOptions {
+  privateState?: boolean;
+}
+
+interface Raster3DScratchState {
+  derived: GPUBuffer;
+  tileCounts: GPUBuffer;
+  binnedIds: GPUBuffer;
+  tileStop: GPUBuffer;
+  prepBind: GPUBindGroup[];
+  chainBind: GPUBindGroup[];
+  emitBind: GPUBindGroup;
+  clearBinsBind: GPUBindGroup;
 }
 
 export interface AdamLRs3D {
@@ -93,6 +112,7 @@ export class Raster3DEngine {
   private clearRawBind!: GPUBindGroup;
   private adamUni: GPUBuffer[] = [];
   private adamBind: GPUBindGroup[] = [];
+  private extraBuffers: GPUBuffer[] = [];
 
   private constructor(device: GPUDevice, cfg: Raster3DEngineConfig) {
     this.device = device;
@@ -153,11 +173,12 @@ export class Raster3DEngine {
     this.prepBind = this.prepPipe.map((pipe) => this.bindGroup(pipe, [this.params, this.derived]));
     this.chainBind = this.chainPipe.map((pipe) => this.bindGroup(pipe, [this.accGrad, this.derived, this.params, this.gradRaw]));
     this.emitBind = this.bindGroup(this.emitPipe, [this.derived, this.tileCounts, this.binnedIds]);
-    this.fwdBind = this.makeForwardBind(this.image, 0);
-    this.bwdBind = this.makeBackwardBind(this.gradImage, 0);
     this.clearBinsBind = this.bindGroup(this.clearBinsPipe, [this.tileCounts]);
     this.clearGradsBind = this.bindGroup(this.clearGradsPipe, [this.accGrad]);
     this.clearRawBind = this.bindGroup(this.clearRawPipe, [this.gradRaw]);
+    const shared = this.sharedScratchState();
+    this.fwdBind = this.makeForwardBind(shared, this.image, 0);
+    this.bwdBind = this.makeBackwardBind(shared, this.gradImage, 0);
 
     for (const _ of paramSegments3D(d.G)) {
       const uni = this.device.createBuffer({ size: ADAM_UNIFORM_BYTES, usage: U.UNIFORM | U.COPY_DST });
@@ -208,12 +229,23 @@ export class Raster3DEngine {
     return this.readFloats(this.params, this.dims.G * PARAM_STRIDE_3D);
   }
 
-  createIOState(imageBuffer: GPUBuffer, imageOffset: number, gradBuffer: GPUBuffer, gradOffset: number): Raster3DIOState {
+  createIOState(
+    imageBuffer: GPUBuffer,
+    imageOffset: number,
+    gradBuffer: GPUBuffer,
+    gradOffset: number,
+    opts: Raster3DIOOptions = {}
+  ): Raster3DIOState {
     this.checkIOBinding("image", imageOffset);
     this.checkIOBinding("grad", gradOffset);
+    const scratch = opts.privateState ? this.createPrivateScratchState() : this.sharedScratchState();
     return {
-      fwdBind: this.makeForwardBind(imageBuffer, imageOffset),
-      bwdBind: this.makeBackwardBind(gradBuffer, gradOffset),
+      prepBind: scratch.prepBind,
+      chainBind: scratch.chainBind,
+      emitBind: scratch.emitBind,
+      clearBinsBind: scratch.clearBinsBind,
+      fwdBind: this.makeForwardBind(scratch, imageBuffer, imageOffset),
+      bwdBind: this.makeBackwardBind(scratch, gradBuffer, gradOffset),
     };
   }
 
@@ -230,13 +262,13 @@ export class Raster3DEngine {
     const v = this.viewIndex(view);
     const p = enc.beginComputePass();
     p.setPipeline(this.prepPipe[v]);
-    p.setBindGroup(0, this.prepBind[v]);
+    p.setBindGroup(0, io?.prepBind[v] ?? this.prepBind[v]);
     p.dispatchWorkgroups(ceil(d.G));
     p.setPipeline(this.clearBinsPipe);
-    p.setBindGroup(0, this.clearBinsBind);
+    p.setBindGroup(0, io?.clearBinsBind ?? this.clearBinsBind);
     p.dispatchWorkgroups(ceil(d.numTiles));
     p.setPipeline(this.emitPipe);
-    p.setBindGroup(0, this.emitBind);
+    p.setBindGroup(0, io?.emitBind ?? this.emitBind);
     p.dispatchWorkgroups(ceil(d.G));
     p.setPipeline(this.fwdPipe);
     p.setBindGroup(0, io?.fwdBind ?? this.fwdBind);
@@ -255,7 +287,7 @@ export class Raster3DEngine {
     p.setBindGroup(0, io?.bwdBind ?? this.bwdBind);
     p.dispatchWorkgroups(d.numTiles);
     p.setPipeline(this.chainPipe[v]);
-    p.setBindGroup(0, this.chainBind[v]);
+    p.setBindGroup(0, io?.chainBind[v] ?? this.chainBind[v]);
     p.dispatchWorkgroups(ceil(d.G));
     p.end();
   }
@@ -318,6 +350,7 @@ export class Raster3DEngine {
       this.tileStop,
       this.image,
       this.gradImage,
+      ...this.extraBuffers,
       ...this.adamUni,
     ]) {
       try {
@@ -334,23 +367,55 @@ export class Raster3DEngine {
     return 3 * this.dims.H * this.dims.W * 4;
   }
 
-  private makeForwardBind(imageBuffer: GPUBuffer, imageOffset: number): GPUBindGroup {
+  private sharedScratchState(): Raster3DScratchState {
+    return {
+      derived: this.derived,
+      tileCounts: this.tileCounts,
+      binnedIds: this.binnedIds,
+      tileStop: this.tileStop,
+      prepBind: this.prepBind,
+      chainBind: this.chainBind,
+      emitBind: this.emitBind,
+      clearBinsBind: this.clearBinsBind,
+    };
+  }
+
+  private createPrivateScratchState(): Raster3DScratchState {
+    const d = this.dims;
+    const derived = this.storage(d.G * DERIVED_STRIDE_3D);
+    const tileCounts = this.storage(d.numTiles);
+    const binnedIds = this.storage(d.numTiles * d.cap);
+    const tileStop = this.storage(d.numTiles);
+    this.extraBuffers.push(derived, tileCounts, binnedIds, tileStop);
+    return {
+      derived,
+      tileCounts,
+      binnedIds,
+      tileStop,
+      prepBind: this.prepPipe.map((pipe) => this.bindGroup(pipe, [this.params, derived])),
+      chainBind: this.chainPipe.map((pipe) => this.bindGroup(pipe, [this.accGrad, derived, this.params, this.gradRaw])),
+      emitBind: this.bindGroup(this.emitPipe, [derived, tileCounts, binnedIds]),
+      clearBinsBind: this.bindGroup(this.clearBinsPipe, [tileCounts]),
+    };
+  }
+
+  private makeForwardBind(scratch: Raster3DScratchState, imageBuffer: GPUBuffer, imageOffset: number): GPUBindGroup {
     return this.bindGroup(this.fwdPipe, [
-      this.tileCounts,
-      this.binnedIds,
-      this.derived,
+      scratch.tileCounts,
+      scratch.binnedIds,
+      scratch.derived,
       { buffer: imageBuffer, offset: imageOffset, size: this.imageByteSize() },
-      this.tileStop,
+      scratch.tileStop,
     ]);
   }
 
-  private makeBackwardBind(gradBuffer: GPUBuffer, gradOffset: number): GPUBindGroup {
+  private makeBackwardBind(scratch: Raster3DScratchState, gradBuffer: GPUBuffer, gradOffset: number): GPUBindGroup {
     return this.bindGroup(this.bwdPipe, [
       { buffer: gradBuffer, offset: gradOffset, size: this.imageByteSize() },
-      this.tileCounts,
-      this.binnedIds,
-      this.tileStop,
-      this.derived,
+      scratch.tileCounts,
+      scratch.binnedIds,
+      scratch.tileStop,
+      scratch.derived,
       this.accGrad,
     ]);
   }

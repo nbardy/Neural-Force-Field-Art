@@ -174,3 +174,24 @@ slots and read gradients directly from CLIP input-gradient slots.
 This removes two full-image copies per optimized view. It is not a large
 standalone speedup in current measurements because CLIP dominates, but it is the
 right setup for per-lane raster state and batched raster/CLIP scheduling.
+
+## Per-Lane Raster State
+
+Batch CLIP lanes now get private raster scratch state: `derived`, `tileCounts`,
+`binnedIds`, and `tileStop`. The optimizer can render a chunk of selected views
+into CLIP batch input lanes, run one batch CLIP train pass, then apply each
+lane's raster backward using the saved tile state. The replay forward pass is
+gone for complete batch chunks.
+
+Sequential benchmark on Apple `metal-3` after this change:
+
+| Views / Step | CLIP Batch | Normal Step Avg | Split Profile Total | Raster Replay |
+| --- | ---: | ---: | ---: | ---: |
+| 3 / 9 | 1 | 80.87 ms | 101.99 ms | 0.00 ms |
+| 3 / 9 | 3 | 58.40 ms | 62.39 ms | 0.00 ms |
+| 9 / 9 | 1 | 195.65 ms | 215.00 ms | 0.00 ms |
+| 9 / 9 | 3 | 167.23 ms | 176.97 ms | 0.00 ms |
+| 9 / 9 | 9 | 235.48 ms | 295.60 ms | 0.00 ms |
+
+Takeaway: `batch CLIP x3` is now the useful multi-view speed mode. `batch CLIP
+x9` is still not worth promoting on this hardware.

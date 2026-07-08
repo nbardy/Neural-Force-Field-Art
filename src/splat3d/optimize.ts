@@ -137,7 +137,8 @@ export class Splat3DOptimizer {
             batchTrainer.inputBuffer,
             batchTrainer.slotOffsetBytes(lane, batchTrainer.plan.inputSlot),
             batchTrainer.inputGradBuffer,
-            batchTrainer.inputGradOffsetBytes(lane)
+            batchTrainer.inputGradOffsetBytes(lane),
+            { privateState: true }
           )
         )
       : [];
@@ -212,7 +213,6 @@ export class Splat3DOptimizer {
         for (let lane = 0; lane < chunk.length; lane++) {
           const view = chunk[lane];
           const io = this.batchIO[lane];
-          timings.rasterReplay += await this.submitTimed((enc) => this.raster.recordForward(enc, view, io));
           timings.rasterBwd += await this.submitTimed((enc) => {
             this.raster.recordBackwardAdd(enc, view, io);
           });
@@ -293,7 +293,6 @@ export class Splat3DOptimizer {
       for (let lane = 0; lane < chunk.length; lane++) {
         const view = chunk[lane];
         const io = this.batchIO[lane];
-        this.raster.recordForward(enc, view, io);
         this.raster.recordBackwardAdd(enc, view, io);
       }
     }

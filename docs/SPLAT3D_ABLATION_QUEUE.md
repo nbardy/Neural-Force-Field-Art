@@ -205,6 +205,8 @@ Hypothesis: storing `derived`, bins, sorted IDs, and tile stops per active view
 lets us render several views, run batch CLIP once, and run matching backwards
 without re-rendering.
 
+Status: landed for batch CLIP lanes.
+
 Implementation notes:
 
 - Add state buffers shaped by `[batchLane, ...]`.
@@ -216,6 +218,45 @@ Promotion gate:
 
 - Matches conservative replay path.
 - B=3 optimizer step beats single path by a clear margin.
+
+Attempt 1 result:
+
+- Added optional private raster scratch state to `Raster3DIOState`.
+- Batch CLIP lanes now own private `derived`, `tileCounts`, `binnedIds`, and
+  `tileStop` buffers.
+- The optimizer renders selected views into batch CLIP lanes, runs batch CLIP,
+  and applies raster backward from the saved lane-local tile state. The replay
+  forward pass is gone for complete batch chunks.
+
+Commands run:
+
+```bash
+npx parcel build --no-scope-hoist --no-cache src/index.html src/splat.html src/splat3d.html
+CLIP_BATCH=1 VIEWS=3 RUNS=6 WARMUP=3 bun tools/splat3d/step_bench.ts
+CLIP_BATCH=3 VIEWS=3 RUNS=6 WARMUP=3 bun tools/splat3d/step_bench.ts
+CLIP_BATCH=1 VIEWS=9 RUNS=3 WARMUP=2 bun tools/splat3d/step_bench.ts
+CLIP_BATCH=3 VIEWS=9 RUNS=3 WARMUP=2 bun tools/splat3d/step_bench.ts
+CLIP_BATCH=9 VIEWS=9 RUNS=3 WARMUP=2 bun tools/splat3d/step_bench.ts
+```
+
+Observed sequential run:
+
+| Views | CLIP batch | Normal step avg | Profile total | Raster replay | Note |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 3/9 | 1 | 80.87 ms | 101.99 ms | 0.00 ms | single baseline |
+| 3/9 | 3 | 58.40 ms | 62.39 ms | 0.00 ms | clear win |
+| 9/9 | 1 | 195.65 ms | 215.00 ms | 0.00 ms | all-view baseline |
+| 9/9 | 3 | 167.23 ms | 176.97 ms | 0.00 ms | best all-view batch mode |
+| 9/9 | 9 | 235.48 ms | 295.60 ms | 0.00 ms | still worse than x3 |
+
+Interpretation:
+
+- Promote `batch CLIP x3` as the useful performance ablation for multi-view
+  training.
+- Keep `batch CLIP x9` as an experiment toggle only; on Apple `metal-3` it still
+  loses despite eliminating raster replay.
+- The next raster-side ablation should be camera-buffer / z-dispatch or
+  workgroup staging, not more replay cleanup.
 
 STAR UVT / world-tube read-through:
 
