@@ -335,3 +335,35 @@ x3. This suggests pass-boundary churn is not the useful raster target.
 
 Next raster work should move directly to the camera-buffer / view-lane dispatch
 design with lane-strided raster state and, eventually, lane-strided `accGrad`.
+
+## View-Lane Raster Forward Gate
+
+The exact camera-buffer / view-lane forward path has now been tested behind
+`VIEW_LANE_RASTER_FWD=1`. It moves camera constants into a compact storage
+buffer, dispatches `prep`, `emit`, and `forward` over `workgroup_id.z = lane`,
+and stores the resulting tile state in lane-strided scratch. Backward still uses
+the existing per-lane `recordBackwardAdd()` path through aligned buffer slices.
+
+Correctness passed exactly:
+
+```bash
+bun tools/splat3d/raster_batch_forward_test.ts
+```
+
+```text
+image diff: max=0.000e+0 mean=0.000e+0
+grad diff:  max=0.000e+0 mean=0.000e+0
+```
+
+It did not clear the promotion bar:
+
+| Views / Batch | Variant | Normal Median | Profile Median | Raster Median |
+| --- | --- | ---: | ---: | ---: |
+| `3/3` | default separate forward | `52.92 ms` | `55.90 ms` | `12.81 ms` |
+| `3/3` | `VIEW_LANE_RASTER_FWD=1` | `53.03 ms` | `57.23 ms` | `13.77 ms` |
+| `9/3` | default separate forward | `154.26 ms` | `161.91 ms` | `36.85 ms` |
+| `9/3` | `VIEW_LANE_RASTER_FWD=1` | `152.82 ms` | `163.51 ms` | `38.03 ms` |
+
+Decision: keep the gated path and parity tool, but do not enable it by default.
+The next raster attempt should target batched backward/lane-strided `accGrad` or
+overflow/workgroup-staging telemetry instead of forward scheduling alone.

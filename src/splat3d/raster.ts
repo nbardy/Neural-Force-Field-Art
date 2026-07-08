@@ -5,14 +5,18 @@ import {
   Raster3DDims,
   resolveDims3D,
   prepShader3D,
+  prepBatchShader3D,
   emitShader3D,
+  emitBatchShader3D,
   forwardShader3D,
+  forwardBatchShader3D,
   backwardShader3D,
   chainAddShader3D,
   clearShader3D,
   paramSegments3D,
   PARAM_STRIDE_3D,
   DERIVED_STRIDE_3D,
+  CAMERA_STRIDE_3D,
 } from "./raster_wgsl";
 
 const U = { MAP_READ: 1, COPY_SRC: 4, COPY_DST: 8, UNIFORM: 64, STORAGE: 128 };
@@ -39,14 +43,43 @@ export interface Raster3DIOOptions {
 }
 
 interface Raster3DScratchState {
-  derived: GPUBuffer;
-  tileCounts: GPUBuffer;
-  binnedIds: GPUBuffer;
-  tileStop: GPUBuffer;
+  derived: BufferBindingInput;
+  tileCounts: BufferBindingInput;
+  binnedIds: BufferBindingInput;
+  tileStop: BufferBindingInput;
   prepBind: GPUBindGroup[];
   chainBind: GPUBindGroup[];
   emitBind: GPUBindGroup;
   clearBinsBind: GPUBindGroup;
+}
+
+interface Raster3DRawScratchBuffers {
+  derived: GPUBuffer;
+  tileCounts: GPUBuffer;
+  binnedIds: GPUBuffer;
+  tileStop: GPUBuffer;
+}
+
+export interface Raster3DBatchForwardState {
+  lanes: number;
+  activeViews: GPUBuffer;
+  ios: Raster3DIOState[];
+  prepPipe: GPUComputePipeline;
+  clearBinsPipe: GPUComputePipeline;
+  emitPipe: GPUComputePipeline;
+  fwdPipe: GPUComputePipeline;
+  prepBind: GPUBindGroup;
+  clearBinsBind: GPUBindGroup;
+  emitBind: GPUBindGroup;
+  fwdBind: GPUBindGroup;
+}
+
+export interface Raster3DBatchForwardOptions {
+  lanes: number;
+  imageBuffer: GPUBuffer;
+  imageOffsets: number[];
+  gradBuffer: GPUBuffer;
+  gradOffsets: number[];
 }
 
 export interface AdamLRs3D {
@@ -101,6 +134,7 @@ export class Raster3DEngine {
   tileStop!: GPUBuffer;
   image!: GPUBuffer;
   gradImage!: GPUBuffer;
+  private cameraBuffer!: GPUBuffer;
 
   private prepBind: GPUBindGroup[] = [];
   private chainBind: GPUBindGroup[] = [];
@@ -157,6 +191,12 @@ export class Raster3DEngine {
     this.tileStop = this.storage(d.numTiles);
     this.image = this.storage(3 * d.H * d.W, U.COPY_SRC);
     this.gradImage = this.storage(3 * d.H * d.W, U.COPY_DST);
+    this.cameraBuffer = this.device.createBuffer({
+      label: "splat3d-cameras",
+      size: this.cameras.length * CAMERA_STRIDE_3D * 4,
+      usage: U.STORAGE | U.COPY_DST,
+    });
+    this.device.queue.writeBuffer(this.cameraBuffer, 0, serializeCameras3D(this.cameras) as unknown as BufferSource);
 
     this.prepPipe = await Promise.all(this.cameras.map((cam, i) => makeCompute(this.device, prepShader3D(cfg, cam), `prep-${i}`)));
     this.chainPipe = await Promise.all(
@@ -239,13 +279,65 @@ export class Raster3DEngine {
     this.checkIOBinding("image", imageOffset);
     this.checkIOBinding("grad", gradOffset);
     const scratch = opts.privateState ? this.createPrivateScratchState() : this.sharedScratchState();
+    return this.createIOStateForScratch(scratch, imageBuffer, imageOffset, gradBuffer, gradOffset);
+  }
+
+  async createBatchForwardState(opts: Raster3DBatchForwardOptions): Promise<Raster3DBatchForwardState> {
+    const d = this.dims;
+    const lanes = opts.lanes | 0;
+    if (lanes < 1 || lanes > this.cameras.length) {
+      throw new Error(`raster3d: invalid batch-forward lanes ${opts.lanes}`);
+    }
+    if (opts.imageOffsets.length !== lanes || opts.gradOffsets.length !== lanes) {
+      throw new Error("raster3d: batch-forward offsets must match lane count");
+    }
+    this.checkContiguousImageOffsets(opts.imageOffsets);
+    for (const off of opts.gradOffsets) this.checkIOBinding("batch grad", off);
+
+    const raw = this.createRawScratchBuffers(lanes);
+    const activeViews = this.device.createBuffer({
+      label: "splat3d-batch-active-views",
+      size: lanes * 4,
+      usage: U.STORAGE | U.COPY_DST,
+    });
+    this.extraBuffers.push(raw.derived, raw.tileCounts, raw.binnedIds, raw.tileStop, activeViews);
+
+    const prepPipe = await makeCompute(this.device, prepBatchShader3D(d), "prep-batch");
+    const clearBinsPipe = await makeCompute(this.device, clearShader3D(d.numTiles * lanes), "clearBins-batch");
+    const emitPipe = await makeCompute(this.device, emitBatchShader3D(d), "emit-batch");
+    const fwdPipe = await makeCompute(this.device, forwardBatchShader3D(d), "forward-batch");
+    const imageOffset = opts.imageOffsets[0];
+    const prepBind = this.bindGroup(prepPipe, [this.params, this.cameraBuffer, activeViews, raw.derived]);
+    const clearBinsBind = this.bindGroup(clearBinsPipe, [raw.tileCounts]);
+    const emitBind = this.bindGroup(emitPipe, [raw.derived, raw.tileCounts, raw.binnedIds]);
+    const fwdBind = this.bindGroup(fwdPipe, [
+      raw.tileCounts,
+      raw.binnedIds,
+      raw.derived,
+      { buffer: opts.imageBuffer, offset: imageOffset, size: this.imageByteSize() * lanes },
+      raw.tileStop,
+    ]);
+    const ios = Array.from({ length: lanes }, (_unused, lane) =>
+      this.createIOStateForScratch(
+        this.laneScratchState(raw, lane),
+        opts.imageBuffer,
+        opts.imageOffsets[lane],
+        opts.gradBuffer,
+        opts.gradOffsets[lane]
+      )
+    );
     return {
-      prepBind: scratch.prepBind,
-      chainBind: scratch.chainBind,
-      emitBind: scratch.emitBind,
-      clearBinsBind: scratch.clearBinsBind,
-      fwdBind: this.makeForwardBind(scratch, imageBuffer, imageOffset),
-      bwdBind: this.makeBackwardBind(scratch, gradBuffer, gradOffset),
+      lanes,
+      activeViews,
+      ios,
+      prepPipe,
+      clearBinsPipe,
+      emitPipe,
+      fwdPipe,
+      prepBind,
+      clearBinsBind,
+      emitBind,
+      fwdBind,
     };
   }
 
@@ -271,6 +363,30 @@ export class Raster3DEngine {
     for (let i = 0; i < views.length; i++) {
       this.encodeForwardPass(p, views[i], ios[i]);
     }
+    p.end();
+  }
+
+  recordBatchForward(enc: GPUCommandEncoder, state: Raster3DBatchForwardState, views: number[]): void {
+    if (views.length < 1 || views.length > state.lanes) {
+      throw new Error(`raster3d: ${views.length} batch-forward views for ${state.lanes} lanes`);
+    }
+    const active = new Uint32Array(state.lanes);
+    for (let lane = 0; lane < views.length; lane++) active[lane] = this.viewIndex(views[lane]);
+    this.device.queue.writeBuffer(state.activeViews, 0, active as unknown as BufferSource);
+    const d = this.dims;
+    const p = enc.beginComputePass();
+    p.setPipeline(state.prepPipe);
+    p.setBindGroup(0, state.prepBind);
+    p.dispatchWorkgroups(ceil(d.G), 1, views.length);
+    p.setPipeline(state.clearBinsPipe);
+    p.setBindGroup(0, state.clearBinsBind);
+    p.dispatchWorkgroups(ceil(d.numTiles * views.length));
+    p.setPipeline(state.emitPipe);
+    p.setBindGroup(0, state.emitBind);
+    p.dispatchWorkgroups(ceil(d.G), 1, views.length);
+    p.setPipeline(state.fwdPipe);
+    p.setBindGroup(0, state.fwdBind);
+    p.dispatchWorkgroups(d.numTiles, 1, views.length);
     p.end();
   }
 
@@ -365,6 +481,7 @@ export class Raster3DEngine {
       this.tileStop,
       this.image,
       this.gradImage,
+      this.cameraBuffer,
       ...this.extraBuffers,
       ...this.adamUni,
     ]) {
@@ -396,11 +513,7 @@ export class Raster3DEngine {
   }
 
   private createPrivateScratchState(): Raster3DScratchState {
-    const d = this.dims;
-    const derived = this.storage(d.G * DERIVED_STRIDE_3D);
-    const tileCounts = this.storage(d.numTiles);
-    const binnedIds = this.storage(d.numTiles * d.cap);
-    const tileStop = this.storage(d.numTiles);
+    const { derived, tileCounts, binnedIds, tileStop } = this.createRawScratchBuffers(1);
     this.extraBuffers.push(derived, tileCounts, binnedIds, tileStop);
     return {
       derived,
@@ -411,6 +524,54 @@ export class Raster3DEngine {
       chainBind: this.chainPipe.map((pipe) => this.bindGroup(pipe, [this.accGrad, derived, this.params, this.gradRaw])),
       emitBind: this.bindGroup(this.emitPipe, [derived, tileCounts, binnedIds]),
       clearBinsBind: this.bindGroup(this.clearBinsPipe, [tileCounts]),
+    };
+  }
+
+  private createRawScratchBuffers(lanes: number): Raster3DRawScratchBuffers {
+    const d = this.dims;
+    return {
+      derived: this.storage(d.G * DERIVED_STRIDE_3D * lanes),
+      tileCounts: this.storage(d.numTiles * lanes),
+      binnedIds: this.storage(d.numTiles * d.cap * lanes),
+      tileStop: this.storage(d.numTiles * lanes),
+    };
+  }
+
+  private laneScratchState(raw: Raster3DRawScratchBuffers, lane: number): Raster3DScratchState {
+    const d = this.dims;
+    const derivedBytes = d.G * DERIVED_STRIDE_3D * 4;
+    const tileBytes = d.numTiles * 4;
+    const binnedBytes = d.numTiles * d.cap * 4;
+    const derived = this.sliceBinding(raw.derived, lane * derivedBytes, derivedBytes);
+    const tileCounts = this.sliceBinding(raw.tileCounts, lane * tileBytes, tileBytes);
+    const binnedIds = this.sliceBinding(raw.binnedIds, lane * binnedBytes, binnedBytes);
+    const tileStop = this.sliceBinding(raw.tileStop, lane * tileBytes, tileBytes);
+    return {
+      derived,
+      tileCounts,
+      binnedIds,
+      tileStop,
+      prepBind: this.prepPipe.map((pipe) => this.bindGroup(pipe, [this.params, derived])),
+      chainBind: this.chainPipe.map((pipe) => this.bindGroup(pipe, [this.accGrad, derived, this.params, this.gradRaw])),
+      emitBind: this.bindGroup(this.emitPipe, [derived, tileCounts, binnedIds]),
+      clearBinsBind: this.bindGroup(this.clearBinsPipe, [tileCounts]),
+    };
+  }
+
+  private createIOStateForScratch(
+    scratch: Raster3DScratchState,
+    imageBuffer: GPUBuffer,
+    imageOffset: number,
+    gradBuffer: GPUBuffer,
+    gradOffset: number
+  ): Raster3DIOState {
+    return {
+      prepBind: scratch.prepBind,
+      chainBind: scratch.chainBind,
+      emitBind: scratch.emitBind,
+      clearBinsBind: scratch.clearBinsBind,
+      fwdBind: this.makeForwardBind(scratch, imageBuffer, imageOffset),
+      bwdBind: this.makeBackwardBind(scratch, gradBuffer, gradOffset),
     };
   }
 
@@ -440,4 +601,42 @@ export class Raster3DEngine {
       throw new Error(`raster3d: ${name} offset ${offset} must be ${STORAGE_OFFSET_ALIGN}-byte aligned`);
     }
   }
+
+  private checkContiguousImageOffsets(offsets: number[]): void {
+    if (!offsets.length) throw new Error("raster3d: empty image offsets");
+    const stride = this.imageByteSize();
+    for (let i = 0; i < offsets.length; i++) {
+      this.checkIOBinding("batch image", offsets[i]);
+      if (offsets[i] !== offsets[0] + i * stride) {
+        throw new Error(`raster3d: batch image offsets must be contiguous image lanes`);
+      }
+    }
+  }
+
+  private sliceBinding(buffer: GPUBuffer, offset: number, size: number): BufferBindingInput {
+    this.checkIOBinding("scratch", offset);
+    return { buffer, offset, size };
+  }
+}
+
+function serializeCameras3D(cameras: PreparedCamera3D[]): Float32Array {
+  const data = new Float32Array(cameras.length * CAMERA_STRIDE_3D);
+  for (let i = 0; i < cameras.length; i++) {
+    const cam = cameras[i];
+    const o = i * CAMERA_STRIDE_3D;
+    data[o + 0] = cam.eye[0];
+    data[o + 1] = cam.eye[1];
+    data[o + 2] = cam.eye[2];
+    data[o + 3] = cam.right[0];
+    data[o + 4] = cam.right[1];
+    data[o + 5] = cam.right[2];
+    data[o + 6] = cam.cameraUp[0];
+    data[o + 7] = cam.cameraUp[1];
+    data[o + 8] = cam.cameraUp[2];
+    data[o + 9] = cam.forward[0];
+    data[o + 10] = cam.forward[1];
+    data[o + 11] = cam.forward[2];
+    data[o + 12] = cam.focalPx;
+  }
+  return data;
 }

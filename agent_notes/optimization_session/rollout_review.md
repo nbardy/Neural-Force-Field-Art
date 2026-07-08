@@ -70,6 +70,10 @@ commit-and-measure loop:
   promoted; reruns favored the existing separate-forward path, so the next
   raster work should jump to camera-buffer / view-lane dispatch instead of
   pass-boundary cleanup.
+- Camera-buffer / view-lane raster forward was implemented as an exact gate and
+  parity-tested, but not promoted. Forward scheduling alone did not improve the
+  full 3D step; the next raster attempt should target backward state or
+  telemetry, not another forward-only scheduler tweak.
 - STAR UVT/world-tube review clarified that exact multi-view raster batching is
   a scheduler problem first; sublinear camera-bundle rendering needs a different
   primitive.

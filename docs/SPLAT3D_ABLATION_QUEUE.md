@@ -346,6 +346,64 @@ Decision:
 - The next raster attempt should skip this shallow pass-level optimization and
   move to the camera-buffer / view-lane-dispatch design.
 
+Attempt 3 result: view-lane raster forward was implemented but not promoted.
+
+Hypothesis: moving camera constants into a storage buffer and dispatching
+forward raster work across `workgroup_id.z = view lane` would reduce baked-camera
+pipeline switching and bind churn for batch CLIP chunks.
+
+Implementation:
+
+- Added a compact camera buffer with one `16xf32` record per prepared camera.
+- Added batch-specific `prep`, `emit`, and `forward` WGSL kernels that index
+  lane-strided `derived`, `tileCounts`, `binnedIds`, `tileStop`, and image
+  lanes.
+- Added `Raster3DEngine.createBatchForwardState()` so the batched forward owns
+  one combined scratch allocation while backward can still bind each lane slice
+  through aligned storage offsets.
+- Added `Raster3DEngine.recordBatchForward()` and the
+  `VIEW_LANE_RASTER_FWD=1` / `viewlane` benchmark gate.
+- Added `tools/splat3d/raster_batch_forward_test.ts` to compare images and raw
+  gradients against the old separate per-view path.
+
+Correctness:
+
+```bash
+bun tools/splat3d/raster_batch_forward_test.ts
+```
+
+Result:
+
+```text
+image diff: max=0.000e+0 mean=0.000e+0
+grad diff:  max=0.000e+0 mean=0.000e+0
+GATE PASS
+```
+
+Performance:
+
+```bash
+TRIALS=3 CONFIGS=base=3:3,viewlane=3:3:viewlane RUNS=5 WARMUP=3 bun tools/splat3d/step_matrix.ts
+TRIALS=2 CONFIGS=base=9:3,viewlane=9:3:viewlane RUNS=3 WARMUP=2 bun tools/splat3d/step_matrix.ts
+```
+
+| Views | Path | Normal Step Median | Profile Median | CLIP Median | Raster Median |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 3 | separate-forward control | `52.92 ms` | `55.90 ms` | `41.07 ms` | `12.81 ms` |
+| 3 | view-lane forward | `53.03 ms` | `57.23 ms` | `40.99 ms` | `13.77 ms` |
+| 9 | separate-forward control | `154.26 ms` | `161.91 ms` | `122.32 ms` | `36.85 ms` |
+| 9 | view-lane forward | `152.82 ms` | `163.51 ms` | `122.48 ms` | `38.03 ms` |
+
+Decision:
+
+- Keep the exact view-lane forward path as a gated ablation and as groundwork
+  for a later true batched backward experiment.
+- Do not enable it by default. It was exact, but sampled raster/profile timing
+  was worse and normal-step wins were flat/noisy.
+- The next raster-side work should not keep shaving forward scheduling. If
+  raster remains worth attacking, move to lane-strided `accGrad`/batched
+  backward or overflow/workgroup-staging telemetry.
+
 ### 5. Shape-Gated Shared-W Pointwise
 
 Hypothesis: some pointwise CLIP layers can reuse a staged weight tile across

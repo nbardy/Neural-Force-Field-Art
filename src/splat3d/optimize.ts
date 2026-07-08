@@ -3,7 +3,13 @@ import { VisionTrainer, type TrainPlan } from "../clip/vision";
 import { BatchMajorVisionTrainer } from "../clip/vision_batch";
 import { type AdamHyper, DEFAULT_HYPER } from "../splat/adam_wgsl";
 import { DEFAULT_3D_CAMERAS, type Camera3D, type PreparedCamera3D, prepareCamera } from "./cameras";
-import { Raster3DEngine, type AdamLRs3D, DEFAULT_3D_LRS, type Raster3DIOState } from "./raster";
+import {
+  Raster3DEngine,
+  type AdamLRs3D,
+  DEFAULT_3D_LRS,
+  type Raster3DBatchForwardState,
+  type Raster3DIOState,
+} from "./raster";
 import { PARAM_STRIDE_3D } from "./raster_wgsl";
 
 const SIDE = 256;
@@ -32,6 +38,7 @@ export interface Splat3DOptimizerConfig {
   fusePointwiseGeluForward?: boolean;
   fuseGeluBwdIntoPw?: boolean;
   singlePassBatchRasterForward?: boolean;
+  viewLaneBatchRasterForward?: boolean;
 }
 
 export type Splat3DClipMode = "single" | "batch";
@@ -70,12 +77,14 @@ export class Splat3DOptimizer {
   readonly cameras: PreparedCamera3D[];
   readonly side = SIDE;
   readonly clipBatchSize: number;
+  readonly batchRasterForward: Raster3DBatchForwardState | null;
   private readonly textBuffers: GPUBuffer[];
   private readonly singleIO: Raster3DIOState;
   private readonly batchIO: Raster3DIOState[];
   private readonly lrs: AdamLRs3D;
   private readonly hyper: AdamHyper;
   private readonly singlePassBatchRasterForward: boolean;
+  private readonly viewLaneBatchRasterForward: boolean;
   private step_ = 0;
   private hasPrompts = false;
   private rngState = 1;
@@ -114,7 +123,21 @@ export class Splat3DOptimizer {
         : null;
     raster.setParams(cfg.initParams ?? randomSplats3D(G, cfg.seed ?? 1, cfg.init));
     raster.zeroAdamState();
-    return new Splat3DOptimizer(device, raster, trainer, batchTrainer, cameras, cfg);
+    const batchRasterForward =
+      batchTrainer && (cfg.viewLaneBatchRasterForward ?? false)
+        ? await raster.createBatchForwardState({
+            lanes: batchTrainer.batch,
+            imageBuffer: batchTrainer.inputBuffer,
+            imageOffsets: Array.from({ length: batchTrainer.batch }, (_unused, lane) =>
+              batchTrainer.slotOffsetBytes(lane, batchTrainer.plan.inputSlot)
+            ),
+            gradBuffer: batchTrainer.inputGradBuffer,
+            gradOffsets: Array.from({ length: batchTrainer.batch }, (_unused, lane) =>
+              batchTrainer.inputGradOffsetBytes(lane)
+            ),
+          })
+        : null;
+    return new Splat3DOptimizer(device, raster, trainer, batchTrainer, batchRasterForward, cameras, cfg);
   }
 
   private constructor(
@@ -122,6 +145,7 @@ export class Splat3DOptimizer {
     raster: Raster3DEngine,
     trainer: VisionTrainer,
     batchTrainer: BatchMajorVisionTrainer | null,
+    batchRasterForward: Raster3DBatchForwardState | null,
     cameras: PreparedCamera3D[],
     cfg: Splat3DOptimizerConfig
   ) {
@@ -129,11 +153,13 @@ export class Splat3DOptimizer {
     this.raster = raster;
     this.trainer = trainer;
     this.batchTrainer = batchTrainer;
+    this.batchRasterForward = batchRasterForward;
     this.cameras = cameras;
     this.clipBatchSize = batchTrainer?.batch ?? 1;
     this.lrs = cfg.lrs ?? DEFAULT_3D_LRS;
     this.hyper = cfg.hyper ?? DEFAULT_HYPER;
     this.singlePassBatchRasterForward = cfg.singlePassBatchRasterForward ?? false;
+    this.viewLaneBatchRasterForward = cfg.viewLaneBatchRasterForward ?? false;
     this.rngState = ((cfg.seed ?? 1) ^ 0x9e3779b9) >>> 0 || 1;
     this.textBuffers = cameras.map((_, i) =>
       device.createBuffer({
@@ -143,17 +169,19 @@ export class Splat3DOptimizer {
       })
     );
     this.singleIO = raster.createIOState(trainer.inputBuffer, 0, trainer.inputGradBuffer, 0);
-    this.batchIO = batchTrainer
-      ? Array.from({ length: batchTrainer.batch }, (_unused, lane) =>
-          raster.createIOState(
-            batchTrainer.inputBuffer,
-            batchTrainer.slotOffsetBytes(lane, batchTrainer.plan.inputSlot),
-            batchTrainer.inputGradBuffer,
-            batchTrainer.inputGradOffsetBytes(lane),
-            { privateState: true }
+    this.batchIO =
+      batchRasterForward?.ios ??
+      (batchTrainer
+        ? Array.from({ length: batchTrainer.batch }, (_unused, lane) =>
+            raster.createIOState(
+              batchTrainer.inputBuffer,
+              batchTrainer.slotOffsetBytes(lane, batchTrainer.plan.inputSlot),
+              batchTrainer.inputGradBuffer,
+              batchTrainer.inputGradOffsetBytes(lane),
+              { privateState: true }
+            )
           )
-        )
-      : [];
+        : []);
   }
 
   setViewPrompts(embeds: Float32Array[]): void {
@@ -325,6 +353,10 @@ export class Splat3DOptimizer {
     }
     if (this.singlePassBatchRasterForward && views.length > 1) {
       this.raster.recordForwards(enc, views, this.batchIO.slice(0, views.length));
+      return;
+    }
+    if (this.viewLaneBatchRasterForward && this.batchRasterForward && views.length > 1) {
+      this.raster.recordBatchForward(enc, this.batchRasterForward, views);
       return;
     }
     for (let lane = 0; lane < views.length; lane++) {

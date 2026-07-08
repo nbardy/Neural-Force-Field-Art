@@ -3,6 +3,7 @@ import type { PreparedCamera3D } from "./cameras";
 export const TILE = 16;
 export const PARAM_STRIDE_3D = 8;
 export const DERIVED_STRIDE_3D = 11;
+export const CAMERA_STRIDE_3D = 16;
 export const ALPHA_THRESHOLD = 1.0 / 255.0;
 export const MAX_ALPHA = 0.99;
 export const TRANSMITTANCE_CUTOFF = 1e-4;
@@ -90,6 +91,38 @@ const FOCAL_PX = ${fl(cam.focalPx)};
 `;
 }
 
+function cameraLoadBlock(): string {
+  return /* wgsl */ `
+fn cameraBase(view : u32) -> u32 {
+  return view * ${uu(CAMERA_STRIDE_3D)};
+}
+
+fn cameraEye(view : u32) -> vec3f {
+  let b = cameraBase(view);
+  return vec3f(cameras[b + 0u], cameras[b + 1u], cameras[b + 2u]);
+}
+
+fn cameraRight(view : u32) -> vec3f {
+  let b = cameraBase(view);
+  return vec3f(cameras[b + 3u], cameras[b + 4u], cameras[b + 5u]);
+}
+
+fn cameraUp(view : u32) -> vec3f {
+  let b = cameraBase(view);
+  return vec3f(cameras[b + 6u], cameras[b + 7u], cameras[b + 8u]);
+}
+
+fn cameraFwd(view : u32) -> vec3f {
+  let b = cameraBase(view);
+  return vec3f(cameras[b + 9u], cameras[b + 10u], cameras[b + 11u]);
+}
+
+fn cameraFocalPx(view : u32) -> f32 {
+  return cameras[cameraBase(view) + 12u];
+}
+`;
+}
+
 export function prepShader3D(cfg: Raster3DConfig, cam: PreparedCamera3D): string {
   const d = resolveDims3D(cfg);
   const s = seg(d);
@@ -121,6 +154,62 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let sy = ${fl(d.H * 0.5)} - FOCAL_PX * (vy / safeZ);
 
   let base = g * ${uu(DERIVED_STRIDE_3D)};
+  derived[base + 0u] = sx;
+  derived[base + 1u] = sy;
+  derived[base + 2u] = invR2;
+  derived[base + 3u] = vz;
+  derived[base + 4u] = vx;
+  derived[base + 5u] = vy;
+  derived[base + 6u] = safeZ;
+  derived[base + 7u] = sigmoid1(params[${uu(s.colorRaw)} + g * 3u + 0u]);
+  derived[base + 8u] = sigmoid1(params[${uu(s.colorRaw)} + g * 3u + 1u]);
+  derived[base + 9u] = sigmoid1(params[${uu(s.colorRaw)} + g * 3u + 2u]);
+  derived[base + 10u] = sigmoid1(params[${uu(s.opacityRaw)} + g]);
+}
+`;
+}
+
+export function prepBatchShader3D(cfg: Raster3DConfig): string {
+  const d = resolveDims3D(cfg);
+  const s = seg(d);
+  return /* wgsl */ `
+${SIGMOID}
+@group(0) @binding(0) var<storage, read>       params      : array<f32>;
+@group(0) @binding(1) var<storage, read>       cameras     : array<f32>;
+@group(0) @binding(2) var<storage, read>       activeViews : array<u32>;
+@group(0) @binding(3) var<storage, read_write> derived     : array<f32>;
+
+${cameraLoadBlock()}
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid : vec3u) {
+  let g = gid.x;
+  let lane = gid.z;
+  if (g >= ${uu(d.G)}) { return; }
+  let view = activeViews[lane];
+  let eye = cameraEye(view);
+  let right = cameraRight(view);
+  let up = cameraUp(view);
+  let fwd = cameraFwd(view);
+  let focalPx = cameraFocalPx(view);
+
+  let p = vec3f(
+    params[${uu(s.position)} + g * 3u + 0u],
+    params[${uu(s.position)} + g * 3u + 1u],
+    params[${uu(s.position)} + g * 3u + 2u]
+  );
+  let w = p - eye;
+  let vx = dot(w, right);
+  let vy = dot(w, up);
+  let vz = dot(w, fwd);
+  let safeZ = max(vz, ${fl(d.near)});
+  let radiusWorld = clamp(exp(params[${uu(s.logRadius)} + g]), ${fl(RADIUS_MIN)}, ${fl(RADIUS_MAX)});
+  let radiusPx = max(focalPx * radiusWorld / safeZ, 0.25);
+  let invR2 = 1.0 / max(radiusPx * radiusPx, ${fl(EPS)});
+  let sx = ${fl(d.W * 0.5)} + focalPx * (vx / safeZ);
+  let sy = ${fl(d.H * 0.5)} - focalPx * (vy / safeZ);
+
+  let base = lane * ${uu(d.G * DERIVED_STRIDE_3D)} + g * ${uu(DERIVED_STRIDE_3D)};
   derived[base + 0u] = sx;
   derived[base + 1u] = sy;
   derived[base + 2u] = invR2;
@@ -173,6 +262,52 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       let tile = u32(ty * ${d.tilesX} + tx);
       let slot = atomicAdd(&tileCounts[tile], 1u);
       if (slot < ${uu(d.cap)}) { binnedIds[tile * ${uu(d.cap)} + slot] = g; }
+    }
+  }
+}
+`;
+}
+
+export function emitBatchShader3D(cfg: Raster3DConfig): string {
+  const d = resolveDims3D(cfg);
+  return /* wgsl */ `
+@group(0) @binding(0) var<storage, read>       derived    : array<f32>;
+@group(0) @binding(1) var<storage, read_write> tileCounts : array<atomic<u32>>;
+@group(0) @binding(2) var<storage, read_write> binnedIds  : array<u32>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid : vec3u) {
+  let g = gid.x;
+  let lane = gid.z;
+  if (g >= ${uu(d.G)}) { return; }
+  let derivedBase = lane * ${uu(d.G * DERIVED_STRIDE_3D)} + g * ${uu(DERIVED_STRIDE_3D)};
+  let depth = derived[derivedBase + 3u];
+  if (depth <= ${fl(d.near)} || depth >= ${fl(d.far)}) { return; }
+  let op = derived[derivedBase + 10u];
+  if (op <= ${fl(ALPHA_THRESHOLD)}) { return; }
+  let ratio = max(${fl(ALPHA_THRESHOLD)} / max(op, ${fl(EPS)}), ${fl(EPS)});
+  let tau = -2.0 * log(ratio);
+  if (!(tau > 0.0)) { return; }
+
+  let sx = derived[derivedBase + 0u];
+  let sy = derived[derivedBase + 1u];
+  let invR2 = max(derived[derivedBase + 2u], ${fl(EPS)});
+  let radius = sqrt(tau / invR2);
+  let x0 = max(0, i32(floor(sx - radius - 0.5)));
+  let x1 = min(${d.W - 1}, i32(ceil(sx + radius - 0.5)));
+  let y0 = max(0, i32(floor(sy - radius - 0.5)));
+  let y1 = min(${d.H - 1}, i32(ceil(sy + radius - 0.5)));
+  if (x0 > x1 || y0 > y1) { return; }
+
+  let tileCountsBase = lane * ${uu(d.numTiles)};
+  let binnedBase = lane * ${uu(d.numTiles * d.cap)};
+  let tx0 = x0 / ${TILE}; let tx1 = x1 / ${TILE};
+  let ty0 = y0 / ${TILE}; let ty1 = y1 / ${TILE};
+  for (var ty = ty0; ty <= ty1; ty = ty + 1) {
+    for (var tx = tx0; tx <= tx1; tx = tx + 1) {
+      let tile = u32(ty * ${d.tilesX} + tx);
+      let slot = atomicAdd(&tileCounts[tileCountsBase + tile], 1u);
+      if (slot < ${uu(d.cap)}) { binnedIds[binnedBase + tile * ${uu(d.cap)} + slot] = g; }
     }
   }
 }
@@ -284,6 +419,125 @@ fn main(@builtin(workgroup_id) wg : vec3u,
   atomicMax(&sh_maxstop, localStop);
   workgroupBarrier();
   if (tid == 0u) { tileStop[tileId] = atomicLoad(&sh_maxstop); }
+}
+`;
+}
+
+export function forwardBatchShader3D(cfg: Raster3DConfig): string {
+  const d = resolveDims3D(cfg);
+  const HW = d.H * d.W;
+  const IMG = 3 * HW;
+  return /* wgsl */ `
+@group(0) @binding(0) var<storage, read>       tileCounts : array<u32>;
+@group(0) @binding(1) var<storage, read_write> binnedIds  : array<u32>;
+@group(0) @binding(2) var<storage, read>       derived    : array<f32>;
+@group(0) @binding(3) var<storage, read_write> image      : array<f32>;
+@group(0) @binding(4) var<storage, read_write> tileStop   : array<u32>;
+
+var<workgroup> sh_ids     : array<u32, ${d.cap}>;
+var<workgroup> sh_maxstop : atomic<u32>;
+
+fn nextPow2(x : u32) -> u32 {
+  var v = max(x, 1u); v = v - 1u;
+  v |= v >> 1u; v |= v >> 2u; v |= v >> 4u; v |= v >> 8u; v |= v >> 16u;
+  return v + 1u;
+}
+
+fn derivedBase(lane : u32, g : u32) -> u32 {
+  return lane * ${uu(d.G * DERIVED_STRIDE_3D)} + g * ${uu(DERIVED_STRIDE_3D)};
+}
+
+fn idGreater(lane : u32, a : u32, b : u32) -> bool {
+  if (a == 0xffffffffu) { return b != 0xffffffffu; }
+  if (b == 0xffffffffu) { return false; }
+  let za = derived[derivedBase(lane, a) + 3u];
+  let zb = derived[derivedBase(lane, b) + 3u];
+  if (za == zb) { return a > b; }
+  return za > zb;
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wg : vec3u,
+        @builtin(local_invocation_index) tid : u32) {
+  let tileId = wg.x;
+  let lane = wg.z;
+  if (tileId >= ${uu(d.numTiles)}) { return; }
+  let tileCountsBase = lane * ${uu(d.numTiles)};
+  let binnedBase = lane * ${uu(d.numTiles * d.cap)};
+  let tileStopBase = lane * ${uu(d.numTiles)};
+  let imageBase = lane * ${uu(IMG)};
+  let count = min(tileCounts[tileCountsBase + tileId], ${uu(d.cap)});
+  let start = binnedBase + tileId * ${uu(d.cap)};
+  let sortN = nextPow2(count);
+
+  for (var i = tid; i < sortN; i = i + 256u) {
+    sh_ids[i] = select(0xffffffffu, binnedIds[start + i], i < count);
+  }
+  if (tid == 0u) { atomicStore(&sh_maxstop, 0u); }
+  workgroupBarrier();
+
+  var k = 2u;
+  loop {
+    if (k > sortN) { break; }
+    var j = k >> 1u;
+    loop {
+      if (j == 0u) { break; }
+      let nPairs = sortN >> 1u;
+      for (var pair = tid; pair < nPairs; pair = pair + 256u) {
+        let pos = 2u * j * (pair / j) + (pair % j);
+        let ixj = pos + j;
+        let asc = (pos & k) == 0u;
+        let va = sh_ids[pos];
+        let vb = sh_ids[ixj];
+        let swapAsc = idGreater(lane, va, vb);
+        let swapDesc = idGreater(lane, vb, va);
+        if ((asc && swapAsc) || (!asc && swapDesc)) { sh_ids[pos] = vb; sh_ids[ixj] = va; }
+      }
+      workgroupBarrier();
+      j = j >> 1u;
+    }
+    k = k << 1u;
+  }
+
+  for (var i = tid; i < count; i = i + 256u) { binnedIds[start + i] = sh_ids[i]; }
+  workgroupBarrier();
+
+  let tileX = tileId % ${uu(d.tilesX)};
+  let tileY = tileId / ${uu(d.tilesX)};
+  let x = tileX * ${TILE}u + (tid % ${TILE}u);
+  let y = tileY * ${TILE}u + (tid / ${TILE}u);
+  var localStop = 0u;
+  if (x < ${uu(d.W)} && y < ${uu(d.H)}) {
+    let pxc = f32(x) + 0.5;
+    let pyc = f32(y) + 0.5;
+    var accR = 0.0; var accG = 0.0; var accB = 0.0; var T = 1.0;
+    for (var i = 0u; i < count; i = i + 1u) {
+      let gg = sh_ids[i];
+      let b = derivedBase(lane, gg);
+      let dx = pxc - derived[b + 0u];
+      let dy = pyc - derived[b + 1u];
+      let invR2 = derived[b + 2u];
+      let power = -0.5 * invR2 * (dx * dx + dy * dy);
+      localStop = i + 1u;
+      if (power > 0.0) { continue; }
+      let raw = derived[b + 10u] * exp(power);
+      let alpha = min(${fl(MAX_ALPHA)}, raw);
+      if (alpha < ${fl(ALPHA_THRESHOLD)}) { continue; }
+      let w = T * alpha;
+      accR = accR + w * derived[b + 7u];
+      accG = accG + w * derived[b + 8u];
+      accB = accB + w * derived[b + 9u];
+      T = T * (1.0 - alpha);
+      if (T < ${fl(TRANSMITTANCE_CUTOFF)}) { break; }
+    }
+    let pix = y * ${uu(d.W)} + x;
+    image[imageBase + 0u * ${uu(HW)} + pix] = accR + T * ${fl(d.bg[0])};
+    image[imageBase + 1u * ${uu(HW)} + pix] = accG + T * ${fl(d.bg[1])};
+    image[imageBase + 2u * ${uu(HW)} + pix] = accB + T * ${fl(d.bg[2])};
+  }
+  atomicMax(&sh_maxstop, localStop);
+  workgroupBarrier();
+  if (tid == 0u) { tileStop[tileStopBase + tileId] = atomicLoad(&sh_maxstop); }
 }
 `;
 }
