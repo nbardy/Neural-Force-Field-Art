@@ -43,7 +43,7 @@ not just a better loop around the existing splat object.
 
 ## What Transfers Now
 
-1. Multi-lane raster state.
+1. Multi-lane raster state. Landed.
    The immediate WebGPU win is to make the current view replay unnecessary:
    store `derived`, `tileCounts`, `binnedIds`, and `tileStop` per active batch
    lane, render all selected views into CLIP batch lanes, run batch CLIP once,
@@ -95,13 +95,55 @@ not just a better loop around the existing splat object.
    sets: project views into local atlases or depth bands, then raster residual
    footprints. This is also a new object/render contract.
 
+## Static Multi-View Read
+
+For our fixed 9-camera CLIP loop, "static" helps scheduling but does not make
+the cameras equivalent. The underlying Gaussian parameters are shared, but each
+camera still has its own:
+
+- projected center and radius,
+- near/far visibility,
+- tile support,
+- per-tile depth order,
+- background/transmittance chain,
+- image gradient from CLIP.
+
+So the practical browser implementation is not a single cross-view sort or one
+shared raster footprint. It is a view-batched raster pass with lane-strided
+state:
+
+- `cameras[view]` in a storage/uniform buffer instead of baked shader constants;
+- `derived[view, splat]`, `tileCounts[view, tile]`,
+  `binnedIds[view, tile, slot]`, and `tileStop[view, tile]`;
+- prep/emit/forward/backward dispatches using `workgroup_id.z` for the active
+  camera lane;
+- chain/add reading the same camera buffer to map screen-space gradients back to
+  world-space splat params.
+
+That should reduce JS encode, submit, pipeline switching, and bind-group churn.
+It will not be a 9x-to-1x collapse because every view still needs its own
+projection, tile binning, sort, alpha compositing, and backward transmittance
+walk.
+
+## Different Splat Object?
+
+Not for the next optimization. A normal 3D splat can support view-lane batching
+by changing shader indexing and camera binding.
+
+Yes for the STAR-style sublinear idea. UVT/PRT gains come from changing the
+primitive from "a splat projected once per view" into "a projected tube/camera
+bundle with native support over an extra dimension." For the 9-view CLIP setup,
+that would mean a new representation such as a projective rational camera
+bundle or an atlas-residual splat. It also requires a new backward chain and new
+overflow/capacity rules, so it belongs after the simpler raster scheduler wins.
+
 ## Recommendation
 
-Do not rewrite the browser splat object yet. The next concrete ablation should
-be per-lane raster state plus view-dimension dispatch. It should answer the
-practical question: how much of the current batch-CLIP win is lost only because
-we replay raster forward before backward?
+Do not rewrite the browser splat object yet. Per-lane raster state has already
+removed the replayed forward pass for complete CLIP batches. The next concrete
+ablation is camera-buffer plus view-dimension dispatch, preserving one tile list
+per view lane.
 
-If per-lane state leaves raster as the bottleneck, then try camera-buffer
-multi-view dispatch and workgroup staging. Only after that should we prototype
-a STAR-inspired camera-bundle primitive.
+If that leaves raster as the bottleneck, then try workgroup staging and overflow
+telemetry. Only after those should we prototype a STAR-inspired camera-bundle
+primitive.

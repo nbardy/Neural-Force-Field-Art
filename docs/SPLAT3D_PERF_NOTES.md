@@ -212,3 +212,24 @@ TRIALS=2 CONFIGS=3:1,3:3 RUNS=4 WARMUP=2 bun tools/splat3d/step_matrix.ts
 First control run under a slow/noisy GPU state still showed the same-session
 direction: `3/9 batch x3` median normal step `143.66 ms` versus `194.68 ms` for
 `3/9 single CLIP`.
+
+## Multi-View Raster Batching Read
+
+STAR UVT/world tubes do not directly turn our 9 fixed CLIP cameras into one
+cheap raster. Their speed comes from a primitive whose support is native over
+ordered time in one camera gauge, or over a projective rational moving-camera
+gauge. Our 9 views have different projection maps, tile support, visibility,
+and depth order, so one shared cross-view tile sort would be wrong or too loose.
+
+The near-term raster path is still valuable:
+
+- move camera constants out of baked WGSL into a camera storage/uniform buffer;
+- make `derived`, `tileCounts`, `binnedIds`, and `tileStop` lane-strided;
+- dispatch prep/emit/forward/backward with `workgroup_id.z = view lane`;
+- keep one tile list and one depth order per camera lane.
+
+This should cut CPU/pass/pipeline overhead and bind churn, but it will not remove
+the per-view projection, binning, sort, compositing, or backward transmittance
+walk. A true STAR-style sublinear multi-camera primitive would be a separate
+representation project: projective rational camera bundles or atlas-residual
+splats with a new backward chain.
