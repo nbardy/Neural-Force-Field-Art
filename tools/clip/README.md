@@ -202,6 +202,57 @@ Tokenizer is `@huggingface/transformers` `AutoTokenizer` pinned to LOCAL files
   holds dL/dpixels after one `run({backward:true})`; wire it into the force-field
   trainer (train_wgsl.ts) / splat rasterizer as a guidance term.
 
+## Batch Experiments
+
+The first isolated batch harness lives in `src/clip/vision_batch.ts` and
+`tools/clip/batch_bench.ts`. It shares weights/pipelines across independent
+image lanes and compares separate, lane-major, and step-major schedules:
+
+```bash
+BATCH=3 MODE=backward bun tools/clip/batch_bench.ts
+BATCH=9 MODE=forward RUNS=10 WARMUP=3 bun tools/clip/batch_bench.ts
+```
+
+Current result: this replicated-activation batcher lowers CPU encode/submit
+cost, but does not improve GPU wall time. See
+`docs/CLIP_BATCHING_NOTES.md`; true sublinear batching needs a real batch
+dimension in the generated WGSL kernels.
+
+The first true batch-major forward fork lives in `src/clip/vision_batch_wgsl.ts`
+and `BatchMajorVisionEncoder`. It verifies each lane against the original
+single-image encoder and benchmarks `workgroups.z = batch`:
+
+```bash
+BATCH=9 RUNS=3 WARMUP=5 bun tools/clip/batch_major_forward_bench.ts
+PLAN=plan_train.json BATCH=9 RUNS=3 WARMUP=5 bun tools/clip/batch_major_forward_bench.ts
+```
+
+Forward parity is exact for tested B=2/3/9.
+
+The batch-major train fork verifies the optimizer-relevant gradient path:
+
+```bash
+BATCH=3 RUNS=2 WARMUP=3 bun tools/clip/batch_major_train_bench.ts
+BATCH=9 RUNS=2 WARMUP=2 bun tools/clip/batch_major_train_bench.ts
+```
+
+Gradient parity is exact for tested B=2/3/9. In the warmed train bench,
+B=3 was about 2x faster than repeated single-image forward+backward, and B=9
+was about 2.9x faster. Integration still needs the 3D rasterizer to render
+selected views into batched CLIP input lanes and route each lane's image
+gradient back through the matching camera view.
+
+The shared-weight pointwise microbench tests whether multiple image lanes can
+reuse one staged W tile inside the same workgroup:
+
+```bash
+BATCH=2 STEP_INDEX=57 RUNS=40 WARMUP=10 bun tools/clip/pointwise_batch_bench.ts
+BATCH=3 STEP_INDEX=8 RUNS=40 WARMUP=10 bun tools/clip/pointwise_batch_bench.ts
+```
+
+It verifies exactly, but results are shape-specific rather than universally
+faster. Use it selectively after profiling full CLIP pointwise steps.
+
 ## prompt→splats browser page (Task #7 phase 2)
 
 The end-to-end demo: type a prompt and a field of 2D Gaussian splats
