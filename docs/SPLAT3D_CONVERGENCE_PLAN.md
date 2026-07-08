@@ -375,3 +375,70 @@ This is still not Dream Fields parity. The next real quality gap is not another
 UI preset; it is differentiable image augmentation and a rendered alpha /
 transmittance coverage loss. The current alpha regularizer is per-splat opacity
 sparsity, which is weaker than a rendered occupancy/transmittance objective.
+
+## Dream Fields And Splat Regularizer Toggle Pack
+
+The Dream Fields ideas that directly fit this splat optimizer are:
+
+1. broad/random camera sampling;
+2. background augmentation instead of a fixed black/white background during the
+   whole optimization;
+3. rendered transmittance/coverage pressure;
+4. scene bounds around the object;
+5. CLIP image-space augmentation, still not implemented here.
+
+Existing toggles covered the first, second, and fourth items. The missing
+portable Dream Fields piece was rendered transmittance: the old `alphaReg`
+only penalized per-splat opacity, which does not directly constrain the final
+image coverage or transmittance. The browser now has a separate `coverageReg`
+toggle:
+
+- `coverage off`: no coverage uniform, old backward shader layout;
+- `coverage weak`: coverage target `0.18`, weight `8`;
+- `coverage med`: coverage target `0.24`, weight `24`.
+
+Coverage is applied inside raster backward as a rendered-alpha target:
+
+```text
+coverage = 1 - final_transmittance
+loss ~= mean((coverage - target)^2)
+```
+
+This fits splats because the raster backward pass already reconstructs final
+transmittance `T` per pixel before walking splats in reverse. When coverage is
+off, the raster compiles without the coverage uniform, so this is not a hot
+branch in the fast baseline.
+
+Splat-specific regularization now has its own `splatReg` toggle:
+
+- `splat reg off`: no scale/anti-alias regularizer;
+- `anti-tiny`: penalizes tiny high-opacity splats;
+- `scale band`: anti-tiny plus a weak world-radius band.
+
+This is the simplest Mip-Splatting / surface-splatting-inspired guard we can add
+without changing the representation. It is not full EWA/mip filtering, but it
+directly attacks the common CLIP failure where many tiny opaque dots become
+adversarial texture instead of object structure.
+
+`dream-ish` now defaults to:
+
+- `grid9_close2`;
+- `grid raster 80`;
+- `object grid` prompt;
+- random full-resolution closeups;
+- background curriculum;
+- weak alpha, bounds, coverage, and anti-tiny splat regularization;
+- zoomed-out framing.
+
+This makes `grid + 2 random` the default candidate. It is probably the best
+semantic signal per CLIP pass because all 9 views are visible to CLIP every
+step and two full-resolution views carry detail. It is still not proven best
+for geometry: the grid lane compresses each view to 80px, so full-view random
+batches can still beat it on some prompts. Treat `grid + 2 random` as the first
+quality default, not as a settled result.
+
+Prompt wording remains an ablation. `coarse` means broad suffixes like
+`front view`, `side view`, and `back view`; `camera` means the longer natural
+camera-angle descriptions. The evidence only says nine unrelated prompts can
+create semantic inconsistency. It does not prove `coarse` wins in this app.
+Use `same`, `coarse`, `camera`, and `object grid` as screenshot gates.

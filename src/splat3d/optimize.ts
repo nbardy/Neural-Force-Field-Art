@@ -10,6 +10,7 @@ import {
   type AdamLRs3D,
   DEFAULT_3D_LRS,
   type Raster3DBatchForwardState,
+  type Raster3DCoverageOptions,
   type Raster3DIOState,
   type Raster3DRegularizerOptions,
 } from "./raster";
@@ -69,6 +70,13 @@ export interface Splat3DConvergenceConfig {
   radiusWeight?: number;
   targetRadius?: number;
   opacitySparsity?: number;
+  coverageWeight?: number;
+  coverageTarget?: number;
+  smallRadiusWeight?: number;
+  smallRadius?: number;
+  radiusBandWeight?: number;
+  minRadius?: number;
+  maxRadius?: number;
 }
 
 export interface Splat3DProfileOptions {
@@ -155,6 +163,7 @@ export class Splat3DOptimizer {
       cap: cfg.cap ?? 2048,
       bg: cfg.bg ?? [0, 0, 0],
       dynamicBg: convergence.backgroundMode !== "black",
+      dynamicCoverage: convergence.coverageWeight !== 0,
       cameras,
     });
     const clipBatchSize = normalizeClipBatchSize(cfg.clipBatchSize);
@@ -307,6 +316,7 @@ export class Splat3DOptimizer {
   step(displayView = 0, viewsPerStep = this.cameras.length): void {
     if (!this.hasPrompts) throw new Error("splat3d: setViewPrompts() before step()");
     this.applyTrainingBackground();
+    this.applyCoverageRegularizer();
     const useCached = this.shouldUseCachedBatchStep(viewsPerStep);
     const views = useCached ? this.cachedBatchViews!.slice() : this.sampleViews(viewsPerStep);
     const enc = this.device.createCommandEncoder();
@@ -332,6 +342,7 @@ export class Splat3DOptimizer {
     if (!this.hasPrompts) throw new Error("splat3d: setViewPrompts() before profileStep()");
     await this.device.queue.onSubmittedWorkDone();
     this.applyTrainingBackground();
+    this.applyCoverageRegularizer();
     const useCached = this.shouldUseCachedBatchStep(viewsPerStep);
     const views = useCached ? this.cachedBatchViews!.slice() : this.sampleViews(viewsPerStep);
     const timer = opts.gpuTimestamps ? GpuPassTimer.create(this.device) : null;
@@ -498,6 +509,12 @@ export class Splat3DOptimizer {
 
   private grid9CloseupViews(gridViews: number[]): [number, number] {
     const n = gridViews.length;
+    if (this.viewSampler === "random") {
+      const a = Math.floor(hash01(this.step_, 101) * n) % n;
+      let b = Math.floor(hash01(this.step_, 211) * n) % n;
+      if (b === a) b = (b + 4) % n;
+      return [gridViews[a], gridViews[b]];
+    }
     const a = this.step_ % n;
     return [gridViews[a], gridViews[(a + 4) % n]];
   }
@@ -800,7 +817,9 @@ export class Splat3DOptimizer {
     return (
       this.convergence.centerWeight !== 0 ||
       this.convergence.radiusWeight !== 0 ||
-      this.convergence.opacitySparsity !== 0
+      this.convergence.opacitySparsity !== 0 ||
+      this.convergence.smallRadiusWeight !== 0 ||
+      this.convergence.radiusBandWeight !== 0
     );
   }
 
@@ -810,6 +829,18 @@ export class Splat3DOptimizer {
       radiusWeight: this.convergence.radiusWeight,
       targetRadius: this.convergence.targetRadius,
       opacitySparsity: this.convergence.opacitySparsity,
+      smallRadiusWeight: this.convergence.smallRadiusWeight,
+      smallRadius: this.convergence.smallRadius,
+      radiusBandWeight: this.convergence.radiusBandWeight,
+      minRadius: this.convergence.minRadius,
+      maxRadius: this.convergence.maxRadius,
+    };
+  }
+
+  private coverageOptions(): Raster3DCoverageOptions {
+    return {
+      weight: this.convergence.coverageWeight,
+      targetAlpha: this.convergence.coverageTarget,
     };
   }
 
@@ -819,6 +850,14 @@ export class Splat3DOptimizer {
 
   private applyDisplayBackground(): void {
     this.applyBackground([0, 0, 0]);
+  }
+
+  private applyCoverageRegularizer(): void {
+    const opts = this.coverageOptions();
+    this.raster.setCoverageRegularizer(opts);
+    if (this.gridClip && this.gridClip.raster !== this.raster) {
+      this.gridClip.raster.setCoverageRegularizer(opts);
+    }
   }
 
   private applyBackground(rgb: [number, number, number]): void {
@@ -943,6 +982,13 @@ function normalizeConvergenceConfig(cfg: Splat3DConvergenceConfig | undefined): 
     radiusWeight: finiteNonNegative(cfg?.radiusWeight, 0),
     targetRadius: finitePositive(cfg?.targetRadius, 1.15),
     opacitySparsity: finiteNonNegative(cfg?.opacitySparsity, 0),
+    coverageWeight: finiteNonNegative(cfg?.coverageWeight, 0),
+    coverageTarget: clamp01(cfg?.coverageTarget, 0.18),
+    smallRadiusWeight: finiteNonNegative(cfg?.smallRadiusWeight, 0),
+    smallRadius: finitePositive(cfg?.smallRadius, 0.022),
+    radiusBandWeight: finiteNonNegative(cfg?.radiusBandWeight, 0),
+    minRadius: finitePositive(cfg?.minRadius, 0.014),
+    maxRadius: finitePositive(cfg?.maxRadius, 0.18),
   };
 }
 
@@ -952,6 +998,10 @@ function finiteNonNegative(value: number | undefined, fallback: number): number 
 
 function finitePositive(value: number | undefined, fallback: number): number {
   return value !== undefined && Number.isFinite(value) ? Math.max(1e-4, value) : fallback;
+}
+
+function clamp01(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : fallback;
 }
 
 function scaleLrs3D(lrs: AdamLRs3D, scale: number): AdamLRs3D {

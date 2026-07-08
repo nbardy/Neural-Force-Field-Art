@@ -43,6 +43,8 @@ interface Status {
   backgroundMode: Splat3DBackgroundMode;
   alphaReg: "off" | "weak" | "medium";
   boundsReg: "off" | "weak" | "medium";
+  coverageReg: "off" | "weak" | "medium";
+  splatReg: "off" | "tiny" | "band";
   framingMode: CameraFramingMode;
   profiling: boolean;
   viewsPerStep: number;
@@ -69,13 +71,15 @@ const status: Status = {
   backgroundMode: "curriculum",
   alphaReg: "weak",
   boundsReg: "weak",
+  coverageReg: "weak",
+  splatReg: "tiny",
   framingMode: "zoom_out",
   profiling: false,
-  viewsPerStep: 5,
+  viewsPerStep: 9,
   viewSampler: "random",
   clipBatchSize: 3,
-  clipLayout: "per_view",
-  gridDirectRaster: false,
+  clipLayout: "grid9_close2",
+  gridDirectRaster: true,
 };
 (window as any).__splat3d = status;
 
@@ -88,6 +92,8 @@ const bgTextModeSelect = document.getElementById("bgTextMode") as HTMLSelectElem
 const backgroundModeSelect = document.getElementById("backgroundMode") as HTMLSelectElement;
 const alphaRegSelect = document.getElementById("alphaReg") as HTMLSelectElement;
 const boundsRegSelect = document.getElementById("boundsReg") as HTMLSelectElement;
+const coverageRegSelect = document.getElementById("coverageReg") as HTMLSelectElement;
+const splatRegSelect = document.getElementById("splatReg") as HTMLSelectElement;
 const framingModeSelect = document.getElementById("framingMode") as HTMLSelectElement;
 const viewBatchSelect = document.getElementById("viewBatch") as HTMLSelectElement;
 const viewSamplerSelect = document.getElementById("viewSampler") as HTMLSelectElement;
@@ -140,6 +146,8 @@ function renderReadout(): void {
   if (status.backgroundMode !== "black") parts.push(status.backgroundMode === "curriculum" ? "bg curriculum" : "dark random bg");
   if (status.alphaReg !== "off") parts.push(`alpha ${status.alphaReg}`);
   if (status.boundsReg !== "off") parts.push(`bounds ${status.boundsReg}`);
+  if (status.coverageReg !== "off") parts.push(`coverage ${status.coverageReg}`);
+  if (status.splatReg !== "off") parts.push(status.splatReg === "band" ? "scale band" : "anti-tiny");
   if (status.framingMode === "zoom_out") parts.push("zoom out");
   if (status.cos !== null) {
     const init = status.initialCos ?? status.cos;
@@ -273,6 +281,14 @@ function selectedBoundsReg(): Status["boundsReg"] {
   return boundsRegSelect.value === "medium" ? "medium" : boundsRegSelect.value === "weak" ? "weak" : "off";
 }
 
+function selectedCoverageReg(): Status["coverageReg"] {
+  return coverageRegSelect.value === "medium" ? "medium" : coverageRegSelect.value === "weak" ? "weak" : "off";
+}
+
+function selectedSplatReg(): Status["splatReg"] {
+  return splatRegSelect.value === "band" ? "band" : splatRegSelect.value === "tiny" ? "tiny" : "off";
+}
+
 function selectedFramingMode(): CameraFramingMode {
   return framingModeSelect.value === "zoom_out" ? "zoom_out" : "normal";
 }
@@ -280,12 +296,21 @@ function selectedFramingMode(): CameraFramingMode {
 function selectedConvergenceConfig(): Splat3DConvergenceConfig {
   const alphaReg = selectedAlphaReg();
   const boundsReg = selectedBoundsReg();
+  const coverageReg = selectedCoverageReg();
+  const splatReg = selectedSplatReg();
   return {
     backgroundMode: selectedBackgroundMode(),
     opacitySparsity: alphaReg === "medium" ? 0.03 : alphaReg === "weak" ? 0.01 : 0,
     centerWeight: boundsReg === "medium" ? 0.006 : boundsReg === "weak" ? 0.002 : 0,
     radiusWeight: boundsReg === "medium" ? 0.012 : boundsReg === "weak" ? 0.004 : 0,
     targetRadius: 1.15,
+    coverageWeight: coverageReg === "medium" ? 24 : coverageReg === "weak" ? 8 : 0,
+    coverageTarget: coverageReg === "medium" ? 0.24 : 0.18,
+    smallRadiusWeight: splatReg === "band" ? 0.035 : splatReg === "tiny" ? 0.02 : 0,
+    smallRadius: 0.024,
+    radiusBandWeight: splatReg === "band" ? 0.012 : 0,
+    minRadius: 0.016,
+    maxRadius: 0.16,
   };
 }
 
@@ -301,11 +326,15 @@ function applyQualityPresetToControls(preset: QualityPreset): void {
       backgroundModeSelect.value = "curriculum";
       alphaRegSelect.value = "weak";
       boundsRegSelect.value = "weak";
+      coverageRegSelect.value = "weak";
+      splatRegSelect.value = "tiny";
       framingModeSelect.value = "zoom_out";
-      viewBatchSelect.value = "5";
+      viewBatchSelect.value = "9";
       viewSamplerSelect.value = "random";
-      clipLayoutSelect.value = "per_view";
+      clipLayoutSelect.value = "grid9_close2";
       clipModeSelect.value = "3";
+      gridPromptModeSelect.value = "literal_v2";
+      gridRasterModeSelect.value = "direct80";
       return;
     }
     promptModeSelect.value = "camera";
@@ -313,6 +342,8 @@ function applyQualityPresetToControls(preset: QualityPreset): void {
     backgroundModeSelect.value = "black";
     alphaRegSelect.value = "off";
     boundsRegSelect.value = "off";
+    coverageRegSelect.value = "off";
+    splatRegSelect.value = "off";
     framingModeSelect.value = "normal";
     viewBatchSelect.value = "3";
     viewSamplerSelect.value = "epoch";
@@ -343,6 +374,8 @@ function syncConvergenceStatus(): void {
   status.backgroundMode = selectedBackgroundMode();
   status.alphaReg = selectedAlphaReg();
   status.boundsReg = selectedBoundsReg();
+  status.coverageReg = selectedCoverageReg();
+  status.splatReg = selectedSplatReg();
   status.framingMode = selectedFramingMode();
 }
 
@@ -365,6 +398,8 @@ function setControlsDisabled(disabled: boolean): void {
   backgroundModeSelect.disabled = disabled;
   alphaRegSelect.disabled = disabled;
   boundsRegSelect.disabled = disabled;
+  coverageRegSelect.disabled = disabled;
+  splatRegSelect.disabled = disabled;
   framingModeSelect.disabled = disabled;
   clipLayoutSelect.disabled = disabled;
   gridPromptModeSelect.disabled = disabled || !grid;
@@ -728,6 +763,8 @@ async function onConvergenceSettingsChange(): Promise<void> {
     backgroundModeSelect.value = status.backgroundMode;
     alphaRegSelect.value = status.alphaReg;
     boundsRegSelect.value = status.boundsReg;
+    coverageRegSelect.value = status.coverageReg;
+    splatRegSelect.value = status.splatReg;
     framingModeSelect.value = status.framingMode;
     return;
   }
@@ -944,6 +981,8 @@ bgTextModeSelect.addEventListener("change", onPromptModeChange);
 backgroundModeSelect.addEventListener("change", () => void onConvergenceSettingsChange());
 alphaRegSelect.addEventListener("change", () => void onConvergenceSettingsChange());
 boundsRegSelect.addEventListener("change", () => void onConvergenceSettingsChange());
+coverageRegSelect.addEventListener("change", () => void onConvergenceSettingsChange());
+splatRegSelect.addEventListener("change", () => void onConvergenceSettingsChange());
 framingModeSelect.addEventListener("change", () => void onConvergenceSettingsChange());
 viewBatchSelect.addEventListener("change", onViewBatchChange);
 viewSamplerSelect.addEventListener("change", () => void onClipSettingsChange());

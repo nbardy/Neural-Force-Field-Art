@@ -74,12 +74,22 @@ const BACKGROUND_MODE: Splat3DBackgroundMode =
     : "black";
 const ALPHA_REG = process.env.ALPHA_REG === "medium" ? "medium" : process.env.ALPHA_REG === "weak" ? "weak" : "off";
 const BOUNDS_REG = process.env.BOUNDS_REG === "medium" ? "medium" : process.env.BOUNDS_REG === "weak" ? "weak" : "off";
+const COVERAGE_REG =
+  process.env.COVERAGE_REG === "medium" ? "medium" : process.env.COVERAGE_REG === "weak" ? "weak" : "off";
+const SPLAT_REG = process.env.SPLAT_REG === "band" ? "band" : process.env.SPLAT_REG === "tiny" ? "tiny" : "off";
 const CONVERGENCE: Splat3DConvergenceConfig = {
   backgroundMode: BACKGROUND_MODE,
   opacitySparsity: ALPHA_REG === "medium" ? 0.03 : ALPHA_REG === "weak" ? 0.01 : 0,
   centerWeight: BOUNDS_REG === "medium" ? 0.006 : BOUNDS_REG === "weak" ? 0.002 : 0,
   radiusWeight: BOUNDS_REG === "medium" ? 0.012 : BOUNDS_REG === "weak" ? 0.004 : 0,
   targetRadius: 1.15,
+  coverageWeight: COVERAGE_REG === "medium" ? 24 : COVERAGE_REG === "weak" ? 8 : 0,
+  coverageTarget: COVERAGE_REG === "medium" ? 0.24 : 0.18,
+  smallRadiusWeight: SPLAT_REG === "band" ? 0.035 : SPLAT_REG === "tiny" ? 0.02 : 0,
+  smallRadius: 0.024,
+  radiusBandWeight: SPLAT_REG === "band" ? 0.012 : 0,
+  minRadius: 0.016,
+  maxRadius: 0.16,
 };
 const SHARED_W_FWD_STEPS = parseStepSet(process.env.SHARED_W_FWD_STEPS ?? "");
 const POINTWISE_TILE_VARIANT: PointwiseTileVariant =
@@ -205,6 +215,7 @@ console.log(
     `clipRefreshInterval=${CLIP_REFRESH_INTERVAL}, ` +
     `cachedLrScale=${CLIP_CACHED_LR_SCALE}, ` +
     `backgroundMode=${BACKGROUND_MODE}, alphaReg=${ALPHA_REG}, boundsReg=${BOUNDS_REG}, ` +
+    `coverageReg=${COVERAGE_REG}, splatReg=${SPLAT_REG}, ` +
     `timing=${useTimestamps ? "gpu-timestamp" : "split-submit-wall"}, ` +
     `compile+allocate=${(performance.now() - compileStart).toFixed(0)} ms`
 );

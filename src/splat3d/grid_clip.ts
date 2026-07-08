@@ -135,6 +135,7 @@ export class Grid9Close2ClipLayout {
           cap: raster.dims.cap,
           bg: raster.dims.bg,
           dynamicBg: raster.dims.dynamicBg,
+          dynamicCoverage: raster.dims.dynamicCoverage,
           near: raster.dims.near,
           far: raster.dims.far,
           gradScale: raster.dims.gradScale,

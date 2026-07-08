@@ -62,6 +62,8 @@
 	      #backgroundMode { max-width: 142px; }
 	      #alphaReg { max-width: 132px; }
 	      #boundsReg { max-width: 132px; }
+	      #coverageReg { max-width: 142px; }
+	      #splatReg { max-width: 142px; }
 	      #framingMode { max-width: 126px; }
       button:hover, select:hover { border-color: #89b4fa; }
       button:disabled, select:disabled { opacity: 0.5; cursor: default; }
@@ -124,6 +126,16 @@
           <option value="weak" selected>bounds weak</option>
           <option value="medium">bounds med</option>
         </select>
+        <select id="coverageReg">
+          <option value="off">coverage off</option>
+          <option value="weak" selected>coverage weak</option>
+          <option value="medium">coverage med</option>
+        </select>
+        <select id="splatReg">
+          <option value="off">splat reg off</option>
+          <option value="tiny" selected>anti-tiny</option>
+          <option value="band">scale band</option>
+        </select>
         <select id="framingMode">
           <option value="normal">normal cam</option>
           <option value="zoom_out" selected>zoom out</option>
@@ -132,8 +144,8 @@
           <option value="1">1/9 view</option>
           <option value="2">2/9 views</option>
           <option value="3">3/9 views</option>
-          <option value="5" selected>5/9 views</option>
-          <option value="9">9/9 views</option>
+          <option value="5">5/9 views</option>
+          <option value="9" selected>9/9 views</option>
         </select>
         <select id="viewSampler">
           <option value="epoch">epoch views</option>
@@ -146,18 +158,18 @@
 	          <option value="9">batch CLIP x9</option>
 	        </select>
 	        <select id="clipLayout">
-	          <option value="per_view" selected>per-view CLIP</option>
-	          <option value="grid9_close2">3x3 grid + 2</option>
+	          <option value="per_view">per-view CLIP</option>
+	          <option value="grid9_close2" selected>3x3 grid + 2</option>
 	        </select>
 	        <select id="gridPromptMode">
-	          <option value="contact_sheet" selected>grid prompt</option>
+	          <option value="contact_sheet">grid prompt</option>
 	          <option value="literal">literal grid</option>
-	          <option value="literal_v2">object grid</option>
+	          <option value="literal_v2" selected>object grid</option>
 	          <option value="same">same grid text</option>
 	        </select>
 	        <select id="gridRasterMode">
-	          <option value="scratch256" selected>grid raster 256</option>
-	          <option value="direct80">grid raster 80</option>
+	          <option value="scratch256">grid raster 256</option>
+	          <option value="direct80" selected>grid raster 80</option>
 	        </select>
 	        <button id="optimize">Optimize</button>
         <button id="reset">Reset</button>

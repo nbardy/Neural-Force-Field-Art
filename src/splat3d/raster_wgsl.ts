@@ -4,6 +4,7 @@ export const TILE = 16;
 export const PARAM_STRIDE_3D = 8;
 export const DERIVED_STRIDE_3D = 11;
 export const CAMERA_STRIDE_3D = 16;
+export const COVERAGE_UNIFORM_BYTES_3D = 16;
 export const ALPHA_THRESHOLD = 1.0 / 255.0;
 export const MAX_ALPHA = 0.99;
 export const TRANSMITTANCE_CUTOFF = 1e-4;
@@ -18,6 +19,7 @@ export interface Raster3DConfig {
   cap: number;
   bg?: [number, number, number];
   dynamicBg?: boolean;
+  dynamicCoverage?: boolean;
   near?: number;
   far?: number;
   gradScale?: number;
@@ -33,6 +35,7 @@ export interface Raster3DDims {
   numTiles: number;
   bg: [number, number, number];
   dynamicBg: boolean;
+  dynamicCoverage: boolean;
   near: number;
   far: number;
   gradScale: number;
@@ -67,6 +70,7 @@ export function resolveDims3D(cfg: Raster3DConfig): Raster3DDims {
     numTiles: (cfg.W / TILE) * (cfg.H / TILE),
     bg: cfg.bg ?? [0, 0, 0],
     dynamicBg: cfg.dynamicBg ?? false,
+    dynamicCoverage: cfg.dynamicCoverage ?? false,
     near: cfg.near ?? 0.2,
     far: cfg.far ?? 12,
     gradScale: cfg.gradScale ?? 65536,
@@ -94,9 +98,34 @@ struct BgU {
 `;
 }
 
+function coverageUniformDecl(binding: number): string {
+  return /* wgsl */ `
+struct CoverageU {
+  weight      : f32,
+  targetAlpha : f32,
+  _pad0       : f32,
+  _pad1       : f32,
+};
+@group(0) @binding(${binding}) var<uniform> coverageU : CoverageU;
+`;
+}
+
 function bgExpr(d: Raster3DDims, channel: 0 | 1 | 2): string {
   if (!d.dynamicBg) return fl(d.bg[channel]);
   return channel === 0 ? "bgU.rgb.x" : channel === 1 ? "bgU.rgb.y" : "bgU.rgb.z";
+}
+
+function coverageDecl(d: Raster3DDims): string {
+  if (!d.dynamicCoverage) return "";
+  return coverageUniformDecl(d.dynamicBg ? 7 : 6);
+}
+
+function coverageGradExpr(d: Raster3DDims, hw: number): string {
+  if (!d.dynamicCoverage) return "";
+  return /* wgsl */ `
+  let targetT = 1.0 - clamp(coverageU.targetAlpha, 0.0, 1.0);
+  gT = gT + coverageU.weight * ${fl(2 / hw)} * (T - targetT);
+`;
 }
 
 function cameraBlock(cam: PreparedCamera3D): string {
@@ -574,6 +603,7 @@ export function backwardShader3D(cfg: Raster3DConfig): string {
 @group(0) @binding(4) var<storage, read>       derived    : array<f32>;
 @group(0) @binding(5) var<storage, read_write> accGrad    : array<atomic<i32>>;
 ${d.dynamicBg ? bgUniformDecl(6) : ""}
+${coverageDecl(d)}
 
 var<workgroup> sh_ids : array<u32, ${d.cap}>;
 
@@ -621,6 +651,7 @@ fn main(@builtin(workgroup_id) wg : vec3u,
 
   var Tcur = T;
   var gT = goR * ${bgExpr(d, 0)} + goG * ${bgExpr(d, 1)} + goB * ${bgExpr(d, 2)};
+${coverageGradExpr(d, HW)}
   for (var ii = i32(endi) - 1; ii >= 0; ii = ii - 1) {
     let gg = sh_ids[u32(ii)];
     let b = gg * ${uu(DERIVED_STRIDE_3D)};
@@ -673,6 +704,7 @@ export function backwardBatchShader3D(cfg: Raster3DConfig): string {
 @group(0) @binding(4) var<storage, read>       derived    : array<f32>;
 @group(0) @binding(5) var<storage, read_write> accGrad    : array<atomic<i32>>;
 ${d.dynamicBg ? bgUniformDecl(6) : ""}
+${coverageDecl(d)}
 
 var<workgroup> sh_ids : array<u32, ${d.cap}>;
 
@@ -729,6 +761,7 @@ fn main(@builtin(workgroup_id) wg : vec3u,
 
   var Tcur = T;
   var gT = goR * ${bgExpr(d, 0)} + goG * ${bgExpr(d, 1)} + goB * ${bgExpr(d, 2)};
+${coverageGradExpr(d, HW)}
   for (var ii = i32(endi) - 1; ii >= 0; ii = ii - 1) {
     let gg = sh_ids[u32(ii)];
     let b = derivedBase(lane, gg);
@@ -834,7 +867,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 `;
 }
 
-export const REGULARIZER_UNIFORM_BYTES_3D = 32;
+export const REGULARIZER_UNIFORM_BYTES_3D = 64;
 
 export function regularizerShader3D(cfg: Raster3DConfig): string {
   const d = resolveDims3D(cfg);
@@ -846,10 +879,14 @@ struct RegU {
   radiusWeight   : f32,
   targetRadius   : f32,
   opacitySparsity: f32,
-  _pad0          : f32,
-  _pad1          : f32,
-  _pad2          : f32,
-  _pad3          : f32,
+  smallRadiusWeight : f32,
+  smallRadius       : f32,
+  radiusBandWeight  : f32,
+  minRadius         : f32,
+  maxRadius         : f32,
+  _pad0             : f32,
+  _pad1             : f32,
+  _pad2             : f32,
 };
 @group(0) @binding(0) var<uniform>             u       : RegU;
 @group(0) @binding(1) var<storage, read>       params  : array<f32>;
@@ -875,6 +912,21 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let opIdx = ${uu(s.opacityRaw)} + g;
   let op = sigmoid1(params[opIdx]);
   gradRaw[opIdx] = gradRaw[opIdx] + u.opacitySparsity * op * (1.0 - op);
+
+  let radiusIdx = ${uu(s.logRadius)} + g;
+  let logRadius = params[radiusIdx];
+  let radius = exp(logRadius);
+  let small = max(0.0, max(u.smallRadius, ${fl(EPS)}) - radius);
+  let smallLossGrad = u.smallRadiusWeight * small * small;
+  gradRaw[opIdx] = gradRaw[opIdx] + 2.0 * smallLossGrad * op * op * (1.0 - op);
+  gradRaw[radiusIdx] = gradRaw[radiusIdx] - 2.0 * u.smallRadiusWeight * op * op * small * radius;
+
+  let minR = max(u.minRadius, ${fl(EPS)});
+  let maxR = max(u.maxRadius, minR + ${fl(EPS)});
+  let under = max(0.0, minR - radius);
+  let over = max(0.0, radius - maxR);
+  let gRadius = u.radiusBandWeight * (-2.0 * under + 2.0 * over);
+  gradRaw[radiusIdx] = gradRaw[radiusIdx] + gRadius * radius;
 }
 `;
 }

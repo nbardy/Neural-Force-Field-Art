@@ -44,6 +44,8 @@ interface Config {
   backgroundMode: "black" | "dark_random" | "curriculum";
   alphaReg: "off" | "weak" | "medium";
   boundsReg: "off" | "weak" | "medium";
+  coverageReg: "off" | "weak" | "medium";
+  splatReg: "off" | "tiny" | "band";
   cap: number | null;
 }
 
@@ -149,6 +151,16 @@ function parseConfigs(src: string): Config[] {
         : tokens.includes("boundsweak")
           ? "weak"
           : "off";
+      const coverageReg = tokens.includes("coveragemed") || tokens.includes("coveragemedium")
+        ? "medium"
+        : tokens.includes("coverageweak")
+          ? "weak"
+          : "off";
+      const splatReg = tokens.includes("splatband") || tokens.includes("scaleband")
+        ? "band"
+        : tokens.includes("splattiny") || tokens.includes("antitiny")
+          ? "tiny"
+          : "off";
       const capToken = tokens.find((token) => /^cap\d+$/.test(token));
       const cap = capToken ? Number(capToken.slice(3)) : null;
       const suffix = tokens.length ? `:${tokens.join(":")}` : "";
@@ -174,6 +186,8 @@ function parseConfigs(src: string): Config[] {
         backgroundMode,
         alphaReg,
         boundsReg,
+        coverageReg,
+        splatReg,
         cap,
       };
     });
@@ -209,6 +223,10 @@ function configSpec(config: Config): string {
     config.alphaReg === "medium" ? "alphamed" : "",
     config.boundsReg === "weak" ? "boundsweak" : "",
     config.boundsReg === "medium" ? "boundsmed" : "",
+    config.coverageReg === "weak" ? "coverageweak" : "",
+    config.coverageReg === "medium" ? "coveragemed" : "",
+    config.splatReg === "tiny" ? "splattiny" : "",
+    config.splatReg === "band" ? "splatband" : "",
     config.cap !== null ? `cap${config.cap}` : "",
   ].filter(Boolean);
   return `${config.label}=${config.views}:${config.clipBatch}${tokens.length ? `:${tokens.join(":")}` : ""}`;
@@ -256,6 +274,8 @@ function runTrial(config: Config, trial: number): TrialResult {
     BACKGROUND_MODE: config.backgroundMode,
     ALPHA_REG: config.alphaReg,
     BOUNDS_REG: config.boundsReg,
+    COVERAGE_REG: config.coverageReg,
+    SPLAT_REG: config.splatReg,
     RUNS: String(RUNS),
     WARMUP: String(WARMUP),
     SEED: String(SEED),
@@ -356,6 +376,8 @@ for (let trial = 0; trial < TRIALS; trial++) {
         config.backgroundMode !== "black" ? `bg=${config.backgroundMode}` : "",
         config.alphaReg !== "off" ? `alpha=${config.alphaReg}` : "",
         config.boundsReg !== "off" ? `bounds=${config.boundsReg}` : "",
+        config.coverageReg !== "off" ? `coverage=${config.coverageReg}` : "",
+        config.splatReg !== "off" ? `splat=${config.splatReg}` : "",
         config.cap !== null ? `cap=${config.cap}` : "",
       ].filter(Boolean);
       console.log(
@@ -374,7 +396,7 @@ if (JSON_OUT) {
   console.log(JSON.stringify({ trials: TRIALS, runs: RUNS, warmup: WARMUP, seed: SEED, results }, null, 2));
 } else {
   console.log("\nSummary:");
-  console.log("config           views batch  layout sampler spbwd gridd      sw  pwrect  pwsteps cache     lr   cap gbwd rbwd rpass vlane  vbwd        bg  alpha bounds  normal med [min,max]     profile med     clip med   raster med      reg med");
+  console.log("config           views batch  layout sampler spbwd gridd      sw  pwrect  pwsteps cache     lr   cap gbwd rbwd rpass vlane  vbwd        bg  alpha bounds   cover   splat  normal med [min,max]     profile med     clip med   raster med      reg med");
   for (const config of CONFIGS) {
     const rows = results.filter((r) => r.label === config.label);
     const normal = rows.map((r) => r.normal);
@@ -402,6 +424,8 @@ if (JSON_OUT) {
         `${(config.backgroundMode === "dark_random" ? "dark" : config.backgroundMode === "curriculum" ? "curr" : "black").padStart(9)} ` +
         `${config.alphaReg.padStart(6)} ` +
         `${config.boundsReg.padStart(6)} ` +
+        `${config.coverageReg.padStart(7)} ` +
+        `${config.splatReg.padStart(7)} ` +
         `${fmt(median(normal))} [${min(normal).toFixed(2)},${max(normal).toFixed(2)}] ` +
         `${fmt(median(profile))} ${fmt(median(clip))} ${fmt(median(raster))} ${fmt(median(regularizer))}`
     );

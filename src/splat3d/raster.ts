@@ -19,6 +19,7 @@ import {
   PARAM_STRIDE_3D,
   DERIVED_STRIDE_3D,
   CAMERA_STRIDE_3D,
+  COVERAGE_UNIFORM_BYTES_3D,
   REGULARIZER_UNIFORM_BYTES_3D,
 } from "./raster_wgsl";
 
@@ -111,6 +112,16 @@ export interface Raster3DRegularizerOptions {
   radiusWeight: number;
   targetRadius: number;
   opacitySparsity: number;
+  smallRadiusWeight: number;
+  smallRadius: number;
+  radiusBandWeight: number;
+  minRadius: number;
+  maxRadius: number;
+}
+
+export interface Raster3DCoverageOptions {
+  weight: number;
+  targetAlpha: number;
 }
 
 export const DEFAULT_3D_LRS: AdamLRs3D = {
@@ -169,6 +180,7 @@ export class Raster3DEngine {
   gradImage!: GPUBuffer;
   private cameraBuffer!: GPUBuffer;
   private bgUni: GPUBuffer | null = null;
+  private coverageUni: GPUBuffer | null = null;
 
   private prepBind: GPUBindGroup[] = [];
   private chainBind: GPUBindGroup[] = [];
@@ -243,6 +255,14 @@ export class Raster3DEngine {
       });
       this.setBackground(d.bg);
     }
+    if (d.dynamicCoverage) {
+      this.coverageUni = this.device.createBuffer({
+        label: "splat3d-coverage",
+        size: COVERAGE_UNIFORM_BYTES_3D,
+        usage: U.UNIFORM | U.COPY_DST,
+      });
+      this.setCoverageRegularizer({ weight: 0, targetAlpha: 0.18 });
+    }
 
     this.prepPipe = await Promise.all(this.cameras.map((cam, i) => makeCompute(this.device, prepShader3D(cfg, cam), `prep-${i}`)));
     this.chainPipe = await Promise.all(
@@ -306,6 +326,12 @@ export class Raster3DEngine {
     if (!this.bgUni) return;
     const data = new Float32Array([rgb[0], rgb[1], rgb[2], 0]);
     this.device.queue.writeBuffer(this.bgUni, 0, data as unknown as BufferSource);
+  }
+
+  setCoverageRegularizer(opts: Raster3DCoverageOptions): void {
+    if (!this.coverageUni) return;
+    const data = new Float32Array([opts.weight, opts.targetAlpha, 0, 0]);
+    this.device.queue.writeBuffer(this.coverageUni, 0, data as unknown as BufferSource);
   }
 
   private async readFloats(buf: GPUBuffer, floats: number): Promise<Float32Array> {
@@ -392,6 +418,7 @@ export class Raster3DEngine {
       batchAccGrad,
     ];
     if (this.bgUni) bwdBindings.push(this.bgUni);
+    if (this.coverageUni) bwdBindings.push(this.coverageUni);
     const bwdBind = this.bindGroup(bwdPipe, bwdBindings);
     const ios = Array.from({ length: lanes }, (_unused, lane) =>
       this.createIOStateForScratch(
@@ -435,11 +462,16 @@ export class Raster3DEngine {
     timestampWrites?: PassTimestampWrites
   ): void {
     if (!regularizerEnabled(opts)) return;
-    const data = new Float32Array(8);
+    const data = new Float32Array(16);
     data[0] = opts.centerWeight;
     data[1] = opts.radiusWeight;
     data[2] = opts.targetRadius;
     data[3] = opts.opacitySparsity;
+    data[4] = opts.smallRadiusWeight;
+    data[5] = opts.smallRadius;
+    data[6] = opts.radiusBandWeight;
+    data[7] = opts.minRadius;
+    data[8] = opts.maxRadius;
     this.device.queue.writeBuffer(this.regularizerUni, 0, data as unknown as BufferSource);
     const p = beginComputePass(enc, timestampWrites);
     p.setPipeline(this.regularizerPipe);
@@ -621,6 +653,7 @@ export class Raster3DEngine {
       this.regularizerUni,
     ];
     if (this.bgUni) buffers.push(this.bgUni);
+    if (this.coverageUni) buffers.push(this.coverageUni);
     if (this.ownsParams) buffers.push(this.params);
     if (this.ownsGradRaw) buffers.push(this.gradRaw);
     for (const b of buffers) {
@@ -744,6 +777,7 @@ export class Raster3DEngine {
       scratch.accGrad,
     ];
     if (this.bgUni) bindings.push(this.bgUni);
+    if (this.coverageUni) bindings.push(this.coverageUni);
     return this.bindGroup(this.bwdPipe, bindings);
   }
 
@@ -771,7 +805,13 @@ export class Raster3DEngine {
 }
 
 function regularizerEnabled(opts: Raster3DRegularizerOptions): boolean {
-  return opts.centerWeight !== 0 || opts.radiusWeight !== 0 || opts.opacitySparsity !== 0;
+  return (
+    opts.centerWeight !== 0 ||
+    opts.radiusWeight !== 0 ||
+    opts.opacitySparsity !== 0 ||
+    opts.smallRadiusWeight !== 0 ||
+    opts.radiusBandWeight !== 0
+  );
 }
 
 function serializeCameras3D(cameras: PreparedCamera3D[]): Float32Array {

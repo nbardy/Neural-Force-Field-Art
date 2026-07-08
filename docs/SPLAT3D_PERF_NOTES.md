@@ -345,6 +345,35 @@ dynamic-background raster variant. The regularizer toggle is a separate GPU pass
 that is not recorded when disabled, so it should not block CLIP/raster shader
 fusion.
 
+## Dream Fields Toggle Smoke
+
+Added two more convergence toggles:
+
+- `coverageReg`: rendered coverage/transmittance target inside raster backward;
+- `splatReg`: anti-tiny-opacity and optional scale-band splat regularization.
+
+Coverage is compiled as a raster-backward variant. With `coverageReg=off`, the
+old backward bind layout is used. With coverage enabled, one uniform contributes
+a per-pixel `T` gradient before the reverse alpha-compositing walk.
+
+Smoke command:
+
+```bash
+G=128 TRIALS=1 RUNS=1 WARMUP=0 CONFIGS='fast=3:3,dream=9:3:grid9:directgrid:random:bgcurr:alphaweak:boundsweak:coverageweak:splattiny' bun tools/splat3d/step_matrix.ts
+```
+
+Result:
+
+| Config | Normal | Profile | Clip | Raster | Regularizer |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `fast` | `453.45 ms` | `184.79 ms` | `142.87 ms` | `18.62 ms` | `0.00 ms` |
+| `dream` | `381.60 ms` | `129.04 ms` | `103.29 ms` | `8.92 ms` | `1.08 ms` |
+
+This was a shader/binding smoke under a noisy GPU state, not a promotion-quality
+speed result. The important result is that `grid9 + random closeups +
+coverageweak + splattiny` compiles and runs, and the separate splat regularizer
+is visible as its own timing row.
+
 ## Default Grid80 Backward Stack
 
 The grid80 path now defaults to the measured exact backward stack when the
