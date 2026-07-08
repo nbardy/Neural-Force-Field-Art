@@ -361,6 +361,42 @@ The stem spatial backward is the clear single-kernel target. The next shader
 attempt should be a stem-specialized or horizontal-vectorized kernel, not a
 repeat of generic workgroup weight staging.
 
+## Iteration 5b - Stem Spatial Backward Specialization
+
+Implemented:
+
+- `spatial_bwd_stem4` in `src/clip/vision_bwd_wgsl.ts`
+- `stemSpatialBwd` in batch dispatch options
+- `STEM_SPATIAL_BWD` benchmark flag
+
+The variant is exact for the MobileCLIP stem backward:
+`k3s2 3<-64 g1 @256x256`. It computes four horizontal input pixels per thread
+and avoids the generic stride/parity tap loops. The 3D batch optimizer enables
+it by default; `STEM_SPATIAL_BWD=0` remains the negative-control path.
+
+Verification:
+
+```bash
+STEM_SPATIAL_BWD=1 BATCH=3 RUNS=1 WARMUP=1 bun tools/clip/batch_major_train_bench.ts
+bun tools/clip/bwd_test.ts
+TRIALS=2 RUNS=3 WARMUP=3 CONFIGS='base=;stem=stem' bun tools/clip/batch_major_train_matrix.ts
+```
+
+Results:
+
+| Measurement | Baseline | Stem |
+| --- | ---: | ---: |
+| B=3 CLIP train median | `87.69 ms` | `64.59 ms` |
+| B=3 stem dispatch median | `6.867 ms` | `1.195 ms` |
+| B=3 total `spatial_bwd` profile sum | `36.087 ms` | `30.799 ms` |
+
+Integrated 3D step matrix:
+
+| Variant | Normal Step Median | Profile Median | CLIP Median |
+| --- | ---: | ---: | ---: |
+| `STEM_SPATIAL_BWD=0` | `95.58 ms` | `116.12 ms` | `86.56 ms` |
+| default stem on | `72.72 ms` | `90.13 ms` | `65.30 ms` |
+
 ## Next Five Iterations
 
 1. **Production speed win:** add `views/step` N-of-K to the 3D page, default 3

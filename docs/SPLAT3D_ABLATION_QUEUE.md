@@ -464,6 +464,49 @@ Decision:
 - Any variant must pass `bun tools/clip/bwd_test.ts` and improve full
   `BATCH=3` batch-major train or integrated 3D step timing before promotion.
 
+Attempt 3 result: promoted for 3D batch optimizer.
+
+- Added `spatial_bwd_stem4`, a stem-only `k3s2 3<-64 @256x256` backward
+  specialization that writes four horizontal input pixels per thread.
+- Wired the variant through `stemSpatialBwd` batch dispatch options.
+- The 3D optimizer enables it by default for `BatchMajorVisionTrainer`; the
+  integrated bench can disable it with `STEM_SPATIAL_BWD=0`.
+
+Correctness:
+
+```bash
+STEM_SPATIAL_BWD=1 BATCH=3 RUNS=1 WARMUP=1 bun tools/clip/batch_major_train_bench.ts
+bun tools/clip/bwd_test.ts
+```
+
+- Full-model gradient parity versus the generic single-image trainer passed for
+  all B=3 lanes: `cos=1.000000`, `relLinf=0.00e+0`.
+- Default backward tests still passed.
+
+CLIP-only and dispatch profile:
+
+- Full-chain B=3 CLIP matrix: baseline median `87.69 ms`, stem median
+  `64.59 ms`.
+- B=3 `spatial_bwd` profile: stem label dropped from `6.867 ms` to `1.195 ms`;
+  total spatial backward sum dropped from `36.087 ms` to `30.799 ms`.
+
+Integrated 3D step matrix:
+
+```bash
+STEM_SPATIAL_BWD=0 TRIALS=2 CONFIGS=3:3 RUNS=5 WARMUP=3 bun tools/splat3d/step_matrix.ts
+TRIALS=2 CONFIGS=3:3 RUNS=5 WARMUP=3 bun tools/splat3d/step_matrix.ts
+```
+
+| Variant | Normal Step Median | Profile Median | CLIP Median | Raster Median |
+| --- | ---: | ---: | ---: | ---: |
+| stem off | `95.58 ms` | `116.12 ms` | `86.56 ms` | `26.60 ms` |
+| stem on | `72.72 ms` | `90.13 ms` | `65.30 ms` | `22.20 ms` |
+
+Decision:
+
+- Keep `stemSpatialBwd` enabled by default for the 3D batch optimizer.
+- Keep `STEM_SPATIAL_BWD=0` as the negative-control path for future benches.
+
 ### 7. F16 Weights With F32 Math
 
 Hypothesis: f16 weights reduce memory traffic and payload size without changing

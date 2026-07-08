@@ -31,6 +31,7 @@ const BATCH = Number(process.env.BATCH ?? 1);
 const RUNS = Number(process.env.RUNS ?? 3);
 const WARMUP = Number(process.env.WARMUP ?? 1);
 const CSV = process.env.CSV === "1";
+const STEM_SPATIAL_BWD = process.env.STEM_SPATIAL_BWD === "1";
 const PLAN_FILE =
   process.env.PLAN ?? (MODE === "forward" ? "plan.json" : "plan_train.json");
 const WEIGHTS_FILE = process.env.WEIGHTS ?? (PLAN_FILE.includes("train") ? "weights_train.bin" : "weights.bin");
@@ -107,7 +108,7 @@ if (BATCH > 1) {
     specs = batchForwardDispatches(plan as VisionPlan, BATCH);
     fwdCount = specs.length;
   } else {
-    const out = batchTrainDispatches(plan, BATCH);
+    const out = batchTrainDispatches(plan, BATCH, { stemSpatialBwd: STEM_SPATIAL_BWD });
     specs = out.specs;
     fwdCount = out.fwdCount;
   }
@@ -116,7 +117,7 @@ if (BATCH > 1) {
   fwdCount = specs.length;
 } else {
   const fwd = planDispatches(plan);
-  const bwd = planBwdDispatches(plan);
+  const bwd = planBwdDispatches(plan, { stemSpatialBwd: STEM_SPATIAL_BWD });
   specs = [...fwd, ...bwd];
   fwdCount = fwd.length;
 }
@@ -158,7 +159,8 @@ function resolve(ref: BufferRef): GPUBuffer {
 if (!CSV) {
   console.log(
     `dispatch profile: mode=${MODE}, plan=${PLAN_FILE}, batch=${BATCH}, ` +
-      `dispatches=${specs.length}, runs=${RUNS}, warmup=${WARMUP}`
+      `dispatches=${specs.length}, runs=${RUNS}, warmup=${WARMUP}` +
+      (STEM_SPATIAL_BWD ? `, stemSpatialBwd=1` : "")
   );
 }
 

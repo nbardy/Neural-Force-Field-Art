@@ -18,7 +18,7 @@ import {
   type DispatchSpec,
   type VisionPlan,
 } from "./vision_wgsl";
-import { planBwdDispatches, type TrainPlan } from "./vision_bwd_wgsl";
+import { planBwdDispatches, type BwdDispatchOptions, type TrainPlan } from "./vision_bwd_wgsl";
 import { pointwiseSharedWBatchForwardDispatch } from "./vision_batch_pointwise";
 
 interface BatchBinding {
@@ -27,7 +27,7 @@ interface BatchBinding {
   strideFloats: number;
 }
 
-export interface BatchDispatchOptions {
+export interface BatchDispatchOptions extends BwdDispatchOptions {
   sharedWForwardSteps?: ReadonlySet<number>;
 }
 
@@ -175,7 +175,7 @@ export function batchTrainDispatches(
   const fwd = opts.sharedWForwardSteps?.size
     ? forwardDispatches(plan, batch, opts)
     : planDispatches(plan).map((spec) => batchSpec(plan, spec, batch));
-  const bwd = planBwdDispatches(plan).map((spec) => batchSpec(plan, spec, batch));
+  const bwd = planBwdDispatches(plan, opts).map((spec) => batchSpec(plan, spec, batch));
   const all = [...fwd, ...bwd];
   return { specs: all, fwdCount: fwd.length };
 }

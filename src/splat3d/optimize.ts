@@ -28,6 +28,7 @@ export interface Splat3DOptimizerConfig {
   lrs?: AdamLRs3D;
   hyper?: AdamHyper;
   clipBatchSize?: number;
+  stemSpatialBwd?: boolean;
 }
 
 export type Splat3DClipMode = "single" | "batch";
@@ -100,7 +101,11 @@ export class Splat3DOptimizer {
     const trainer = await VisionTrainer.create(device, trainPlan, weights);
     const clipBatchSize = normalizeClipBatchSize(cfg.clipBatchSize);
     const batchTrainer =
-      clipBatchSize > 1 ? await BatchMajorVisionTrainer.create(device, trainPlan, weights, clipBatchSize) : null;
+      clipBatchSize > 1
+        ? await BatchMajorVisionTrainer.create(device, trainPlan, weights, clipBatchSize, {
+            stemSpatialBwd: cfg.stemSpatialBwd ?? true,
+          })
+        : null;
     raster.setParams(cfg.initParams ?? randomSplats3D(G, cfg.seed ?? 1, cfg.init));
     raster.zeroAdamState();
     return new Splat3DOptimizer(device, raster, trainer, batchTrainer, cameras, cfg);

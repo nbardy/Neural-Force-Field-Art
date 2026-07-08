@@ -233,3 +233,25 @@ the per-view projection, binning, sort, compositing, or backward transmittance
 walk. A true STAR-style sublinear multi-camera primitive would be a separate
 representation project: projective rational camera bundles or atlas-residual
 splats with a new backward chain.
+
+## Stem Spatial Backward Specialization
+
+The B=3 dispatch profile made the MobileCLIP stem backward the largest single
+CLIP kernel: `spatial_bwd k3s2 3<-64 g1 @256x256`. A stem-only
+`spatial_bwd_stem4` variant now computes four horizontal input pixels per
+thread and is enabled by default for the 3D batch optimizer.
+
+Same-session integrated matrix:
+
+```bash
+STEM_SPATIAL_BWD=0 TRIALS=2 CONFIGS=3:3 RUNS=5 WARMUP=3 bun tools/splat3d/step_matrix.ts
+TRIALS=2 CONFIGS=3:3 RUNS=5 WARMUP=3 bun tools/splat3d/step_matrix.ts
+```
+
+| Variant | Normal Step Median | Profile Median | CLIP Median |
+| --- | ---: | ---: | ---: |
+| stem off | `95.58 ms` | `116.12 ms` | `86.56 ms` |
+| stem on | `72.72 ms` | `90.13 ms` | `65.30 ms` |
+
+Use `STEM_SPATIAL_BWD=0` as the negative-control path when future CLIP changes
+need to compare against the pre-specialization baseline.

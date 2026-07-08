@@ -118,6 +118,10 @@ export interface TrainPlan extends VisionPlan {
   textDim: number;
 }
 
+export interface BwdDispatchOptions {
+  stemSpatialBwd?: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Shared fragments
 // ---------------------------------------------------------------------------
@@ -275,6 +279,82 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     label: `spatial_bwd k${s.k}s${s.stride} ${s.cin}<-${s.cout} g${s.groups} @${s.h}x${s.w}${s.accumulate ? " +=" : ""}`,
     code,
     workgroups: [Math.ceil(P / 64), s.cin, 1],
+    buffers: [{ kind: "weights" }, gradSlot(s.dY), gradSlot(s.dX)],
+  };
+}
+
+function isStemSpatialBwd(s: SpatialBwdStep): boolean {
+  return s.cin === 3 &&
+    s.cout === 64 &&
+    s.k === 3 &&
+    s.stride === 2 &&
+    s.pad === 1 &&
+    s.groups === 1 &&
+    s.h === 256 &&
+    s.w === 256 &&
+    s.outH === 128 &&
+    s.outW === 128 &&
+    !s.accumulate;
+}
+
+function spatialBwdStem4(s: SpatialBwdStep): DispatchSpec {
+  assertStep(isStemSpatialBwd(s), `${s.name}: stem spatial_bwd specialization received wrong shape`);
+  const P = s.h * s.w;
+  const Q = P / 4;
+  const outP = s.outH * s.outW;
+  const addKxs = (rowY: string, wbase: string): string => /* wgsl */ `
+      {
+        var d3 = 0.0;
+        if (oxBase + 2u < 128u) {
+          d3 = dy[${rowY} + oxBase + 2u];
+        }
+        acc = fma(vec4f(W(${wbase} + 0u)), vec4f(0.0, dy[${rowY} + oxBase + 1u], 0.0, d3), acc);
+        acc = fma(vec4f(W(${wbase} + 1u)), vec4f(dy[${rowY} + oxBase], 0.0, dy[${rowY} + oxBase + 1u], 0.0), acc);
+        acc = fma(vec4f(W(${wbase} + 2u)), vec4f(0.0, dy[${rowY} + oxBase], 0.0, dy[${rowY} + oxBase + 1u]), acc);
+      }`;
+  const code = /* wgsl */ `
+${weightsDecl(0)}
+@group(0) @binding(1) var<storage, read> dy : array<f32>;            // [64][128][128]
+@group(0) @binding(2) var<storage, read_write> dx : array<vec4f>;    // [3][256][64 vec4s]
+
+@compute @workgroup_size(64, 1)
+fn main(@builtin(global_invocation_id) gid : vec3u) {
+  let ci = gid.y;
+  let q = gid.x;
+  if (q >= ${Q}u) { return; }
+  let iy = q / 64u;
+  let ix0 = (q - iy * 64u) * 4u;
+  let oxBase = ix0 >> 1u;
+  var acc = vec4f(0.0);
+
+  if ((iy & 1u) == 0u) {
+    let oy = iy >> 1u;
+    for (var co = 0u; co < 64u; co = co + 1u) {
+      let rowY = co * ${outP}u + oy * 128u;
+      let wbase = ${s.wOff}u + co * 27u + ci * 9u + 3u; // ky = 1
+${addKxs("rowY", "wbase")}
+    }
+  } else {
+    for (var co = 0u; co < 64u; co = co + 1u) {
+      if (iy < 255u) {
+        let oy0 = (iy + 1u) >> 1u;
+        let rowY0 = co * ${outP}u + oy0 * 128u;
+        let wbase0 = ${s.wOff}u + co * 27u + ci * 9u; // ky = 0
+${addKxs("rowY0", "wbase0")}
+      }
+      let oy2 = (iy - 1u) >> 1u;
+      let rowY2 = co * ${outP}u + oy2 * 128u;
+      let wbase2 = ${s.wOff}u + co * 27u + ci * 9u + 6u; // ky = 2
+${addKxs("rowY2", "wbase2")}
+    }
+  }
+
+  dx[ci * ${Q}u + q] = acc;
+}`;
+  return {
+    label: `spatial_bwd_stem4 k3s2 3<-64 g1 @256x256`,
+    code,
+    workgroups: [Math.ceil(Q / 64), 3, 1],
     buffers: [{ kind: "weights" }, gradSlot(s.dY), gradSlot(s.dX)],
   };
 }
@@ -574,20 +654,20 @@ fn main(@builtin(local_invocation_index) tid : u32,
 // Thin dispatcher — backward kind → emitter (one clean handler each).
 // ---------------------------------------------------------------------------
 
-export function bwdStepDispatch(step: BwdStep): DispatchSpec {
+export function bwdStepDispatch(step: BwdStep, opts: BwdDispatchOptions = {}): DispatchSpec {
   switch (step.kind) {
     case "loss_bwd":      return lossBwd(step);
     case "head_bwd":      return headBwd(step);
     case "gelu_bwd":      return geluBwd(step);
     case "pw_bwd":        return pwBwd(step);
     case "residual_bwd":  return residualBwd(step);
-    case "spatial_bwd":   return spatialBwd(step);
+    case "spatial_bwd":   return opts.stemSpatialBwd && isStemSpatialBwd(step) ? spatialBwdStem4(step) : spatialBwd(step);
     case "se_bwd":        return seBwd(step);
     case "attn_core_bwd": return attnCoreBwd(step);
   }
 }
 
 /** All backward dispatches (loss head + reverse step list), in execution order. */
-export function planBwdDispatches(plan: TrainPlan): DispatchSpec[] {
-  return plan.backward.map(bwdStepDispatch);
+export function planBwdDispatches(plan: TrainPlan, opts: BwdDispatchOptions = {}): DispatchSpec[] {
+  return plan.backward.map((step) => bwdStepDispatch(step, opts));
 }
