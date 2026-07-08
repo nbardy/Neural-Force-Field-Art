@@ -21,7 +21,6 @@ import {
   planDispatches,
   type BufferRef,
   type DispatchSpec,
-  type WeightPrecision,
   type VisionPlan,
 } from "../../src/clip/vision_wgsl";
 import { planBwdDispatches, type TrainPlan } from "../../src/clip/vision_bwd_wgsl";
@@ -40,14 +39,9 @@ const FUSE_PW_GELU = process.env.FUSE_PW_GELU === "1";
 const FUSE_GELU_BWD_PW = process.env.FUSE_GELU_BWD_PW === "1";
 const FUSE_RESIDUAL_BWD_PW = process.env.FUSE_RESIDUAL_BWD_PW === "1";
 const TIMESTAMP = process.env.TIMESTAMP === "1";
-const PRECISION: WeightPrecision = process.env.PRECISION === "f16" ? "f16" : "f32";
 const PLAN_FILE =
   process.env.PLAN ?? (MODE === "forward" ? "plan.json" : "plan_train.json");
-const WEIGHTS_FILE =
-  process.env.WEIGHTS ??
-  (PLAN_FILE.includes("train")
-    ? PRECISION === "f16" ? "weights_train_f16.bin" : "weights_train.bin"
-    : PRECISION === "f16" ? "weights_f16.bin" : "weights.bin");
+const WEIGHTS_FILE = process.env.WEIGHTS ?? (PLAN_FILE.includes("train") ? "weights_train.bin" : "weights.bin");
 
 type PassTimestampWrites = {
   querySet: GPUQuerySet;
@@ -67,11 +61,6 @@ interface Row {
 function f32File(path: string): Float32Array {
   const b = readFileSync(path);
   return new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4).slice();
-}
-
-function f16File(path: string): Uint16Array {
-  const b = readFileSync(path);
-  return new Uint16Array(b.buffer, b.byteOffset, b.byteLength / 2).slice();
 }
 
 async function makePipeline(device: GPUDevice, spec: DispatchSpec): Promise<GPUComputePipeline> {
@@ -163,15 +152,8 @@ if (!adapter) {
   process.exit(1);
 }
 const timestampSupported = adapter.features.has("timestamp-query");
-const f16Supported = adapter.features.has("shader-f16");
-if (PRECISION === "f16" && !f16Supported) {
-  throw new Error("dispatch_profile: PRECISION=f16 requested but adapter lacks shader-f16");
-}
-const requiredFeatures: GPUFeatureName[] = [];
-if (TIMESTAMP && timestampSupported) requiredFeatures.push("timestamp-query" as GPUFeatureName);
-if (PRECISION === "f16") requiredFeatures.push("shader-f16" as GPUFeatureName);
 const device: GPUDevice = await adapter.requestDevice({
-  requiredFeatures,
+  requiredFeatures: TIMESTAMP && timestampSupported ? (["timestamp-query"] as GPUFeatureName[]) : [],
 });
 const useTimestamps = TIMESTAMP && device.features.has("timestamp-query");
 const info = adapter.info ?? {};
@@ -181,9 +163,7 @@ if (TIMESTAMP && !useTimestamps && !CSV) {
 }
 
 const plan = JSON.parse(readFileSync(join(MODEL_DIR, PLAN_FILE), "utf8")) as TrainPlan;
-const weights = PRECISION === "f16"
-  ? f16File(join(MODEL_DIR, WEIGHTS_FILE))
-  : f32File(join(MODEL_DIR, WEIGHTS_FILE));
+const weights = f32File(join(MODEL_DIR, WEIGHTS_FILE));
 if (weights.length !== plan.weightsFloats) {
   throw new Error(`weights ${weights.length} != plan ${plan.weightsFloats}`);
 }
@@ -192,11 +172,10 @@ let specs: DispatchSpec[];
 let fwdCount: number;
 if (BATCH > 1) {
   if (MODE === "forward") {
-    specs = batchForwardDispatches(plan as VisionPlan, BATCH, { weightPrecision: PRECISION });
+    specs = batchForwardDispatches(plan as VisionPlan, BATCH);
     fwdCount = specs.length;
   } else {
     const out = batchTrainDispatches(plan, BATCH, {
-      weightPrecision: PRECISION,
       stemSpatialBwd: STEM_SPATIAL_BWD,
       fusePointwiseGeluForward: FUSE_PW_GELU,
       fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
@@ -206,12 +185,11 @@ if (BATCH > 1) {
     fwdCount = out.fwdCount;
   }
 } else if (MODE === "forward") {
-  specs = planDispatches(plan, { weightPrecision: PRECISION });
+  specs = planDispatches(plan);
   fwdCount = specs.length;
 } else {
-  const fwd = planDispatches(plan, { weightPrecision: PRECISION });
+  const fwd = planDispatches(plan);
   const bwd = planBwdDispatches(plan, {
-    weightPrecision: PRECISION,
     stemSpatialBwd: STEM_SPATIAL_BWD,
     fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
     fuseResidualBwdIntoPw: FUSE_RESIDUAL_BWD_PW,
@@ -257,7 +235,7 @@ function resolve(ref: BufferRef): GPUBuffer {
 if (!CSV) {
   console.log(
     `dispatch profile: mode=${MODE}, plan=${PLAN_FILE}, batch=${BATCH}, ` +
-    `precision=${PRECISION}, weights=${WEIGHTS_FILE}, dispatches=${specs.length}, runs=${RUNS}, warmup=${WARMUP}, ` +
+      `dispatches=${specs.length}, runs=${RUNS}, warmup=${WARMUP}, ` +
       `timing=${useTimestamps ? "gpu-timestamp" : "split-submit-wall"}` +
       (STEM_SPATIAL_BWD ? `, stemSpatialBwd=1` : "") +
       (FUSE_PW_GELU ? `, fusePointwiseGeluForward=1` : "") +

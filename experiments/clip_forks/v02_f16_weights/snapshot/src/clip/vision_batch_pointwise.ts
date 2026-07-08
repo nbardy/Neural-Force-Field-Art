@@ -15,7 +15,6 @@ import {
   type DispatchSpec,
   type BufferRef,
   type VisionPlan,
-  type WeightPrecision,
 } from "./vision_wgsl";
 
 function pointwiseBuffers(hasRes: boolean): DispatchSpec["buffers"] {
@@ -57,11 +56,7 @@ function postExpr(s: ConvStep, P4: number, j: number, value: string, batched = t
 
 /** Baseline z-batch pointwise: same math as the normal pointwise kernel, but
  * buffers are compact `[batch][tensor]` instead of full CLIP slot buffers. */
-export function pointwiseZBatchDispatch(
-  s: ConvStep,
-  batch: number,
-  weightPrecision: WeightPrecision = "f32"
-): DispatchSpec {
+export function pointwiseZBatchDispatch(s: ConvStep, batch: number): DispatchSpec {
   if (!Number.isInteger(batch) || batch < 1) {
     throw new Error(`pointwise_zbatch: invalid batch ${batch}`);
   }
@@ -72,7 +67,7 @@ export function pointwiseZBatchDispatch(
   const dstStride = s.cout * P4;
   const hasRes = s.residual !== null;
   const code = /* wgsl */ `
-${weightsDecl(0, weightPrecision)}
+${weightsDecl(0)}
 @group(0) @binding(1) var<storage, read> src : array<vec4f>;
 @group(0) @binding(2) var<storage, read_write> dst : array<vec4f>;
 ${hasRes ? `@group(0) @binding(3) var<storage, read> res : array<vec4f>;` : ``}
@@ -127,11 +122,7 @@ fn main(@builtin(workgroup_id) wid : vec3u,
 }
 
 /** Shared-W batch pointwise: B lanes inside the same workgroup, one W tile. */
-export function pointwiseSharedWBatchDispatch(
-  s: ConvStep,
-  batch: number,
-  weightPrecision: WeightPrecision = "f32"
-): DispatchSpec {
+export function pointwiseSharedWBatchDispatch(s: ConvStep, batch: number): DispatchSpec {
   if (!Number.isInteger(batch) || batch < 1 || batch > 3) {
     throw new Error(`pointwise_shared_w: batch ${batch} outside [1, 3]`);
   }
@@ -142,7 +133,7 @@ export function pointwiseSharedWBatchDispatch(
   const dstStride = s.cout * P4;
   const hasRes = s.residual !== null;
   const code = /* wgsl */ `
-${weightsDecl(0, weightPrecision)}
+${weightsDecl(0)}
 @group(0) @binding(1) var<storage, read> src : array<vec4f>;
 @group(0) @binding(2) var<storage, read_write> dst : array<vec4f>;
 ${hasRes ? `@group(0) @binding(3) var<storage, read> res : array<vec4f>;` : ``}
@@ -204,8 +195,7 @@ fn main(@builtin(workgroup_id) wid : vec3u,
 export function pointwiseSharedWBatchForwardDispatch(
   plan: VisionPlan,
   s: ConvStep,
-  batch: number,
-  weightPrecision: WeightPrecision = "f32"
+  batch: number
 ): DispatchSpec {
   if (!Number.isInteger(batch) || batch < 1 || batch > 3) {
     throw new Error(`pointwise_shared_w_forward: batch ${batch} outside [1, 3]`);
@@ -218,7 +208,7 @@ export function pointwiseSharedWBatchForwardDispatch(
   const hasRes = s.residual !== null;
   const resStride = hasRes ? slotStride4(plan, s.residual as number, "residual") : dstStride;
   const code = /* wgsl */ `
-${weightsDecl(0, weightPrecision)}
+${weightsDecl(0)}
 @group(0) @binding(1) var<storage, read> src : array<vec4f>;
 @group(0) @binding(2) var<storage, read_write> dst : array<vec4f>;
 ${hasRes ? `@group(0) @binding(3) var<storage, read> res : array<vec4f>;` : ``}

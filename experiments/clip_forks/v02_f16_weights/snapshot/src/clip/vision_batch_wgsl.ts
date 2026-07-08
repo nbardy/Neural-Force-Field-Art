@@ -126,7 +126,7 @@ function forwardDispatches(plan: VisionPlan, batch: number, opts: BatchDispatchO
       step.kind === "conv" &&
       step.variant === "pointwise"
     ) {
-      specs.push(pointwiseSharedWBatchForwardDispatch(plan, step as ConvStep, batch, opts.weightPrecision));
+      specs.push(pointwiseSharedWBatchForwardDispatch(plan, step as ConvStep, batch));
       continue;
     }
     const next = plan.steps[index + 1];
@@ -137,11 +137,11 @@ function forwardDispatches(plan: VisionPlan, batch: number, opts: BatchDispatchO
       next?.kind === "gelu" &&
       next.src === step.dst
     ) {
-      specs.push(batchSpec(plan, pointwiseFusedGelu(step as ConvStep, next as GeluStep, opts), batch));
+      specs.push(batchSpec(plan, pointwiseFusedGelu(step as ConvStep, next as GeluStep), batch));
       index += 1;
       continue;
     }
-    for (const spec of stepDispatches(step, opts)) {
+    for (const spec of stepDispatches(step)) {
       if (spec.workgroups[2] !== 1) {
         throw new Error(`vision_batch_wgsl: ${spec.label} already uses workgroup z=${spec.workgroups[2]}`);
       }
@@ -175,7 +175,7 @@ export function batchForwardDispatches(
     throw new Error(`vision_batch_wgsl: invalid batch ${batch}`);
   }
   if (!opts.sharedWForwardSteps?.size && !opts.fusePointwiseGeluForward) {
-    return planDispatches(plan, opts).map((spec) => batchSpec(plan, spec, batch));
+    return planDispatches(plan).map((spec) => batchSpec(plan, spec, batch));
   }
   return forwardDispatches(plan, batch, opts);
 }
@@ -193,7 +193,7 @@ export function batchTrainDispatches(
   }
   const fwd = opts.sharedWForwardSteps?.size || opts.fusePointwiseGeluForward
     ? forwardDispatches(plan, batch, opts)
-    : planDispatches(plan, opts).map((spec) => batchSpec(plan, spec, batch));
+    : planDispatches(plan).map((spec) => batchSpec(plan, spec, batch));
   const bwd = planBwdDispatches(plan, opts).map((spec) => batchSpec(plan, spec, batch));
   const all = [...fwd, ...bwd];
   return { specs: all, fwdCount: fwd.length };

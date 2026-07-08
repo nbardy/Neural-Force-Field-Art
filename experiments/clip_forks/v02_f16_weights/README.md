@@ -6,31 +6,47 @@ Test whether MobileCLIP WebGPU inference/training is meaningfully memory-bandwid
 
 This is a weights-only precision fork. It should not change the CLIP graph, input resolution, prompt schedule, rasterizer, Adam state, or 3D splat parameters.
 
-## Expected Asset Changes
+## Current Status
 
-Add a second generated weights artifact instead of replacing the current fp32 file:
+Implemented and measured as an opt-in experiment. Do not promote the all-weight
+f16 path as the default.
 
-- Keep: `src/clip/generated/weights_train.bin`
-- Add: `src/clip/generated/weights_train_f16.bin`
-- Keep the existing generated plan JSON/module structure unless a precision field is needed.
-- If metadata is added, make it explicit per tensor:
-  - `dtype: "float32"` for existing fp32 weights
-  - `dtype: "float16"` for f16-packed weights
-  - `byteOffset`, `byteLength`, `shape`, and layout unchanged except byte size
+Result note:
+
+- `results/2026-07-08.md`
+
+Headline:
+
+- asset payload halves cleanly;
+- embedding cosine passes;
+- input-gradient cosine fails the planned gate;
+- integrated 3D timestamp was slower in the recorded run.
+
+## Asset Changes
+
+Add second generated weight artifacts instead of replacing the current fp32
+files. These live in `models/mobileclip_s0/` and remain gitignored:
+
+- Keep: `models/mobileclip_s0/weights.bin`
+- Keep: `models/mobileclip_s0/weights_train.bin`
+- Add: `models/mobileclip_s0/weights_f16.bin`
+- Add: `models/mobileclip_s0/weights_train_f16.bin`
 
 Generation path:
 
 ```bash
-PRECISION=f16 bun tools/clip/compile_plan.ts
+bun tools/clip/pack_f16_weights.ts
 ```
 
-or, if the current generator is Python:
+Output from the first run:
 
-```bash
-PRECISION=f16 python tools/clip/compile_plan.py
+```text
+weights.bin -> weights_f16.bin: 11353536 scalars, 43.3 MB -> 21.7 MB (0.500x)
+weights_train.bin -> weights_train_f16.bin: 21515712 scalars, 82.1 MB -> 41.0 MB (0.500x)
 ```
 
-The generator should convert fp32 source weights to IEEE fp16 at asset-build time and write `Uint16Array`/raw half bits. Do not convert every page load in JS; that would hide startup cost and complicate benchmarking.
+The packer converts existing fp32 weights to IEEE fp16 at asset-build time and
+writes `Uint16Array` raw half bits. It does not convert every page load in JS.
 
 ## Runtime Gate
 
@@ -49,6 +65,14 @@ Default stays fp32. The app and benchmarks should only use fp16 weights when all
 - generated `weights_train_f16.bin` loads successfully
 
 If any condition fails, fail closed in benchmarks and show a clear warning in UI/dev logs. Do not silently compare fp16 benchmark results against fp32.
+
+Current exposed tool switches:
+
+```bash
+PRECISION=f16 bun tools/clip/dispatch_profile.ts
+PRECISION=f16 bun tools/clip/batch_major_train_bench.ts
+CLIP_PRECISION=f16 bun tools/splat3d/step_bench.ts
+```
 
 ## `requestDevice` Handling
 
@@ -81,13 +105,13 @@ Use precision-specific declarations instead of changing call sites ad hoc:
 @group(0) @binding(N) var<storage, read> weights: array<vec4f>;
 
 // f16 weights-only path
-@group(0) @binding(N) var<storage, read> weights: array<vec4h>;
+@group(0) @binding(N) var<storage, read> weights: array<vec4<f16>>;
 ```
 
 Accumulate in fp32 unless a measured fork proves f16 accumulation is safe:
 
 ```wgsl
-let w16: vec4h = weights[wIndex];
+let w16: vec4<f16> = weights[wIndex];
 let w: vec4f = vec4f(w16);
 acc = fma(x, w, acc);
 ```
@@ -115,8 +139,8 @@ Add a precision-aware weight loader:
 
 ```ts
 const weightUrl = precision === "f16"
-  ? new URL("./generated/weights_train_f16.bin", import.meta.url)
-  : new URL("./generated/weights_train.bin", import.meta.url);
+  ? `${MODEL_BASE}weights_train_f16.bin`
+  : `${MODEL_BASE}weights_train.bin`;
 
 const bytes = await fetch(weightUrl).then((r) => r.arrayBuffer());
 ```
@@ -129,7 +153,7 @@ Expected buffer usage remains:
 GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
 ```
 
-Alignment check: every f16 tensor offset used as `array<vec4h>` must be 8-byte aligned. If the existing fp32 packed layout assumes 16-byte `vec4f` slots, either:
+Alignment check: every f16 tensor offset used as `array<vec4<f16>>` must be 8-byte aligned. If the existing fp32 packed layout assumes 16-byte `vec4f` slots, either:
 
 - keep 16-byte alignment with padding for simpler indexing, or
 - emit separate f16 offsets and assert alignment in the generated metadata.
@@ -143,7 +167,7 @@ Run tests in three layers.
 1. Asset sanity:
 
 ```bash
-ls -lh src/clip/generated/weights_train.bin src/clip/generated/weights_train_f16.bin
+bun tools/clip/pack_f16_weights.ts
 ```
 
 Expected: f16 file is close to half the fp32 size, allowing padding/metadata differences.
@@ -151,21 +175,29 @@ Expected: f16 file is close to half the fp32 size, allowing padding/metadata dif
 2. Numeric parity:
 
 ```bash
-PRECISION=f32 bun tools/clip/forward_oracle.ts
-PRECISION=f16 bun tools/clip/forward_oracle.ts
+bun tools/clip/f16_compare.ts
 ```
 
 Suggested gates:
 
-- image embedding cosine similarity: `>= 0.995`
-- text/image CLIP score rank unchanged for the benchmark prompt set
+- image embedding cosine similarity: `>= 0.9995`
+- input-gradient cosine similarity: `>= 0.995`
 - no NaN/Inf in forward activations
 - no NaN/Inf in backward gradients
+
+Recorded all-weight f16 result:
+
+```text
+embedding: cos=0.99999559
+inputGrad : cos=0.97493807
+```
+
+So this fork currently fails the input-gradient gate.
 
 3. Integrated smoke:
 
 ```bash
-PRECISION=f16 CLIP_BATCH=3 VIEWS=3 RUNS=3 WARMUP=2 bun tools/splat3d/step_bench.ts
+CLIP_PRECISION=f16 CLIP_BATCH=3 VIEWS=3 RUNS=3 WARMUP=2 bun tools/splat3d/step_bench.ts
 ```
 
 Compare against identical fp32 settings.
@@ -184,15 +216,15 @@ TIMESTAMP=1 PRECISION=f16 CLIP_BATCH=3 RUNS=10 WARMUP=3 bun tools/clip/dispatch_
 Integrated 3D:
 
 ```bash
-TIMESTAMP=1 PRECISION=f32 CLIP_BATCH=3 VIEWS=3 RUNS=10 WARMUP=3 bun tools/splat3d/step_bench.ts
-TIMESTAMP=1 PRECISION=f16 CLIP_BATCH=3 VIEWS=3 RUNS=10 WARMUP=3 bun tools/splat3d/step_bench.ts
+TIMESTAMP=1 CLIP_BATCH=3 VIEWS=3 RUNS=10 WARMUP=3 bun tools/splat3d/step_bench.ts
+TIMESTAMP=1 CLIP_PRECISION=f16 CLIP_BATCH=3 VIEWS=3 RUNS=10 WARMUP=3 bun tools/splat3d/step_bench.ts
 ```
 
 Wall-clock:
 
 ```bash
-PRECISION=f32 CLIP_BATCH=3 VIEWS=3 RUNS=20 WARMUP=5 bun tools/splat3d/step_bench.ts
-PRECISION=f16 CLIP_BATCH=3 VIEWS=3 RUNS=20 WARMUP=5 bun tools/splat3d/step_bench.ts
+CLIP_BATCH=3 VIEWS=3 RUNS=20 WARMUP=5 bun tools/splat3d/step_bench.ts
+CLIP_PRECISION=f16 CLIP_BATCH=3 VIEWS=3 RUNS=20 WARMUP=5 bun tools/splat3d/step_bench.ts
 ```
 
 Record per-family deltas for:
@@ -237,6 +269,10 @@ Best-case path:
 - integrated CLIP batch time drops enough that the whole 3D step moves materially
 
 In that best case, this fork might combine with pointwise tiling/fusion and N-of-K view scheduling toward an overall 2-4x workflow speedup.
+
+The first measured all-weight f16 version did not show that best case. A future
+f16 fork should be selective: separate f16/f32 weight buffers and only convert
+families that preserve gradient quality and win timestamps.
 
 ## Why This May Not Produce 2-4x
 

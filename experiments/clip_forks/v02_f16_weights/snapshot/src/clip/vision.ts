@@ -20,10 +20,9 @@ import {
   planDispatches,
   type DispatchSpec,
   type BufferRef,
-  type DispatchOptions,
   type VisionPlan,
 } from "./vision_wgsl";
-import { planBwdDispatches, type BwdDispatchOptions, type TrainPlan } from "./vision_bwd_wgsl";
+import { planBwdDispatches, type TrainPlan } from "./vision_bwd_wgsl";
 
 export type { VisionPlan, TrainPlan };
 
@@ -40,14 +39,6 @@ interface Encoded {
   bind: GPUBindGroup;
   workgroups: [number, number, number];
   label: string;
-}
-
-export type WeightArray = Float32Array | Uint16Array;
-
-function checkWeights(label: string, weights: WeightArray, expectedScalars: number): void {
-  if (weights.length !== expectedScalars) {
-    throw new Error(`${label}: weights blob ${weights.length} scalars != plan ${expectedScalars}`);
-  }
 }
 
 function beginComputePass(enc: GPUCommandEncoder, timestampWrites?: PassTimestampWrites): GPUComputePassEncoder {
@@ -71,17 +62,20 @@ export class VisionEncoder {
   static async create(
     device: GPUDevice,
     plan: VisionPlan,
-    weights: WeightArray,
-    opts: DispatchOptions = {}
+    weights: Float32Array
   ): Promise<VisionEncoder> {
-    checkWeights("vision", weights, plan.weightsFloats);
-    return new VisionEncoder(device, plan, weights, await buildPipelines(device, plan, opts));
+    if (weights.length !== plan.weightsFloats) {
+      throw new Error(
+        `vision: weights blob ${weights.length} floats != plan ${plan.weightsFloats}`
+      );
+    }
+    return new VisionEncoder(device, plan, weights, await buildPipelines(device, plan));
   }
 
   private constructor(
     device: GPUDevice,
     plan: VisionPlan,
-    weights: WeightArray,
+    weights: Float32Array,
     built: { spec: DispatchSpec; pipeline: GPUComputePipeline }[]
   ) {
     this.device = device;
@@ -182,10 +176,9 @@ export class VisionEncoder {
 
 async function buildPipelines(
   device: GPUDevice,
-  plan: VisionPlan,
-  opts: DispatchOptions = {}
+  plan: VisionPlan
 ): Promise<{ spec: DispatchSpec; pipeline: GPUComputePipeline }[]> {
-  return compilePipelines(device, planDispatches(plan, opts));
+  return compilePipelines(device, planDispatches(plan));
 }
 
 async function compilePipelines(
@@ -230,12 +223,15 @@ export class VisionTrainer {
   static async create(
     device: GPUDevice,
     plan: TrainPlan,
-    weights: WeightArray,
-    opts: BwdDispatchOptions = {}
+    weights: Float32Array
   ): Promise<VisionTrainer> {
-    checkWeights("vision", weights, plan.weightsFloats);
-    const fwd = planDispatches(plan, opts);
-    const bwd = planBwdDispatches(plan, opts);
+    if (weights.length !== plan.weightsFloats) {
+      throw new Error(
+        `vision: weights blob ${weights.length} floats != plan ${plan.weightsFloats}`
+      );
+    }
+    const fwd = planDispatches(plan);
+    const bwd = planBwdDispatches(plan);
     const built = await compilePipelines(device, [...fwd, ...bwd]);
     return new VisionTrainer(device, plan, weights, built, fwd.length);
   }
@@ -243,7 +239,7 @@ export class VisionTrainer {
   private constructor(
     device: GPUDevice,
     plan: TrainPlan,
-    weights: WeightArray,
+    weights: Float32Array,
     built: { spec: DispatchSpec; pipeline: GPUComputePipeline }[],
     fwdCount: number
   ) {

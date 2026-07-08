@@ -1,6 +1,5 @@
 /// <reference types="@webgpu/types" />
-import { VisionTrainer, type TrainPlan, type WeightArray } from "../clip/vision";
-import type { WeightPrecision } from "../clip/vision_wgsl";
+import { VisionTrainer, type TrainPlan } from "../clip/vision";
 import { BatchMajorVisionTrainer } from "../clip/vision_batch";
 import { type AdamHyper, DEFAULT_HYPER } from "../splat/adam_wgsl";
 import { DEFAULT_3D_CAMERAS, type Camera3D, type PreparedCamera3D, prepareCamera } from "./cameras";
@@ -37,7 +36,6 @@ export interface Splat3DOptimizerConfig {
   hyper?: AdamHyper;
   clipBatchSize?: number;
   clipLayout?: Splat3DClipLayout;
-  clipWeightPrecision?: WeightPrecision;
   stemSpatialBwd?: boolean;
   fusePointwiseGeluForward?: boolean;
   fuseGeluBwdIntoPw?: boolean;
@@ -111,7 +109,7 @@ export class Splat3DOptimizer {
   static async create(
     device: GPUDevice,
     trainPlan: TrainPlan,
-    weights: WeightArray,
+    weights: Float32Array,
     cfg: Splat3DOptimizerConfig = {}
   ): Promise<Splat3DOptimizer> {
     const [ic, ih, iw] = trainPlan.inputShape;
@@ -128,24 +126,16 @@ export class Splat3DOptimizer {
       bg: cfg.bg ?? [0, 0, 0],
       cameras,
 	    });
-    const clipDispatchOptions = {
-      weightPrecision: cfg.clipWeightPrecision,
-      stemSpatialBwd: cfg.stemSpatialBwd ?? true,
-      fusePointwiseGeluForward: cfg.fusePointwiseGeluForward ?? true,
-      fuseGeluBwdIntoPw: cfg.fuseGeluBwdIntoPw ?? false,
-      fuseResidualBwdIntoPw: cfg.fuseResidualBwdIntoPw ?? false,
-    };
-    const trainer = await VisionTrainer.create(device, trainPlan, weights, clipDispatchOptions);
+    const trainer = await VisionTrainer.create(device, trainPlan, weights);
     const clipBatchSize = normalizeClipBatchSize(cfg.clipBatchSize);
     const clipLayout = cfg.clipLayout ?? "per_view";
     const batchTrainer =
       clipBatchSize > 1
         ? await BatchMajorVisionTrainer.create(device, trainPlan, weights, clipBatchSize, {
-            weightPrecision: cfg.clipWeightPrecision,
-            stemSpatialBwd: clipDispatchOptions.stemSpatialBwd,
-            fusePointwiseGeluForward: clipDispatchOptions.fusePointwiseGeluForward,
-            fuseGeluBwdIntoPw: clipDispatchOptions.fuseGeluBwdIntoPw,
-            fuseResidualBwdIntoPw: clipDispatchOptions.fuseResidualBwdIntoPw,
+            stemSpatialBwd: cfg.stemSpatialBwd ?? true,
+            fusePointwiseGeluForward: cfg.fusePointwiseGeluForward ?? true,
+            fuseGeluBwdIntoPw: cfg.fuseGeluBwdIntoPw ?? false,
+            fuseResidualBwdIntoPw: cfg.fuseResidualBwdIntoPw ?? false,
           })
         : null;
     if (clipLayout === "grid9_close2" && !batchTrainer) {

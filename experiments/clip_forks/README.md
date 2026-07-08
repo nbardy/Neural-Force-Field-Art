@@ -16,6 +16,15 @@ hypothesis, one rollback point, and one measurement story.
 5. Commit each attempt separately, including rejected gates when the result is
    informative.
 
+Each active fork contains a `snapshot/` directory with the relevant live source
+files copied at the start of the fork. Use that snapshot for cheap diffs and
+rollback review; do not import code from `snapshot/` at runtime.
+
+```bash
+node experiments/clip_forks/diff_fork.mjs v02_f16_weights
+node experiments/clip_forks/diff_fork.mjs v04_pointwise_tile_rewrite
+```
+
 ## Standard Gate
 
 Every performance fork should clear these checks before promotion:
@@ -41,3 +50,24 @@ Use the gate-specific env vars in addition to the commands above.
 - `v05_gpu_counter_trace`: Chrome / Xcode / Metal trace plan for real shader
   bottleneck evidence.
 
+## Snapshot Coverage
+
+- `v01_grid9_close2`: 3D optimizer/grid compositor and 3D step/grid tests.
+- `v02_f16_weights`: CLIP runtime, WGSL emitters, generator, correctness tests,
+  and train bench.
+- `v03_residual_bwd_pw_fusion`: CLIP WGSL emitters and backward/profile tests.
+- `v04_pointwise_tile_rewrite`: CLIP pointwise emitters and pointwise benches.
+- `v05_gpu_counter_trace`: integrated 3D profiler and CLIP dispatch profiler.
+
+## Related Notes
+
+- `docs/SPLAT3D_ABLATION_QUEUE.md`
+- `docs/SPLAT3D_PERF_NOTES.md`
+- `docs/CLIP_BATCHING_NOTES.md`
+- `tools/clip/README.md`
+- `agent_notes/optimization_session/agent_f16_reality_check.md`
+- `agent_notes/optimization_session/agent_pointwise_bottleneck.md`
+- `agent_notes/optimization_session/agent_fusion_bigger_leaps.md`
+- `agent_notes/optimization_session/agent_grid_clip_strategy.md`
+- `agent_notes/optimization_session/agent_gpu_profiler_plan.md`
+- `agent_notes/optimization_session/clip_2x_4x_trace_status.md`

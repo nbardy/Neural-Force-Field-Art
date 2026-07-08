@@ -28,7 +28,6 @@ import {
   pointwiseTiledMain,
   type DispatchSpec,
   type BufferRef,
-  type DispatchOptions,
   type VisionPlan,
 } from "./vision_wgsl";
 
@@ -119,7 +118,7 @@ export interface TrainPlan extends VisionPlan {
   textDim: number;
 }
 
-export interface BwdDispatchOptions extends DispatchOptions {
+export interface BwdDispatchOptions {
   stemSpatialBwd?: boolean;
   fuseGeluBwdIntoPw?: boolean;
   fuseResidualBwdIntoPw?: boolean;
@@ -144,14 +143,14 @@ const gradSlot = (s: number): BufferRef => ({ kind: "slot", slot: s });
 // pw_bwd — dX = Wᵀ·dY, tiled pointwise kernel over the transposed weights.
 // ---------------------------------------------------------------------------
 
-function pwBwd(s: PwBwdStep, opts: BwdDispatchOptions = {}): DispatchSpec {
+function pwBwd(s: PwBwdStep): DispatchSpec {
   const P = s.outH * s.outW;
   assertPointwiseTiles(s.name, s.cin, s.cout, P, s.wOffT);
   const P4 = P / 4;
   const store = (j: number): string =>
     s.accumulate ? `dst[(co + ${j}u) * ${P4}u + p4] + acc${j}` : `acc${j}`;
   const code = /* wgsl */ `
-${weightsDecl(0, opts.weightPrecision)}
+${weightsDecl(0)}
 @group(0) @binding(1) var<storage, read> src : array<vec4f>;         // dY  [Cin][P4]
 @group(0) @binding(2) var<storage, read_write> dst : array<vec4f>;   // dX  [Cout][P4]
 ${PW_TILE_DECLS}
@@ -176,7 +175,7 @@ function canFuseGeluBwdIntoPw(gelu: GeluBwdStep, pw: BwdStep | undefined): pw is
     gelu.n === pw.cin * pw.outH * pw.outW;
 }
 
-function pwBwdAfterGelu(gelu: GeluBwdStep, pw: PwBwdStep, opts: BwdDispatchOptions = {}): DispatchSpec {
+function pwBwdAfterGelu(gelu: GeluBwdStep, pw: PwBwdStep): DispatchSpec {
   assertStep(canFuseGeluBwdIntoPw(gelu, pw), `${gelu.name}: cannot fuse GELU backward into ${pw.name}`);
   const P = pw.outH * pw.outW;
   assertPointwiseTiles(pw.name, pw.cin, pw.cout, P, pw.wOffT);
@@ -184,7 +183,7 @@ function pwBwdAfterGelu(gelu: GeluBwdStep, pw: PwBwdStep, opts: BwdDispatchOptio
   const store = (j: number): string =>
     pw.accumulate ? `dst[(co + ${j}u) * ${P4}u + p4] + acc${j}` : `acc${j}`;
   const code = /* wgsl */ `
-${weightsDecl(0, opts.weightPrecision)}
+${weightsDecl(0)}
 @group(0) @binding(1) var<storage, read> src : array<vec4f>;         // dY before GELU derivative [Cin][P4]
 @group(0) @binding(2) var<storage, read> pre : array<vec4f>;         // saved GELU pre-activation [Cin][P4]
 @group(0) @binding(3) var<storage, read_write> dst : array<vec4f>;   // dX [Cout][P4]
@@ -213,11 +212,7 @@ function canFuseResidualBwdIntoPw(residual: ResidualBwdStep, pw: BwdStep | undef
     pw.cout >= pw.cin;
 }
 
-function pwBwdWithResidualCopy(
-  residual: ResidualBwdStep,
-  pw: PwBwdStep,
-  opts: BwdDispatchOptions = {}
-): DispatchSpec {
+function pwBwdWithResidualCopy(residual: ResidualBwdStep, pw: PwBwdStep): DispatchSpec {
   assertStep(
     canFuseResidualBwdIntoPw(residual, pw),
     `${residual.name}: cannot fuse residual copy into ${pw.name}`
@@ -234,7 +229,7 @@ function pwBwdWithResidualCopy(
     return `if (${ch} < ${pw.cin}u) { resDst[${ix}] = ${val}; }`;
   };
   const code = /* wgsl */ `
-${weightsDecl(0, opts.weightPrecision)}
+${weightsDecl(0)}
 @group(0) @binding(1) var<storage, read> src : array<vec4f>;            // dY [Cin][P4]
 @group(0) @binding(2) var<storage, read_write> dst : array<vec4f>;      // dX [Cout][P4]
 @group(0) @binding(3) var<storage, read_write> resDst : array<vec4f>;   // residual grad [Cin][P4]
@@ -315,7 +310,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 // baked (stride-2 = parity check on iy+pad−ky). Depthwise = cpg=1 special case.
 // ---------------------------------------------------------------------------
 
-function spatialBwd(s: SpatialBwdStep, opts: BwdDispatchOptions = {}): DispatchSpec {
+function spatialBwd(s: SpatialBwdStep): DispatchSpec {
   assertStep(s.stride === 1 || s.stride === 2, `${s.name}: stride ${s.stride} not in {1,2}`);
   const cpg = s.cin / s.groups;          // input channels per group (1 or 3)
   const cpgOut = s.cout / s.groups;      // output channels per group
@@ -331,7 +326,7 @@ function spatialBwd(s: SpatialBwdStep, opts: BwdDispatchOptions = {}): DispatchS
       : `if ((${t} & 1) != 0) { continue; } let ${o} = ${t} >> 1;`;
   const store = s.accumulate ? `dx[o] + acc` : `acc`;
   const code = /* wgsl */ `
-${weightsDecl(0, opts.weightPrecision)}
+${weightsDecl(0)}
 @group(0) @binding(1) var<storage, read> dy : array<f32>;            // [Cout][outH][outW]
 @group(0) @binding(2) var<storage, read_write> dx : array<f32>;      // [Cin][H][W]
 @compute @workgroup_size(64, 1)
@@ -387,7 +382,7 @@ function isStemSpatialBwd(s: SpatialBwdStep): boolean {
     !s.accumulate;
 }
 
-function spatialBwdStem4(s: SpatialBwdStep, opts: BwdDispatchOptions = {}): DispatchSpec {
+function spatialBwdStem4(s: SpatialBwdStep): DispatchSpec {
   assertStep(isStemSpatialBwd(s), `${s.name}: stem spatial_bwd specialization received wrong shape`);
   const P = s.h * s.w;
   const Q = P / 4;
@@ -403,7 +398,7 @@ function spatialBwdStem4(s: SpatialBwdStep, opts: BwdDispatchOptions = {}): Disp
         acc = fma(vec4f(W(${wbase} + 2u)), vec4f(0.0, dy[${rowY} + oxBase], 0.0, dy[${rowY} + oxBase + 1u]), acc);
       }`;
   const code = /* wgsl */ `
-${weightsDecl(0, opts.weightPrecision)}
+${weightsDecl(0)}
 @group(0) @binding(1) var<storage, read> dy : array<f32>;            // [64][128][128]
 @group(0) @binding(2) var<storage, read_write> dx : array<vec4f>;    // [3][256][64 vec4s]
 
@@ -456,12 +451,12 @@ ${addKxs("rowY2", "wbase2")}
 
 const SE_WG = 256;
 
-function seBwd(s: SeBwdStep, opts: BwdDispatchOptions = {}): DispatchSpec {
+function seBwd(s: SeBwdStep): DispatchSpec {
   const P = s.h * s.w;
   assertStep(s.c <= 2048 && s.cmid <= 512, `${s.name}: SE dims exceed shared-memory plan`);
   const dxVal = s.accumulate ? `dx[i] + v` : `v`;
   const code = /* wgsl */ `
-${weightsDecl(0, opts.weightPrecision)}
+${weightsDecl(0)}
 @group(0) @binding(1) var<storage, read> dy : array<f32>;            // grad[se out]
 @group(0) @binding(2) var<storage, read> src : array<f32>;           // saved se input
 @group(0) @binding(3) var<storage, read_write> dx : array<f32>;      // grad[se in]
@@ -544,11 +539,11 @@ fn main(@builtin(local_invocation_index) li : u32) {
 
 const HEAD_WG = 256;
 
-function headBwd(s: HeadBwdStep, opts: BwdDispatchOptions = {}): DispatchSpec {
+function headBwd(s: HeadBwdStep): DispatchSpec {
   const P = s.h * s.w;
   const dxVal = s.accumulate ? `dx[o] + v` : `v`;
   const code = /* wgsl */ `
-${weightsDecl(0, opts.weightPrecision)}
+${weightsDecl(0)}
 @group(0) @binding(1) var<storage, read> dy : array<f32>;            // dEmb [Cout]
 @group(0) @binding(2) var<storage, read_write> dx : array<f32>;      // grad[head src] [Cin][P]
 var<workgroup> dgap : array<f32, ${s.cin}>;
@@ -747,12 +742,12 @@ fn main(@builtin(local_invocation_index) tid : u32,
 export function bwdStepDispatch(step: BwdStep, opts: BwdDispatchOptions = {}): DispatchSpec {
   switch (step.kind) {
     case "loss_bwd":      return lossBwd(step);
-    case "head_bwd":      return headBwd(step, opts);
+    case "head_bwd":      return headBwd(step);
     case "gelu_bwd":      return geluBwd(step);
-    case "pw_bwd":        return pwBwd(step, opts);
+    case "pw_bwd":        return pwBwd(step);
     case "residual_bwd":  return residualBwd(step);
-    case "spatial_bwd":   return opts.stemSpatialBwd && isStemSpatialBwd(step) ? spatialBwdStem4(step, opts) : spatialBwd(step, opts);
-    case "se_bwd":        return seBwd(step, opts);
+    case "spatial_bwd":   return opts.stemSpatialBwd && isStemSpatialBwd(step) ? spatialBwdStem4(step) : spatialBwd(step);
+    case "se_bwd":        return seBwd(step);
     case "attn_core_bwd": return attnCoreBwd(step);
   }
 }
@@ -767,12 +762,12 @@ export function planBwdDispatches(plan: TrainPlan, opts: BwdDispatchOptions = {}
     const step = plan.backward[i];
     const next = plan.backward[i + 1];
     if (opts.fuseResidualBwdIntoPw && step.kind === "residual_bwd" && canFuseResidualBwdIntoPw(step, next)) {
-      out.push(pwBwdWithResidualCopy(step, next, opts));
+      out.push(pwBwdWithResidualCopy(step, next));
       i += 1;
       continue;
     }
     if (opts.fuseGeluBwdIntoPw && step.kind === "gelu_bwd" && canFuseGeluBwdIntoPw(step, next)) {
-      out.push(pwBwdAfterGelu(step, next, opts));
+      out.push(pwBwdAfterGelu(step, next));
       i += 1;
       continue;
     }

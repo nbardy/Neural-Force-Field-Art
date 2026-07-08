@@ -23,7 +23,6 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setupGlobals } from "bun-webgpu";
 import type { TrainPlan } from "../../src/clip/vision";
-import type { WeightPrecision } from "../../src/clip/vision_wgsl";
 import { LEGIBLE_3D_G, Splat3DOptimizer, randomSplats3D } from "../../src/splat3d/optimize";
 
 setupGlobals();
@@ -45,19 +44,10 @@ const SINGLE_PASS_RASTER_FWD = process.env.SINGLE_PASS_RASTER_FWD === "1";
 const VIEW_LANE_RASTER_FWD = process.env.VIEW_LANE_RASTER_FWD === "1";
 const VIEW_LANE_RASTER_BWD = process.env.VIEW_LANE_RASTER_BWD === "1";
 const TIMESTAMP = process.env.TIMESTAMP === "1";
-const CLIP_PRECISION: WeightPrecision =
-  process.env.CLIP_PRECISION === "f16" || process.env.PRECISION === "f16" ? "f16" : "f32";
-const WEIGHTS_FILE =
-  process.env.WEIGHTS ?? (CLIP_PRECISION === "f16" ? "weights_train_f16.bin" : "weights_train.bin");
 
 function f32File(path: string): Float32Array {
   const b = readFileSync(path);
   return new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4).slice();
-}
-
-function f16File(path: string): Uint16Array {
-  const b = readFileSync(path);
-  return new Uint16Array(b.buffer, b.byteOffset, b.byteLength / 2).slice();
 }
 
 function textEmbedding(seed: number, dim: number): Float32Array {
@@ -81,14 +71,9 @@ if (!adapter) {
   process.exit(1);
 }
 const timestampSupported = adapter.features.has("timestamp-query");
-const f16Supported = adapter.features.has("shader-f16");
-if (CLIP_PRECISION === "f16" && !f16Supported) {
-  throw new Error("splat3d step bench: CLIP_PRECISION=f16 requested but adapter lacks shader-f16");
-}
-const requiredFeatures: GPUFeatureName[] = [];
-if (TIMESTAMP && timestampSupported) requiredFeatures.push("timestamp-query" as GPUFeatureName);
-if (CLIP_PRECISION === "f16") requiredFeatures.push("shader-f16" as GPUFeatureName);
-const device: GPUDevice = await adapter.requestDevice({ requiredFeatures });
+const device: GPUDevice = await adapter.requestDevice({
+  requiredFeatures: TIMESTAMP && timestampSupported ? (["timestamp-query"] as GPUFeatureName[]) : [],
+});
 const useTimestamps = TIMESTAMP && device.features.has("timestamp-query");
 const info = adapter.info ?? {};
 console.log(`adapter: ${info.vendor ?? "?"} ${info.architecture ?? "?"}`);
@@ -97,9 +82,7 @@ if (TIMESTAMP && !useTimestamps) {
 }
 
 const plan: TrainPlan = JSON.parse(readFileSync(join(MODEL_DIR, "plan_train.json"), "utf8"));
-const weights = CLIP_PRECISION === "f16"
-  ? f16File(join(MODEL_DIR, WEIGHTS_FILE))
-  : f32File(join(MODEL_DIR, WEIGHTS_FILE));
+const weights = f32File(join(MODEL_DIR, "weights_train.bin"));
 const initParams = randomSplats3D(G, SEED);
 
 const compileStart = performance.now();
@@ -110,7 +93,6 @@ const opt = await Splat3DOptimizer.create(device, plan, weights, {
   initParams,
   clipBatchSize: CLIP_BATCH,
   clipLayout: CLIP_LAYOUT,
-  clipWeightPrecision: CLIP_PRECISION,
   stemSpatialBwd: STEM_SPATIAL_BWD,
   fusePointwiseGeluForward: FUSE_PW_GELU,
   fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
@@ -121,8 +103,7 @@ const opt = await Splat3DOptimizer.create(device, plan, weights, {
 });
 console.log(
   `splat3d step bench: G=${G}, views=${VIEWS}/${opt.cameras.length}, ` +
-    `clipBatch=${opt.clipBatchSize}, clipLayout=${opt.clipLayout}, clipPrecision=${CLIP_PRECISION}, ` +
-    `weights=${WEIGHTS_FILE}, cap=${CAP}, runs=${RUNS}, warmup=${WARMUP}, ` +
+    `clipBatch=${opt.clipBatchSize}, clipLayout=${opt.clipLayout}, cap=${CAP}, runs=${RUNS}, warmup=${WARMUP}, ` +
     `stemSpatialBwd=${STEM_SPATIAL_BWD ? 1 : 0}, ` +
     `fusePointwiseGeluForward=${FUSE_PW_GELU ? 1 : 0}, ` +
     `fuseGeluBwdIntoPw=${FUSE_GELU_BWD_PW ? 1 : 0}, ` +

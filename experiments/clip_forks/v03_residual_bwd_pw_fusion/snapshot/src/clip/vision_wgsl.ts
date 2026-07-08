@@ -112,26 +112,15 @@ export interface DispatchSpec {
   buffers: BufferRef[];
 }
 
-export type WeightPrecision = "f32" | "f16";
-
-export interface DispatchOptions {
-  weightPrecision?: WeightPrecision;
-}
-
 // ---------------------------------------------------------------------------
 // Shared WGSL fragments
 // ---------------------------------------------------------------------------
 
-/** Weight storage precision is a runtime/compiler option; math stays f32. */
-export const weightsDecl = (binding: number, precision: WeightPrecision = "f32") =>
-  precision === "f16"
-    ? `enable f16;\n` +
-      `@group(0) @binding(${binding}) var<storage, read> weights : array<vec4<f16>>;\n` +
-      `fn W(i : u32) -> f32 { return f32(weights[i >> 2u][i & 3u]); }\n` +
-      `fn W4(i : u32) -> vec4f { return vec4f(weights[i]); }`
-    : `@group(0) @binding(${binding}) var<storage, read> weights : array<vec4f>;\n` +
-      `fn W(i : u32) -> f32 { return weights[i >> 2u][i & 3u]; }\n` +
-      `fn W4(i : u32) -> vec4f { return weights[i]; }`;
+/** Weights are always bound as array<vec4f>; W()/W4() give both granularities. */
+export const weightsDecl = (binding: number) =>
+  `@group(0) @binding(${binding}) var<storage, read> weights : array<vec4f>;\n` +
+  `fn W(i : u32) -> f32 { return weights[i >> 2u][i & 3u]; }\n` +
+  `fn W4(i : u32) -> vec4f { return weights[i]; }`;
 
 /** erf via Abramowitz–Stegun 7.1.26 (|abs err| ≤ 1.5e-7 — well inside the
  *  1e-3 verification tolerance); gelu matches ONNX's exact-erf decomposition.
@@ -244,7 +233,7 @@ export function assertPointwiseTiles(name: string, cin: number, cout: number, P:
   assertStep(wOff % 4 === 0, `${name}: wOff not 16B-aligned`);
 }
 
-function pointwise(s: ConvStep, opts: DispatchOptions = {}): DispatchSpec {
+function pointwise(s: ConvStep): DispatchSpec {
   const P = s.outH * s.outW;
   assertPointwiseTiles(s.name, s.cin, s.cout, P, s.wOff);
   const P4 = P / 4;
@@ -264,7 +253,7 @@ function pointwise(s: ConvStep, opts: DispatchOptions = {}): DispatchSpec {
   };
 
   const code = /* wgsl */ `
-${weightsDecl(0, opts.weightPrecision)}
+${weightsDecl(0)}
 @group(0) @binding(1) var<storage, read> src : array<vec4f>;
 @group(0) @binding(2) var<storage, read_write> dst : array<vec4f>;
 ${hasRes ? `@group(0) @binding(3) var<storage, read> res : array<vec4f>;` : ``}
@@ -283,11 +272,7 @@ ${pointwiseTiledMain({
   };
 }
 
-export function pointwiseFusedGelu(
-  s: ConvStep,
-  gelu: GeluStep,
-  opts: DispatchOptions = {}
-): DispatchSpec {
+export function pointwiseFusedGelu(s: ConvStep, gelu: GeluStep): DispatchSpec {
   assertStep(s.variant === "pointwise", `${s.name}: fused GELU only supports pointwise conv`);
   assertStep(s.act === "none", `${s.name}: fused GELU expects split train-mode conv`);
   assertStep(s.residual === null && s.layerScaleOff === null, `${s.name}: fused GELU does not support residual epilogues`);
@@ -297,7 +282,7 @@ export function pointwiseFusedGelu(
   assertPointwiseTiles(s.name, s.cin, s.cout, P, s.wOff);
   const P4 = P / 4;
   const code = /* wgsl */ `
-${weightsDecl(0, opts.weightPrecision)}
+${weightsDecl(0)}
 @group(0) @binding(1) var<storage, read> src : array<vec4f>;
 @group(0) @binding(2) var<storage, read_write> dst : array<vec4f>;
 @group(0) @binding(3) var<storage, read_write> geluDst : array<vec4f>;
@@ -326,7 +311,7 @@ ${pointwiseTiledMain({
 // conv:depthwise — k∈{3,7}, groups=C. Thread = one output pixel of one channel.
 // ---------------------------------------------------------------------------
 
-function spatialConv(s: ConvStep, opts: DispatchOptions = {}): DispatchSpec {
+function spatialConv(s: ConvStep): DispatchSpec {
   assertStep(s.residual === null && s.layerScaleOff === null,
     `${s.name}: spatial conv never carries residual in this plan`);
   assertStep(s.outW % 4 === 0, `${s.name}: spatial tiling needs outW%4==0`);
@@ -368,7 +353,7 @@ function spatialConv(s: ConvStep, opts: DispatchOptions = {}): DispatchSpec {
   // 4·K taps ≈ 2.8× fewer for k=7). Interior tiles (the vast majority) take
   // a single-branch unchecked path.
   const code = /* wgsl */ `
-${weightsDecl(0, opts.weightPrecision)}
+${weightsDecl(0)}
 @group(0) @binding(1) var<storage, read> src : array<f32>;
 @group(0) @binding(2) var<storage, read_write> dst : array<f32>;
 ${GELU}
@@ -435,12 +420,12 @@ ${interior.join("\n")}
 
 const SE_WG = 256;
 
-function seStep(s: SeStep, opts: DispatchOptions = {}): DispatchSpec {
+function seStep(s: SeStep): DispatchSpec {
   const P = s.h * s.w;
   assertStep(s.c <= 2048 && s.cmid <= 512, `${s.name}: SE dims exceed shared-memory plan`);
   const act = (e: string) => (s.act === "gelu" ? `gelu1(${e})` : e);
   const code = /* wgsl */ `
-${weightsDecl(0, opts.weightPrecision)}
+${weightsDecl(0)}
 @group(0) @binding(1) var<storage, read> src : array<f32>;
 @group(0) @binding(2) var<storage, read_write> dst : array<f32>;
 ${GELU}
@@ -592,10 +577,10 @@ fn main(@builtin(local_invocation_index) i : u32,
 
 const HEAD_WG = 256;
 
-function headStep(s: HeadStep, opts: DispatchOptions = {}): DispatchSpec {
+function headStep(s: HeadStep): DispatchSpec {
   const P = s.h * s.w;
   const code = /* wgsl */ `
-${weightsDecl(0, opts.weightPrecision)}
+${weightsDecl(0)}
 @group(0) @binding(1) var<storage, read> src : array<f32>;
 @group(0) @binding(2) var<storage, read_write> dst : array<f32>;
 var<workgroup> gap : array<f32, ${s.cin}>;
@@ -661,25 +646,25 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 // Thin dispatchers — step kind → dispatch list; conv variant → emitter.
 // ---------------------------------------------------------------------------
 
-function convDispatches(s: ConvStep, opts: DispatchOptions = {}): DispatchSpec[] {
+function convDispatches(s: ConvStep): DispatchSpec[] {
   switch (s.variant) {
-    case "pointwise": return [pointwise(s, opts)];
-    case "depthwise": return [spatialConv(s, opts)];  // depthwise = spatial, cpg=1
-    case "general":   return [spatialConv(s, opts)];
+    case "pointwise": return [pointwise(s)];
+    case "depthwise": return [spatialConv(s)];  // depthwise = spatial, cpg=1
+    case "general":   return [spatialConv(s)];
   }
 }
 
-export function stepDispatches(step: VisionStep, opts: DispatchOptions = {}): DispatchSpec[] {
+export function stepDispatches(step: VisionStep): DispatchSpec[] {
   switch (step.kind) {
-    case "conv":      return convDispatches(step, opts);
-    case "se":        return [seStep(step, opts)];
+    case "conv":      return convDispatches(step);
+    case "se":        return [seStep(step)];
     case "attn_core": return [attnCore(step)];
-    case "head":      return [headStep(step, opts)];
+    case "head":      return [headStep(step)];
     case "gelu":      return [geluStep(step)];
   }
 }
 
 /** All dispatches for a full forward pass, in execution order. */
-export function planDispatches(plan: VisionPlan, opts: DispatchOptions = {}): DispatchSpec[] {
-  return plan.steps.flatMap((step) => stepDispatches(step, opts));
+export function planDispatches(plan: VisionPlan): DispatchSpec[] {
+  return plan.steps.flatMap(stepDispatches);
 }

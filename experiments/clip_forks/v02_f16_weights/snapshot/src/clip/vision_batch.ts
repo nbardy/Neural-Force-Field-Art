@@ -19,9 +19,8 @@ import {
   type DispatchSpec,
   type VisionPlan,
 } from "./vision_wgsl";
-import { planBwdDispatches, type BwdDispatchOptions, type TrainPlan } from "./vision_bwd_wgsl";
+import { planBwdDispatches, type TrainPlan } from "./vision_bwd_wgsl";
 import { batchForwardDispatches, batchTrainDispatches, type BatchDispatchOptions } from "./vision_batch_wgsl";
-import type { WeightArray } from "./vision";
 
 const USAGE = { MAP_READ: 1, COPY_SRC: 4, COPY_DST: 8, STORAGE: 128 };
 
@@ -80,14 +79,6 @@ function checkLane(lane: number, batch: number): void {
   }
 }
 
-function checkWeights(weights: WeightArray, expectedScalars: number): void {
-  if (weights.length !== expectedScalars) {
-    throw new Error(
-      `vision_batch: weights blob ${weights.length} scalars != plan ${expectedScalars}`
-    );
-  }
-}
-
 /**
  * Shared-weights, replicated-activation CLIP trainer for batch experiments.
  * Each lane has independent activation/grad slots and text embedding buffer.
@@ -105,16 +96,19 @@ export class ReplicatedBatchVisionTrainer {
   static async create(
     device: GPUDevice,
     plan: TrainPlan,
-    weights: WeightArray,
-    batch: number,
-    opts: BwdDispatchOptions = {}
+    weights: Float32Array,
+    batch: number
   ): Promise<ReplicatedBatchVisionTrainer> {
     if (!Number.isInteger(batch) || batch < 1) {
       throw new Error(`vision_batch: invalid batch ${batch}`);
     }
-    checkWeights(weights, plan.weightsFloats);
-    const fwd = planDispatches(plan, opts);
-    const bwd = planBwdDispatches(plan, opts);
+    if (weights.length !== plan.weightsFloats) {
+      throw new Error(
+        `vision_batch: weights blob ${weights.length} floats != plan ${plan.weightsFloats}`
+      );
+    }
+    const fwd = planDispatches(plan);
+    const bwd = planBwdDispatches(plan);
     const built = await compilePipelines(device, [...fwd, ...bwd]);
     return new ReplicatedBatchVisionTrainer(device, plan, weights, batch, built, fwd.length);
   }
@@ -122,7 +116,7 @@ export class ReplicatedBatchVisionTrainer {
   private constructor(
     device: GPUDevice,
     plan: TrainPlan,
-    weights: WeightArray,
+    weights: Float32Array,
     batch: number,
     built: { spec: DispatchSpec; pipeline: GPUComputePipeline }[],
     fwdCount: number
@@ -295,14 +289,18 @@ export class BatchMajorVisionEncoder {
   static async create(
     device: GPUDevice,
     plan: VisionPlan,
-    weights: WeightArray,
+    weights: Float32Array,
     batch: number,
     opts: BatchDispatchOptions = {}
   ): Promise<BatchMajorVisionEncoder> {
     if (!Number.isInteger(batch) || batch < 1) {
       throw new Error(`vision_batch: invalid batch ${batch}`);
     }
-    checkWeights(weights, plan.weightsFloats);
+    if (weights.length !== plan.weightsFloats) {
+      throw new Error(
+        `vision_batch: weights blob ${weights.length} floats != plan ${plan.weightsFloats}`
+      );
+    }
     const built = await compilePipelines(device, batchForwardDispatches(plan, batch, opts));
     return new BatchMajorVisionEncoder(device, plan, weights, batch, built);
   }
@@ -310,7 +308,7 @@ export class BatchMajorVisionEncoder {
   private constructor(
     device: GPUDevice,
     plan: VisionPlan,
-    weights: WeightArray,
+    weights: Float32Array,
     batch: number,
     built: { spec: DispatchSpec; pipeline: GPUComputePipeline }[]
   ) {
@@ -423,14 +421,18 @@ export class BatchMajorVisionTrainer {
   static async create(
     device: GPUDevice,
     plan: TrainPlan,
-    weights: WeightArray,
+    weights: Float32Array,
     batch: number,
     opts: BatchDispatchOptions = {}
   ): Promise<BatchMajorVisionTrainer> {
     if (!Number.isInteger(batch) || batch < 1) {
       throw new Error(`vision_batch: invalid batch ${batch}`);
     }
-    checkWeights(weights, plan.weightsFloats);
+    if (weights.length !== plan.weightsFloats) {
+      throw new Error(
+        `vision_batch: weights blob ${weights.length} floats != plan ${plan.weightsFloats}`
+      );
+    }
     const { specs, fwdCount } = batchTrainDispatches(plan, batch, opts);
     const built = await compilePipelines(device, specs);
     return new BatchMajorVisionTrainer(device, plan, weights, batch, built, fwdCount);
@@ -439,7 +441,7 @@ export class BatchMajorVisionTrainer {
   private constructor(
     device: GPUDevice,
     plan: TrainPlan,
-    weights: WeightArray,
+    weights: Float32Array,
     batch: number,
     built: { spec: DispatchSpec; pipeline: GPUComputePipeline }[],
     fwdCount: number

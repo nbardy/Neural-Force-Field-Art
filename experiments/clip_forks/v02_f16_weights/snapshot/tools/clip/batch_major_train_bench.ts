@@ -14,7 +14,6 @@ import { fileURLToPath } from "node:url";
 import { setupGlobals } from "bun-webgpu";
 import { VisionTrainer, type TrainPlan } from "../../src/clip/vision";
 import { BatchMajorVisionTrainer } from "../../src/clip/vision_batch";
-import type { WeightPrecision } from "../../src/clip/vision_wgsl";
 
 setupGlobals();
 
@@ -27,18 +26,10 @@ const STEM_SPATIAL_BWD = process.env.STEM_SPATIAL_BWD === "1";
 const FUSE_PW_GELU = process.env.FUSE_PW_GELU === "1";
 const FUSE_GELU_BWD_PW = process.env.FUSE_GELU_BWD_PW === "1";
 const FUSE_RESIDUAL_BWD_PW = process.env.FUSE_RESIDUAL_BWD_PW === "1";
-const PRECISION: WeightPrecision = process.env.PRECISION === "f16" ? "f16" : "f32";
-const WEIGHTS_FILE =
-  process.env.WEIGHTS ?? (PRECISION === "f16" ? "weights_train_f16.bin" : "weights_train.bin");
 
 function f32File(path: string): Float32Array {
   const b = readFileSync(path);
   return new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4).slice();
-}
-
-function f16File(path: string): Uint16Array {
-  const b = readFileSync(path);
-  return new Uint16Array(b.buffer, b.byteOffset, b.byteLength / 2).slice();
 }
 
 function parseStepSet(src: string): ReadonlySet<number> {
@@ -127,20 +118,12 @@ if (!adapter) {
   console.error("FATAL: no WebGPU adapter (bun-webgpu found no GPU)");
   process.exit(1);
 }
-const f16Supported = adapter.features.has("shader-f16");
-if (PRECISION === "f16" && !f16Supported) {
-  throw new Error("batch_major_train_bench: PRECISION=f16 requested but adapter lacks shader-f16");
-}
-const device: GPUDevice = await adapter.requestDevice({
-  requiredFeatures: PRECISION === "f16" ? (["shader-f16"] as GPUFeatureName[]) : [],
-});
+const device: GPUDevice = await adapter.requestDevice();
 const info = adapter.info ?? {};
 console.log(`adapter: ${info.vendor ?? "?"} ${info.architecture ?? "?"}`);
 
 const plan: TrainPlan = JSON.parse(readFileSync(join(MODEL_DIR, "plan_train.json"), "utf8"));
-const weights = PRECISION === "f16"
-  ? f16File(join(MODEL_DIR, WEIGHTS_FILE))
-  : f32File(join(MODEL_DIR, WEIGHTS_FILE));
+const weights = f32File(join(MODEL_DIR, "weights_train.bin"));
 const input = f32File(join(MODEL_DIR, "fixtures", "input_1x3x256x256.f32.bin"));
 const inputs = Array.from({ length: BATCH }, (_unused, lane) => inputVariant(input, lane));
 const texts = Array.from({ length: BATCH }, (_unused, lane) => textEmbedding(lane, plan.textDim));
@@ -148,7 +131,7 @@ const inputFloats = plan.inputShape[0] * plan.inputShape[1] * plan.inputShape[2]
 
 console.log(
   `batch-major train: batch=${BATCH}, runs=${RUNS}, warmup=${WARMUP}, ` +
-    `precision=${PRECISION}, weights=${WEIGHTS_FILE}, dispatches=${plan.steps.length}+${plan.backward.length}` +
+    `dispatches=${plan.steps.length}+${plan.backward.length}` +
     (SHARED_W_FWD_STEPS.size ? `, sharedWForwardSteps=${[...SHARED_W_FWD_STEPS].join(",")}` : "") +
     (STEM_SPATIAL_BWD ? `, stemSpatialBwd=1` : "") +
     (FUSE_PW_GELU ? `, fusePointwiseGeluForward=1` : "") +
@@ -157,12 +140,7 @@ console.log(
 );
 
 let t0 = performance.now();
-const single = await VisionTrainer.create(device, plan, weights, {
-  weightPrecision: PRECISION,
-  stemSpatialBwd: STEM_SPATIAL_BWD,
-  fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
-  fuseResidualBwdIntoPw: FUSE_RESIDUAL_BWD_PW,
-});
+const single = await VisionTrainer.create(device, plan, weights);
 console.log(`single compile+allocate: ${(performance.now() - t0).toFixed(0)} ms`);
 
 single.writeInput(input);
@@ -187,7 +165,6 @@ console.log(
 
 t0 = performance.now();
 const batch = await BatchMajorVisionTrainer.create(device, plan, weights, BATCH, {
-  weightPrecision: PRECISION,
   sharedWForwardSteps: SHARED_W_FWD_STEPS,
   stemSpatialBwd: STEM_SPATIAL_BWD,
   fusePointwiseGeluForward: FUSE_PW_GELU,
