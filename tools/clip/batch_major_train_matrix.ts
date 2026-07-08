@@ -13,6 +13,8 @@ import { spawnSync } from "node:child_process";
 interface Config {
   name: string;
   steps: string;
+  pointwiseTileVariant: "default" | "rect8x16";
+  pointwiseTileSteps: string;
   stemSpatialBwd: boolean;
   fusePointwiseGeluForward: boolean;
   fuseGeluBwdIntoPw: boolean;
@@ -52,10 +54,30 @@ function parseConfigs(src: string): Config[] {
       const fusePointwiseGeluForward = tokens.includes("gelu");
       const fuseGeluBwdIntoPw = tokens.includes("gelubwd");
       const fuseResidualBwdIntoPw = tokens.includes("resbwd");
+      const pointwiseTileVariant = tokens.includes("pwrect") || tokens.includes("rect8x16") ? "rect8x16" : "default";
+      const pwStepsToken = tokens.find((token) => /^pwsteps\d+(?:-\d+)*$/.test(token));
+      const pointwiseTileSteps = pwStepsToken ? pwStepsToken.slice("pwsteps".length).split("-").join(",") : "";
       const steps = tokens
-        .filter((token) => token !== "stem" && token !== "gelu" && token !== "gelubwd" && token !== "resbwd")
+        .filter((token) =>
+          token !== "stem" &&
+          token !== "gelu" &&
+          token !== "gelubwd" &&
+          token !== "resbwd" &&
+          token !== "pwrect" &&
+          token !== "rect8x16" &&
+          !/^pwsteps\d+(?:-\d+)*$/.test(token)
+        )
         .join(",");
-      return { name, steps, stemSpatialBwd, fusePointwiseGeluForward, fuseGeluBwdIntoPw, fuseResidualBwdIntoPw };
+      return {
+        name,
+        steps,
+        pointwiseTileVariant,
+        pointwiseTileSteps,
+        stemSpatialBwd,
+        fusePointwiseGeluForward,
+        fuseGeluBwdIntoPw,
+        fuseResidualBwdIntoPw,
+      };
     });
   if (!configs.length) throw new Error("batch_major_train_matrix: CONFIGS produced no configs");
   return configs;
@@ -74,6 +96,8 @@ function runOne(config: Config, trial: number): Result {
     RUNS: String(RUNS),
     WARMUP: String(WARMUP),
     SHARED_W_FWD_STEPS: config.steps,
+    PW_TILE_VARIANT: config.pointwiseTileVariant === "rect8x16" ? "rect8x16" : "",
+    PW_TILE_STEPS: config.pointwiseTileSteps,
     STEM_SPATIAL_BWD: config.stemSpatialBwd ? "1" : "0",
     FUSE_PW_GELU: config.fusePointwiseGeluForward ? "1" : "0",
     FUSE_GELU_BWD_PW: config.fuseGeluBwdIntoPw ? "1" : "0",
@@ -134,6 +158,8 @@ for (let trial = 0; trial < TRIALS; trial++) {
     if (!JSON_OUT) {
       console.log(
         `trial ${trial} ${config.name.padEnd(10)} steps=${config.steps || "-"} ` +
+          `${config.pointwiseTileVariant === "rect8x16" ? "pwrect=1 " : ""}` +
+          `${config.pointwiseTileSteps ? `pwsteps=${config.pointwiseTileSteps} ` : ""}` +
           `${config.stemSpatialBwd ? "stem=1 " : ""}` +
           `${config.fusePointwiseGeluForward ? "gelu=1 " : ""}` +
           `${config.fuseGeluBwdIntoPw ? "gelubwd=1 " : ""}` +
@@ -149,13 +175,15 @@ if (JSON_OUT) {
   console.log(JSON.stringify({ trials: TRIALS, batch: BATCH, runs: RUNS, warmup: WARMUP, results }, null, 2));
 } else {
   console.log("\nSummary:");
-  console.log("config       steps                 stem gelu gbwd rbwd   batch med [min,max]   img med");
+  console.log("config       steps                 pwrect pwsteps   stem gelu gbwd rbwd   batch med [min,max]   img med");
   for (const config of CONFIGS) {
     const rows = results.filter((r) => r.name === config.name);
     const batchMs = rows.map((r) => r.batchMs);
     const imgMs = rows.map((r) => r.msPerImage);
     console.log(
       `${config.name.padEnd(11)} ${(config.steps || "-").padEnd(21).slice(0, 21)} ` +
+        `${(config.pointwiseTileVariant === "rect8x16" ? "yes" : "no").padStart(6)} ` +
+        `${(config.pointwiseTileSteps || "-").padEnd(8).slice(0, 8)} ` +
         `${(config.stemSpatialBwd ? "yes" : "no").padStart(4)} ` +
         `${(config.fusePointwiseGeluForward ? "yes" : "no").padStart(4)} ` +
         `${(config.fuseGeluBwdIntoPw ? "yes" : "no").padStart(4)} ` +

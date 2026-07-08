@@ -113,12 +113,9 @@ export interface DispatchSpec {
 }
 
 export type WeightPrecision = "f32" | "f16";
-export type PointwiseTileVariant = "default" | "rect8x16";
 
 export interface DispatchOptions {
   weightPrecision?: WeightPrecision;
-  pointwiseTileVariant?: PointwiseTileVariant;
-  pointwiseTileSteps?: ReadonlySet<number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -181,10 +178,6 @@ export function assertStep(cond: boolean, msg: string): void {
 export const PW_TILE_DECLS = /* wgsl */ `
 var<workgroup> xS : array<vec4f, 256>;
 var<workgroup> wS : array<vec4f, 256>;`;
-
-export const PW_RECT8X16_TILE_DECLS = /* wgsl */ `
-var<workgroup> xS : array<vec4f, 256>;
-var<workgroup> wS : array<vec4f, 512>;`;
 
 /** The shared tiled-matmul body: out[co][p] = Σ_ci src[ci][p]·W[ci*cout+co].
  *  Produces acc0..acc3 (vec4 = 4 pixels × 4 couts) then stores. `init` seeds
@@ -251,70 +244,7 @@ export function assertPointwiseTiles(name: string, cin: number, cout: number, P:
   assertStep(wOff % 4 === 0, `${name}: wOff not 16B-aligned`);
 }
 
-function useRect8x16Pointwise(opts: DispatchOptions, stepIndex?: number): boolean {
-  if (opts.pointwiseTileVariant !== "rect8x16") return false;
-  const steps = opts.pointwiseTileSteps;
-  if (!steps?.size) return true;
-  return stepIndex !== undefined && steps.has(stepIndex);
-}
-
-function assertPointwiseRect8x16(name: string, cin: number, cout: number, P: number, wOff: number): void {
-  assertPointwiseTiles(name, cin, cout, P, wOff);
-  assertStep(cout % 64 === 0, `${name}: rect8x16 pointwise needs cout%64==0 (got cout=${cout})`);
-}
-
-function pointwiseRect8x16Main(o: {
-  cin: number; cout: number; P4: number; wOff: number;
-  init: (j: number) => string;
-  store: (j: number) => string;
-  extraStore?: (j: number) => string;
-}): string {
-  const extra = (j: number) => o.extraStore ? `\n  ${o.extraStore(j)}` : "";
-  return /* wgsl */ `
-@compute @workgroup_size(8, 16)
-fn main(@builtin(workgroup_id) wid : vec3u,
-        @builtin(local_invocation_id) lid : vec3u,
-        @builtin(local_invocation_index) li : u32) {
-  let p4 = wid.x * 8u + lid.x;          // this thread's pixel-quad
-  let co = (wid.y * 16u + lid.y) * 4u;  // this thread's first cout
-  let p4base = wid.x * 8u;
-  let cobase = wid.y * 64u;
-  var acc0 = ${o.init(0)};
-  var acc1 = ${o.init(1)};
-  var acc2 = ${o.init(2)};
-  var acc3 = ${o.init(3)};
-  for (var ci0 = 0u; ci0 < ${o.cin}u; ci0 = ci0 + 32u) {
-    // stage: x tile is 32 ci x 8 pixel-quads; W tile is 32 ci x 16 cout-quads
-    for (var t = li; t < 256u; t = t + 128u) {
-      let ci = t >> 3u;
-      let lane = t & 7u;
-      xS[t] = src[(ci0 + ci) * ${o.P4}u + p4base + lane];
-    }
-    for (var t = li; t < 512u; t = t + 128u) {
-      let ci = t >> 4u;
-      let lane = t & 15u;
-      wS[t] = W4((${o.wOff}u + (ci0 + ci) * ${o.cout}u + cobase + lane * 4u) / 4u);
-    }
-    workgroupBarrier();
-    for (var ci = 0u; ci < 32u; ci = ci + 1u) {
-      let xv = xS[ci * 8u + lid.x];
-      let wv = wS[ci * 16u + lid.y];
-      acc0 = fma(vec4f(wv.x), xv, acc0);
-      acc1 = fma(vec4f(wv.y), xv, acc1);
-      acc2 = fma(vec4f(wv.z), xv, acc2);
-      acc3 = fma(vec4f(wv.w), xv, acc3);
-    }
-    workgroupBarrier();
-  }
-  dst[co * ${o.P4}u + p4] = ${o.store(0)};${extra(0)}
-  dst[(co + 1u) * ${o.P4}u + p4] = ${o.store(1)};${extra(1)}
-  dst[(co + 2u) * ${o.P4}u + p4] = ${o.store(2)};${extra(2)}
-  dst[(co + 3u) * ${o.P4}u + p4] = ${o.store(3)};${extra(3)}
-}`;
-}
-
-function pointwise(s: ConvStep, opts: DispatchOptions = {}, stepIndex?: number): DispatchSpec {
-  if (useRect8x16Pointwise(opts, stepIndex)) return pointwiseRect8x16(s, opts);
+function pointwise(s: ConvStep, opts: DispatchOptions = {}): DispatchSpec {
   const P = s.outH * s.outW;
   assertPointwiseTiles(s.name, s.cin, s.cout, P, s.wOff);
   const P4 = P / 4;
@@ -353,52 +283,11 @@ ${pointwiseTiledMain({
   };
 }
 
-function pointwiseRect8x16(s: ConvStep, opts: DispatchOptions = {}): DispatchSpec {
-  const P = s.outH * s.outW;
-  assertPointwiseRect8x16(s.name, s.cin, s.cout, P, s.wOff);
-  const P4 = P / 4;
-  const hasRes = s.residual !== null;
-  assertStep((s.layerScaleOff !== null) === hasRes, `${s.name}: layerScale without residual`);
-  const buffers: BufferRef[] = [
-    { kind: "weights" },
-    { kind: "slot", slot: s.src },
-    { kind: "slot", slot: s.dst },
-  ];
-  if (hasRes) buffers.push({ kind: "slot", slot: s.residual as number });
-
-  const post = (j: number): string => {
-    const a = s.act === "gelu" ? `gelu4(acc${j})` : `acc${j}`;
-    if (!hasRes) return a;
-    return `res[(co + ${j}u) * ${P4}u + p4] + vec4f(W(${s.layerScaleOff}u + co + ${j}u)) * ${a}`;
-  };
-
-  const code = /* wgsl */ `
-${weightsDecl(0, opts.weightPrecision)}
-@group(0) @binding(1) var<storage, read> src : array<vec4f>;
-@group(0) @binding(2) var<storage, read_write> dst : array<vec4f>;
-${hasRes ? `@group(0) @binding(3) var<storage, read> res : array<vec4f>;` : ``}
-${GELU}
-${PW_RECT8X16_TILE_DECLS}
-${pointwiseRect8x16Main({
-    cin: s.cin, cout: s.cout, P4, wOff: s.wOff,
-    init: (j) => `vec4f(W(${s.bOff}u + co + ${j}u))`,
-    store: post,
-  })}`;
-  return {
-    label: `pw rect8x16 ${s.cin}->${s.cout} @${s.outH}x${s.outW}`,
-    code,
-    workgroups: [P4 / 8, s.cout / 64, 1],
-    buffers,
-  };
-}
-
 export function pointwiseFusedGelu(
   s: ConvStep,
   gelu: GeluStep,
-  opts: DispatchOptions = {},
-  stepIndex?: number
+  opts: DispatchOptions = {}
 ): DispatchSpec {
-  if (useRect8x16Pointwise(opts, stepIndex)) return pointwiseRect8x16FusedGelu(s, gelu, opts);
   assertStep(s.variant === "pointwise", `${s.name}: fused GELU only supports pointwise conv`);
   assertStep(s.act === "none", `${s.name}: fused GELU expects split train-mode conv`);
   assertStep(s.residual === null && s.layerScaleOff === null, `${s.name}: fused GELU does not support residual epilogues`);
@@ -424,45 +313,6 @@ ${pointwiseTiledMain({
     label: `pw+gelu ${s.cin}->${s.cout} @${s.outH}x${s.outW}`,
     code,
     workgroups: [P4 / 8, s.cout / 32, 1],
-    buffers: [
-      { kind: "weights" },
-      { kind: "slot", slot: s.src },
-      { kind: "slot", slot: s.dst },
-      { kind: "slot", slot: gelu.dst },
-    ],
-  };
-}
-
-function pointwiseRect8x16FusedGelu(
-  s: ConvStep,
-  gelu: GeluStep,
-  opts: DispatchOptions = {}
-): DispatchSpec {
-  assertStep(s.variant === "pointwise", `${s.name}: fused GELU only supports pointwise conv`);
-  assertStep(s.act === "none", `${s.name}: fused GELU expects split train-mode conv`);
-  assertStep(s.residual === null && s.layerScaleOff === null, `${s.name}: fused GELU does not support residual epilogues`);
-  assertStep(gelu.src === s.dst, `${s.name}: fused GELU src slot ${gelu.src} != conv dst ${s.dst}`);
-  const P = s.outH * s.outW;
-  assertStep(gelu.n === s.cout * P, `${s.name}: fused GELU n=${gelu.n} != cout*P=${s.cout * P}`);
-  assertPointwiseRect8x16(s.name, s.cin, s.cout, P, s.wOff);
-  const P4 = P / 4;
-  const code = /* wgsl */ `
-${weightsDecl(0, opts.weightPrecision)}
-@group(0) @binding(1) var<storage, read> src : array<vec4f>;
-@group(0) @binding(2) var<storage, read_write> dst : array<vec4f>;
-@group(0) @binding(3) var<storage, read_write> geluDst : array<vec4f>;
-${GELU}
-${PW_RECT8X16_TILE_DECLS}
-${pointwiseRect8x16Main({
-    cin: s.cin, cout: s.cout, P4, wOff: s.wOff,
-    init: (j) => `vec4f(W(${s.bOff}u + co + ${j}u))`,
-    store: (j) => `acc${j}`,
-    extraStore: (j) => `geluDst[(co + ${j}u) * ${P4}u + p4] = gelu4(acc${j});`,
-  })}`;
-  return {
-    label: `pw+gelu rect8x16 ${s.cin}->${s.cout} @${s.outH}x${s.outW}`,
-    code,
-    workgroups: [P4 / 8, s.cout / 64, 1],
     buffers: [
       { kind: "weights" },
       { kind: "slot", slot: s.src },
@@ -811,17 +661,17 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 // Thin dispatchers — step kind → dispatch list; conv variant → emitter.
 // ---------------------------------------------------------------------------
 
-function convDispatches(s: ConvStep, opts: DispatchOptions = {}, stepIndex?: number): DispatchSpec[] {
+function convDispatches(s: ConvStep, opts: DispatchOptions = {}): DispatchSpec[] {
   switch (s.variant) {
-    case "pointwise": return [pointwise(s, opts, stepIndex)];
+    case "pointwise": return [pointwise(s, opts)];
     case "depthwise": return [spatialConv(s, opts)];  // depthwise = spatial, cpg=1
     case "general":   return [spatialConv(s, opts)];
   }
 }
 
-export function stepDispatches(step: VisionStep, opts: DispatchOptions = {}, stepIndex?: number): DispatchSpec[] {
+export function stepDispatches(step: VisionStep, opts: DispatchOptions = {}): DispatchSpec[] {
   switch (step.kind) {
-    case "conv":      return convDispatches(step, opts, stepIndex);
+    case "conv":      return convDispatches(step, opts);
     case "se":        return [seStep(step, opts)];
     case "attn_core": return [attnCore(step)];
     case "head":      return [headStep(step, opts)];
@@ -831,5 +681,5 @@ export function stepDispatches(step: VisionStep, opts: DispatchOptions = {}, ste
 
 /** All dispatches for a full forward pass, in execution order. */
 export function planDispatches(plan: VisionPlan, opts: DispatchOptions = {}): DispatchSpec[] {
-  return plan.steps.flatMap((step, index) => stepDispatches(step, opts, index));
+  return plan.steps.flatMap((step) => stepDispatches(step, opts));
 }

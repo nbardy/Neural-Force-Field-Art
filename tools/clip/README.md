@@ -283,6 +283,17 @@ kernel-priority tool, not exact full-chain attribution. First profiles put
 `pw`, `pw_bwd`, `spatial_bwd`, and `conv` at the top; attention backward is not
 first-wave work.
 
+Pointwise tile forks are env-gated. The `rect8x16` fork is kept as a
+no-promote benchmark lane:
+
+```bash
+PW_TILE_VARIANT=rect8x16 PW_TILE_STEPS=57,59,62,64 PLAN=plan_train.json bun tools/clip/fused_test.ts
+PW_TILE_VARIANT=rect8x16 PW_TILE_STEPS=57,59,62,64 STEM_SPATIAL_BWD=1 FUSE_PW_GELU=1 BATCH=3 bun tools/clip/batch_major_train_bench.ts
+```
+
+Use the same switches with `dispatch_profile.ts` and the 3D `step_*` tools.
+Default CLIP behavior is unchanged when `PW_TILE_VARIANT` is unset.
+
 ## prompt→splats browser page (Task #7 phase 2)
 
 The end-to-end demo: type a prompt and a field of 2D Gaussian splats

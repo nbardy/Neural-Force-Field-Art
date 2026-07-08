@@ -218,37 +218,6 @@ the f32 activation traffic or the need for accurate `dL/dimage`, and the v02
 gate did not promote it. The next exact-math CLIP fork should target selected
 rectangular pointwise tiles or split-K `pw_bwd`, not blanket f16.
 
-## Rect8x16 Pointwise Tile Gate
-
-`PW_TILE_VARIANT=rect8x16` adds a gated exact-math forward pointwise tile. The
-default pointwise tile covers `8 pixel-quads x 8 cout-quads` per workgroup. The
-rect variant covers `8 pixel-quads x 16 cout-quads`, uses a `8x16` workgroup,
-and stages `12 KB` of workgroup memory.
-
-Correctness passed for the broad repeated `256<->768 @16x16` allowlist:
-
-```bash
-PW_TILE_VARIANT=rect8x16 PW_TILE_STEPS=57,59,62,64,67,69,72,74,77,79,82,84,87,89,92,94,97,99,102,104 STEM_SPATIAL_BWD=1 FUSE_PW_GELU=1 BATCH=3 RUNS=1 WARMUP=1 bun tools/clip/batch_major_train_bench.ts
-```
-
-The train-plan forward gate also passed with final embedding cosine
-`1.000000`, and the B=3 gradient lanes all reported cosine `1.000000`.
-
-Timing did not promote:
-
-| Test | Base | Rect8x16 | Read |
-| --- | ---: | ---: | --- |
-| CLIP B=3 train matrix | `41.63 ms` | `41.43 ms` | flat |
-| 3D step, broad allowlist normal | `55.99 ms` | `55.92 ms` | flat |
-| 3D step, broad allowlist CLIP profile | `42.55 ms` | `44.53 ms` | worse |
-| 3D step, first-four allowlist normal | `54.78 ms` | `55.41 ms` | worse |
-| timestamp isolated total | `79.17 ms` | `100.73 ms` | worse |
-
-Decision: keep the tile gate and plumbing, but do not enable it by default. The
-next pointwise leap should be more structural than simply widening the
-workgroup: true dual-cout accumulation, split-K `pw_bwd`, or narrow precision
-forks with a full `dL/dimage` gate.
-
 ## Integrated Timestamp Step Profile
 
 `tools/splat3d/step_bench.ts` now also accepts `TIMESTAMP=1` for integrated step

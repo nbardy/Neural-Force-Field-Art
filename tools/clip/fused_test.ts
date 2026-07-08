@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { setupGlobals } from "bun-webgpu";
 import { VisionEncoder, type VisionPlan } from "../../src/clip/vision";
+import type { PointwiseTileVariant } from "../../src/clip/vision_wgsl";
 
 setupGlobals();
 
@@ -33,6 +34,22 @@ const PLAN_FILE = process.env.PLAN ?? "plan.json";
 const IS_TRAIN = PLAN_FILE.includes("train");
 const WEIGHTS_FILE = process.env.WEIGHTS ?? (IS_TRAIN ? "weights_train.bin" : "weights.bin");
 const REFS_DIR = process.env.REFS ?? (IS_TRAIN ? "refs_train" : "refs");
+const POINTWISE_TILE_VARIANT: PointwiseTileVariant =
+  process.env.PW_TILE_VARIANT === "rect8x16" || process.env.POINTWISE_TILE_VARIANT === "rect8x16"
+    ? "rect8x16"
+    : "default";
+const POINTWISE_TILE_STEPS = parseStepSet(process.env.PW_TILE_STEPS ?? process.env.POINTWISE_TILE_STEPS ?? "");
+
+function parseStepSet(src: string): ReadonlySet<number> {
+  const steps = src
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => Number(part))
+    .filter((n) => Number.isFinite(n))
+    .map((n) => n | 0);
+  return new Set(steps);
+}
 
 const plan: VisionPlan = JSON.parse(readFileSync(join(MODEL_DIR, PLAN_FILE), "utf8"));
 const weights = new Float32Array(readFileSync(join(MODEL_DIR, WEIGHTS_FILE)).buffer);
@@ -52,9 +69,15 @@ const info = adapter.info ?? {};
 console.log(`adapter: ${info.vendor ?? "?"} ${info.architecture ?? "?"}`);
 
 const t0 = performance.now();
-const enc = await VisionEncoder.create(device, plan, weights);
+const enc = await VisionEncoder.create(device, plan, weights, {
+  pointwiseTileVariant: POINTWISE_TILE_VARIANT,
+  pointwiseTileSteps: POINTWISE_TILE_STEPS,
+});
 console.log(
-  `pipelines: ${plan.steps.length} steps compiled in ${(performance.now() - t0).toFixed(0)} ms\n`
+  `pipelines: ${plan.steps.length} steps compiled in ${(performance.now() - t0).toFixed(0)} ms` +
+    (POINTWISE_TILE_VARIANT !== "default" ? ` pointwiseTileVariant=${POINTWISE_TILE_VARIANT}` : "") +
+    (POINTWISE_TILE_STEPS.size ? ` pointwiseTileSteps=${[...POINTWISE_TILE_STEPS].join(",")}` : "") +
+    "\n"
 );
 enc.writeInput(input);
 

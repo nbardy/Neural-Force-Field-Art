@@ -27,7 +27,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setupGlobals } from "bun-webgpu";
 import type { TrainPlan } from "../../src/clip/vision";
-import type { PointwiseTileVariant, WeightPrecision } from "../../src/clip/vision_wgsl";
+import type { WeightPrecision } from "../../src/clip/vision_wgsl";
 import {
   LEGIBLE_3D_G,
   Splat3DOptimizer,
@@ -59,11 +59,6 @@ const GRID_DIRECT_RASTER = process.env.GRID_DIRECT_RASTER === "1";
 const CLIP_REFRESH_INTERVAL = Math.max(1, Number(process.env.CLIP_REFRESH_INTERVAL ?? 1) | 0);
 const CLIP_CACHED_LR_SCALE = normalizeCachedLrScale(Number(process.env.CLIP_CACHED_LR_SCALE ?? 1));
 const SHARED_W_FWD_STEPS = parseStepSet(process.env.SHARED_W_FWD_STEPS ?? "");
-const POINTWISE_TILE_VARIANT: PointwiseTileVariant =
-  process.env.PW_TILE_VARIANT === "rect8x16" || process.env.POINTWISE_TILE_VARIANT === "rect8x16"
-    ? "rect8x16"
-    : "default";
-const POINTWISE_TILE_STEPS = parseStepSet(process.env.PW_TILE_STEPS ?? process.env.POINTWISE_TILE_STEPS ?? "");
 const TIMESTAMP = process.env.TIMESTAMP === "1";
 const CLIP_PRECISION: WeightPrecision =
   process.env.CLIP_PRECISION === "f16" || process.env.PRECISION === "f16" ? "f16" : "f32";
@@ -147,8 +142,6 @@ const opt = await Splat3DOptimizer.create(device, plan, weights, {
   clipLayout: CLIP_LAYOUT,
   viewSampler: VIEW_SAMPLER,
   clipWeightPrecision: CLIP_PRECISION,
-  pointwiseTileVariant: POINTWISE_TILE_VARIANT,
-  pointwiseTileSteps: POINTWISE_TILE_STEPS,
   stemSpatialBwd: STEM_SPATIAL_BWD,
   spatialBwdVariant: SPATIAL_BWD_VARIANT,
   fusePointwiseGeluForward: FUSE_PW_GELU,
@@ -168,8 +161,6 @@ console.log(
     `viewSampler=${opt.viewSampler}, weights=${WEIGHTS_FILE}, cap=${CAP}, runs=${RUNS}, warmup=${WARMUP}, ` +
     `stemSpatialBwd=${STEM_SPATIAL_BWD ? 1 : 0}, ` +
     `spatialBwdVariant=${SPATIAL_BWD_VARIANT ?? "generic"}, ` +
-    `pointwiseTileVariant=${POINTWISE_TILE_VARIANT}, ` +
-    (POINTWISE_TILE_STEPS.size ? `pointwiseTileSteps=${[...POINTWISE_TILE_STEPS].join(",")}, ` : "") +
     `fusePointwiseGeluForward=${FUSE_PW_GELU ? 1 : 0}, ` +
     `fuseGeluBwdIntoPw=${FUSE_GELU_BWD_PW ? 1 : 0}, ` +
     `fuseResidualBwdIntoPw=${FUSE_RESIDUAL_BWD_PW ? 1 : 0}, ` +

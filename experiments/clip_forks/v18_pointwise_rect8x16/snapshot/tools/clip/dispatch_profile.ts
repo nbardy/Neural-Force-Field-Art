@@ -21,7 +21,6 @@ import {
   planDispatches,
   type BufferRef,
   type DispatchSpec,
-  type PointwiseTileVariant,
   type WeightPrecision,
   type VisionPlan,
 } from "../../src/clip/vision_wgsl";
@@ -41,11 +40,6 @@ const SPATIAL_BWD_VARIANT = process.env.SPATIAL_BWD_VARIANT === "depthwise4" ? "
 const FUSE_PW_GELU = process.env.FUSE_PW_GELU === "1";
 const FUSE_GELU_BWD_PW = process.env.FUSE_GELU_BWD_PW === "1";
 const FUSE_RESIDUAL_BWD_PW = process.env.FUSE_RESIDUAL_BWD_PW === "1";
-const POINTWISE_TILE_VARIANT: PointwiseTileVariant =
-  process.env.PW_TILE_VARIANT === "rect8x16" || process.env.POINTWISE_TILE_VARIANT === "rect8x16"
-    ? "rect8x16"
-    : "default";
-const POINTWISE_TILE_STEPS = parseStepSet(process.env.PW_TILE_STEPS ?? process.env.POINTWISE_TILE_STEPS ?? "");
 const TIMESTAMP = process.env.TIMESTAMP === "1";
 const PRECISION: WeightPrecision = process.env.PRECISION === "f16" ? "f16" : "f32";
 const PLAN_FILE =
@@ -79,17 +73,6 @@ function f32File(path: string): Float32Array {
 function f16File(path: string): Uint16Array {
   const b = readFileSync(path);
   return new Uint16Array(b.buffer, b.byteOffset, b.byteLength / 2).slice();
-}
-
-function parseStepSet(src: string): ReadonlySet<number> {
-  const steps = src
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => Number(part))
-    .filter((n) => Number.isFinite(n))
-    .map((n) => n | 0);
-  return new Set(steps);
 }
 
 async function makePipeline(device: GPUDevice, spec: DispatchSpec): Promise<GPUComputePipeline> {
@@ -210,17 +193,11 @@ let specs: DispatchSpec[];
 let fwdCount: number;
 if (BATCH > 1) {
   if (MODE === "forward") {
-    specs = batchForwardDispatches(plan as VisionPlan, BATCH, {
-      weightPrecision: PRECISION,
-      pointwiseTileVariant: POINTWISE_TILE_VARIANT,
-      pointwiseTileSteps: POINTWISE_TILE_STEPS,
-    });
+    specs = batchForwardDispatches(plan as VisionPlan, BATCH, { weightPrecision: PRECISION });
     fwdCount = specs.length;
   } else {
     const out = batchTrainDispatches(plan, BATCH, {
       weightPrecision: PRECISION,
-      pointwiseTileVariant: POINTWISE_TILE_VARIANT,
-      pointwiseTileSteps: POINTWISE_TILE_STEPS,
       stemSpatialBwd: STEM_SPATIAL_BWD,
       spatialBwdVariant: SPATIAL_BWD_VARIANT,
       fusePointwiseGeluForward: FUSE_PW_GELU,
@@ -231,22 +208,12 @@ if (BATCH > 1) {
     fwdCount = out.fwdCount;
   }
 } else if (MODE === "forward") {
-  specs = planDispatches(plan, {
-    weightPrecision: PRECISION,
-    pointwiseTileVariant: POINTWISE_TILE_VARIANT,
-    pointwiseTileSteps: POINTWISE_TILE_STEPS,
-  });
+  specs = planDispatches(plan, { weightPrecision: PRECISION });
   fwdCount = specs.length;
 } else {
-  const fwd = planDispatches(plan, {
-    weightPrecision: PRECISION,
-    pointwiseTileVariant: POINTWISE_TILE_VARIANT,
-    pointwiseTileSteps: POINTWISE_TILE_STEPS,
-  });
+  const fwd = planDispatches(plan, { weightPrecision: PRECISION });
   const bwd = planBwdDispatches(plan, {
     weightPrecision: PRECISION,
-    pointwiseTileVariant: POINTWISE_TILE_VARIANT,
-    pointwiseTileSteps: POINTWISE_TILE_STEPS,
     stemSpatialBwd: STEM_SPATIAL_BWD,
     spatialBwdVariant: SPATIAL_BWD_VARIANT,
     fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
@@ -297,8 +264,6 @@ if (!CSV) {
       `timing=${useTimestamps ? "gpu-timestamp" : "split-submit-wall"}` +
       (STEM_SPATIAL_BWD ? `, stemSpatialBwd=1` : "") +
       (SPATIAL_BWD_VARIANT ? `, spatialBwdVariant=${SPATIAL_BWD_VARIANT}` : "") +
-      (POINTWISE_TILE_VARIANT !== "default" ? `, pointwiseTileVariant=${POINTWISE_TILE_VARIANT}` : "") +
-      (POINTWISE_TILE_STEPS.size ? `, pointwiseTileSteps=${[...POINTWISE_TILE_STEPS].join(",")}` : "") +
       (FUSE_PW_GELU ? `, fusePointwiseGeluForward=1` : "") +
       (FUSE_GELU_BWD_PW ? `, fuseGeluBwdIntoPw=1` : "") +
       (FUSE_RESIDUAL_BWD_PW ? `, fuseResidualBwdIntoPw=1` : "")

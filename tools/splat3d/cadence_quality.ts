@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setupGlobals } from "bun-webgpu";
 import type { TrainPlan } from "../../src/clip/vision";
-import type { WeightPrecision } from "../../src/clip/vision_wgsl";
+import type { PointwiseTileVariant, WeightPrecision } from "../../src/clip/vision_wgsl";
 import {
   LEGIBLE_3D_G,
   Splat3DOptimizer,
@@ -41,6 +41,11 @@ const CLIP_PRECISION: WeightPrecision =
   process.env.CLIP_PRECISION === "f16" || process.env.PRECISION === "f16" ? "f16" : "f32";
 const WEIGHTS_FILE =
   process.env.WEIGHTS ?? (CLIP_PRECISION === "f16" ? "weights_train_f16.bin" : "weights_train.bin");
+const POINTWISE_TILE_VARIANT: PointwiseTileVariant =
+  process.env.PW_TILE_VARIANT === "rect8x16" || process.env.POINTWISE_TILE_VARIANT === "rect8x16"
+    ? "rect8x16"
+    : "default";
+const POINTWISE_TILE_STEPS = parseStepSet(process.env.PW_TILE_STEPS ?? process.env.POINTWISE_TILE_STEPS ?? "");
 const STEM_SPATIAL_BWD = process.env.STEM_SPATIAL_BWD !== "0";
 const SPATIAL_BWD_VARIANT = process.env.SPATIAL_BWD_VARIANT === "depthwise4" ? "depthwise4" : undefined;
 const FUSE_PW_GELU = process.env.FUSE_PW_GELU !== "0";
@@ -97,6 +102,17 @@ function f32File(path: string): Float32Array {
 function f16File(path: string): Uint16Array {
   const b = readFileSync(path);
   return new Uint16Array(b.buffer, b.byteOffset, b.byteLength / 2).slice();
+}
+
+function parseStepSet(src: string): ReadonlySet<number> {
+  const steps = src
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => Number(part))
+    .filter((n) => Number.isFinite(n))
+    .map((n) => n | 0);
+  return new Set(steps);
 }
 
 function textEmbedding(seed: number, dim: number): Float32Array {
@@ -215,6 +231,8 @@ for (const cfg of CONFIGS) {
     clipLayout: "per_view",
     viewSampler: VIEW_SAMPLER,
     clipWeightPrecision: CLIP_PRECISION,
+    pointwiseTileVariant: POINTWISE_TILE_VARIANT,
+    pointwiseTileSteps: POINTWISE_TILE_STEPS,
     stemSpatialBwd: STEM_SPATIAL_BWD,
     spatialBwdVariant: SPATIAL_BWD_VARIANT,
     fusePointwiseGeluForward: FUSE_PW_GELU,
@@ -280,6 +298,8 @@ writeFileSync(
         clipBatch: CLIP_BATCH,
         viewSampler: VIEW_SAMPLER,
         clipPrecision: CLIP_PRECISION,
+        pointwiseTileVariant: POINTWISE_TILE_VARIANT,
+        pointwiseTileSteps: [...POINTWISE_TILE_STEPS],
         weightsFile: WEIGHTS_FILE,
         budgetMs: RUN_STEPS > 0 ? null : BUDGET_MS,
         runSteps: RUN_STEPS > 0 ? RUN_STEPS : null,

@@ -34,7 +34,6 @@ node experiments/clip_forks/diff_fork.mjs v14_cadence_quality_gate
 node experiments/clip_forks/diff_fork.mjs v15_cached_lr_scale
 node experiments/clip_forks/diff_fork.mjs v16_grid_real_prompt_quality
 node experiments/clip_forks/diff_fork.mjs v17_pointwise_roofline
-node experiments/clip_forks/diff_fork.mjs v18_pointwise_rect8x16
 ```
 
 ## Standard Gate
@@ -84,8 +83,6 @@ Use the gate-specific env vars in addition to the commands above.
   `grid9_close2 + directgrid` versus the default `3/9` per-view schedule.
 - `v17_pointwise_roofline`: static and timestamp-backed report for pointwise
   CLIP math, memory layout, f16 reality, and next exact-math pointwise forks.
-- `v18_pointwise_rect8x16`: exact-math `8x16` forward pointwise tile variant
-  and step allowlist plumbing; recorded as no-promote after timing gates.
 
 ## Snapshot Coverage
 
@@ -119,9 +116,6 @@ Use the gate-specific env vars in addition to the commands above.
 - `v17_pointwise_roofline`: CLIP WGSL emitters, dispatch profiler, batch
   pointwise experiments, pointwise report, perf-note context, and prior
   pointwise agent notes.
-- `v18_pointwise_rect8x16`: CLIP forward/batch WGSL emitters, 3D optimizer
-  wiring, CLIP/3D benchmark env gates, grid/cadence quality harnesses, perf
-  notes, and fork-index context.
 
 ## Related Notes
 
@@ -139,8 +133,3 @@ Use the gate-specific env vars in addition to the commands above.
 - `agent_notes/optimization_session/v15_agent_synthesis_2026_07_08.md`
 - `agent_notes/optimization_session/nunchaku_clip_approx_2026_07_08.md`
 - `agent_notes/optimization_session/pointwise_roofline_v17_2026_07_08.md`
-- `agent_notes/optimization_session/v18_agent_forward_tile.md`
-- `agent_notes/optimization_session/v18_agent_splitk_bwd.md`
-- `agent_notes/optimization_session/v18_agent_pointwise_f16.md`
-- `agent_notes/optimization_session/v18_agent_pointwise_gates.md`
-- `agent_notes/optimization_session/v18_agent_grid_speed_quality.md`

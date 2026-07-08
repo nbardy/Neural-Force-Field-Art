@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { setupGlobals } from "bun-webgpu";
 import { VisionTrainer, type TrainPlan } from "../../src/clip/vision";
 import { BatchMajorVisionTrainer } from "../../src/clip/vision_batch";
-import type { PointwiseTileVariant, WeightPrecision } from "../../src/clip/vision_wgsl";
+import type { WeightPrecision } from "../../src/clip/vision_wgsl";
 
 setupGlobals();
 
@@ -23,11 +23,6 @@ const BATCH = Number(process.env.BATCH ?? 3);
 const RUNS = Number(process.env.RUNS ?? 3);
 const WARMUP = Number(process.env.WARMUP ?? 3);
 const SHARED_W_FWD_STEPS = parseStepSet(process.env.SHARED_W_FWD_STEPS ?? "");
-const POINTWISE_TILE_VARIANT: PointwiseTileVariant =
-  process.env.PW_TILE_VARIANT === "rect8x16" || process.env.POINTWISE_TILE_VARIANT === "rect8x16"
-    ? "rect8x16"
-    : "default";
-const POINTWISE_TILE_STEPS = parseStepSet(process.env.PW_TILE_STEPS ?? process.env.POINTWISE_TILE_STEPS ?? "");
 const STEM_SPATIAL_BWD = process.env.STEM_SPATIAL_BWD === "1";
 const SPATIAL_BWD_VARIANT = process.env.SPATIAL_BWD_VARIANT === "depthwise4" ? "depthwise4" : undefined;
 const FUSE_PW_GELU = process.env.FUSE_PW_GELU === "1";
@@ -156,8 +151,6 @@ console.log(
   `batch-major train: batch=${BATCH}, runs=${RUNS}, warmup=${WARMUP}, ` +
     `precision=${PRECISION}, weights=${WEIGHTS_FILE}, dispatches=${plan.steps.length}+${plan.backward.length}` +
     (SHARED_W_FWD_STEPS.size ? `, sharedWForwardSteps=${[...SHARED_W_FWD_STEPS].join(",")}` : "") +
-    (POINTWISE_TILE_VARIANT !== "default" ? `, pointwiseTileVariant=${POINTWISE_TILE_VARIANT}` : "") +
-    (POINTWISE_TILE_STEPS.size ? `, pointwiseTileSteps=${[...POINTWISE_TILE_STEPS].join(",")}` : "") +
     (STEM_SPATIAL_BWD ? `, stemSpatialBwd=1` : "") +
     (SPATIAL_BWD_VARIANT ? `, spatialBwdVariant=${SPATIAL_BWD_VARIANT}` : "") +
     (FUSE_PW_GELU ? `, fusePointwiseGeluForward=1` : "") +
@@ -168,8 +161,6 @@ console.log(
 let t0 = performance.now();
 const single = await VisionTrainer.create(device, plan, weights, {
   weightPrecision: PRECISION,
-  pointwiseTileVariant: POINTWISE_TILE_VARIANT,
-  pointwiseTileSteps: POINTWISE_TILE_STEPS,
   stemSpatialBwd: STEM_SPATIAL_BWD,
   spatialBwdVariant: SPATIAL_BWD_VARIANT,
   fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
@@ -200,8 +191,6 @@ console.log(
 t0 = performance.now();
 const batch = await BatchMajorVisionTrainer.create(device, plan, weights, BATCH, {
   weightPrecision: PRECISION,
-  pointwiseTileVariant: POINTWISE_TILE_VARIANT,
-  pointwiseTileSteps: POINTWISE_TILE_STEPS,
   sharedWForwardSteps: SHARED_W_FWD_STEPS,
   stemSpatialBwd: STEM_SPATIAL_BWD,
   spatialBwdVariant: SPATIAL_BWD_VARIANT,

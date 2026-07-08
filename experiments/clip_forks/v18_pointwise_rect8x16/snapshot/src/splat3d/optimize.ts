@@ -1,6 +1,6 @@
 /// <reference types="@webgpu/types" />
 import { VisionTrainer, type TrainPlan, type WeightArray } from "../clip/vision";
-import type { PointwiseTileVariant, WeightPrecision } from "../clip/vision_wgsl";
+import type { WeightPrecision } from "../clip/vision_wgsl";
 import { BatchMajorVisionTrainer } from "../clip/vision_batch";
 import { type AdamHyper, DEFAULT_HYPER } from "../splat/adam_wgsl";
 import { DEFAULT_3D_CAMERAS, type Camera3D, type PreparedCamera3D, prepareCamera } from "./cameras";
@@ -39,8 +39,6 @@ export interface Splat3DOptimizerConfig {
   clipLayout?: Splat3DClipLayout;
   viewSampler?: Splat3DViewSampler;
   clipWeightPrecision?: WeightPrecision;
-  pointwiseTileVariant?: PointwiseTileVariant;
-  pointwiseTileSteps?: ReadonlySet<number>;
   stemSpatialBwd?: boolean;
   spatialBwdVariant?: "generic" | "depthwise4";
   fusePointwiseGeluForward?: boolean;
@@ -144,8 +142,6 @@ export class Splat3DOptimizer {
 	    });
     const clipDispatchOptions = {
       weightPrecision: cfg.clipWeightPrecision,
-      pointwiseTileVariant: cfg.pointwiseTileVariant,
-      pointwiseTileSteps: cfg.pointwiseTileSteps,
       stemSpatialBwd: cfg.stemSpatialBwd ?? true,
       spatialBwdVariant: cfg.spatialBwdVariant,
       fusePointwiseGeluForward: cfg.fusePointwiseGeluForward ?? true,

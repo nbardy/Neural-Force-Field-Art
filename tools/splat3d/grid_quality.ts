@@ -17,7 +17,7 @@ import { setupGlobals } from "bun-webgpu";
 import ort from "onnxruntime-node";
 import { AutoTokenizer, env } from "@huggingface/transformers";
 import type { TrainPlan } from "../../src/clip/vision";
-import type { WeightPrecision } from "../../src/clip/vision_wgsl";
+import type { PointwiseTileVariant, WeightPrecision } from "../../src/clip/vision_wgsl";
 import { buildGrid9Prompt, buildViewPrompt, type Grid9PromptMode } from "../../src/splat3d/cameras";
 import {
   LEGIBLE_3D_G,
@@ -51,6 +51,11 @@ const CLIP_PRECISION: WeightPrecision =
   process.env.CLIP_PRECISION === "f16" || process.env.PRECISION === "f16" ? "f16" : "f32";
 const WEIGHTS_FILE =
   process.env.WEIGHTS ?? (CLIP_PRECISION === "f16" ? "weights_train_f16.bin" : "weights_train.bin");
+const POINTWISE_TILE_VARIANT: PointwiseTileVariant =
+  process.env.PW_TILE_VARIANT === "rect8x16" || process.env.POINTWISE_TILE_VARIANT === "rect8x16"
+    ? "rect8x16"
+    : "default";
+const POINTWISE_TILE_STEPS = parseStepSet(process.env.PW_TILE_STEPS ?? process.env.POINTWISE_TILE_STEPS ?? "");
 
 interface GridQualityConfig {
   label: string;
@@ -141,6 +146,17 @@ function f32File(path: string): Float32Array {
 function f16File(path: string): Uint16Array {
   const b = readFileSync(path);
   return new Uint16Array(b.buffer, b.byteOffset, b.byteLength / 2).slice();
+}
+
+function parseStepSet(src: string): ReadonlySet<number> {
+  const steps = src
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => Number(part))
+    .filter((n) => Number.isFinite(n))
+    .map((n) => n | 0);
+  return new Set(steps);
 }
 
 function ensureTextAssets(): void {
@@ -310,7 +326,9 @@ promptShell.destroy();
 console.log(`grid_quality: prompt="${PROMPT}" blackBgText=${BLACK_BG_TEXT ? 1 : 0}`);
 console.log(
   `grid_quality: configs=${CONFIGS.map(configSummary).join(",")} trials=${TRIALS} ` +
-    `budgetMs=${RUN_STEPS > 0 ? "fixedSteps" : BUDGET_MS} runSteps=${RUN_STEPS}`
+    `budgetMs=${RUN_STEPS > 0 ? "fixedSteps" : BUDGET_MS} runSteps=${RUN_STEPS} ` +
+    `pointwiseTileVariant=${POINTWISE_TILE_VARIANT}` +
+    (POINTWISE_TILE_STEPS.size ? ` pointwiseTileSteps=${[...POINTWISE_TILE_STEPS].join(",")}` : "")
 );
 
 const viewEmbeds: Float32Array[] = [];
@@ -340,6 +358,8 @@ for (let trial = 0; trial < TRIALS; trial++) {
       clipLayout: cfg.clipLayout,
       viewSampler: VIEW_SAMPLER,
       clipWeightPrecision: CLIP_PRECISION,
+      pointwiseTileVariant: POINTWISE_TILE_VARIANT,
+      pointwiseTileSteps: POINTWISE_TILE_STEPS,
       gridDirectRaster: cfg.gridDirectRaster,
     });
     opt.setViewPrompts(viewEmbeds);
@@ -429,6 +449,8 @@ writeFileSync(
         trials: TRIALS,
         viewSampler: VIEW_SAMPLER,
         clipPrecision: CLIP_PRECISION,
+        pointwiseTileVariant: POINTWISE_TILE_VARIANT,
+        pointwiseTileSteps: [...POINTWISE_TILE_STEPS],
         weightsFile: WEIGHTS_FILE,
         budgetMs: RUN_STEPS > 0 ? null : BUDGET_MS,
         runSteps: RUN_STEPS > 0 ? RUN_STEPS : null,

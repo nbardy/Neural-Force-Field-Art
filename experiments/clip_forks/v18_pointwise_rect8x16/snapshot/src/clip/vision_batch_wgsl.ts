@@ -137,11 +137,11 @@ function forwardDispatches(plan: VisionPlan, batch: number, opts: BatchDispatchO
       next?.kind === "gelu" &&
       next.src === step.dst
     ) {
-      specs.push(batchSpec(plan, pointwiseFusedGelu(step as ConvStep, next as GeluStep, opts, index), batch));
+      specs.push(batchSpec(plan, pointwiseFusedGelu(step as ConvStep, next as GeluStep, opts), batch));
       index += 1;
       continue;
     }
-    for (const spec of stepDispatches(step, opts, index)) {
+    for (const spec of stepDispatches(step, opts)) {
       if (spec.workgroups[2] !== 1) {
         throw new Error(`vision_batch_wgsl: ${spec.label} already uses workgroup z=${spec.workgroups[2]}`);
       }
