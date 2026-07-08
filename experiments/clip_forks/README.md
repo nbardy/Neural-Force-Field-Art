@@ -33,6 +33,7 @@ node experiments/clip_forks/diff_fork.mjs v13_cached_clip_gradient
 node experiments/clip_forks/diff_fork.mjs v14_cadence_quality_gate
 node experiments/clip_forks/diff_fork.mjs v15_cached_lr_scale
 node experiments/clip_forks/diff_fork.mjs v16_grid_real_prompt_quality
+node experiments/clip_forks/diff_fork.mjs v17_pointwise_roofline
 ```
 
 ## Standard Gate
@@ -80,6 +81,8 @@ Use the gate-specific env vars in addition to the commands above.
   learning rates only on cached steps.
 - `v16_grid_real_prompt_quality`: real MobileCLIP text-prompt quality gate for
   `grid9_close2 + directgrid` versus the default `3/9` per-view schedule.
+- `v17_pointwise_roofline`: static and timestamp-backed report for pointwise
+  CLIP math, memory layout, f16 reality, and next exact-math pointwise forks.
 
 ## Snapshot Coverage
 
@@ -110,6 +113,9 @@ Use the gate-specific env vars in addition to the commands above.
   cadence quality harness, and perf-note context.
 - `v16_grid_real_prompt_quality`: grid quality harness, prompt builders, 3D
   optimizer context, grid test/bench context, and perf-note context.
+- `v17_pointwise_roofline`: CLIP WGSL emitters, dispatch profiler, batch
+  pointwise experiments, pointwise report, perf-note context, and prior
+  pointwise agent notes.
 
 ## Related Notes
 
@@ -126,3 +132,4 @@ Use the gate-specific env vars in addition to the commands above.
 - `agent_notes/optimization_session/current_strategy_reflection_v14_2026_07_08.md`
 - `agent_notes/optimization_session/v15_agent_synthesis_2026_07_08.md`
 - `agent_notes/optimization_session/nunchaku_clip_approx_2026_07_08.md`
+- `agent_notes/optimization_session/pointwise_roofline_v17_2026_07_08.md`

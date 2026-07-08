@@ -34,6 +34,7 @@ uv run --with onnx --with numpy --with onnxruntime python tools/clip/dump_refs.p
 # 4. verify + bench on a real Metal adapter (bun-webgpu, headless)
 bun tools/clip/fused_test.ts                    # per-step relL∞ + cosine + bench
 FAST=1 bun tools/clip/fused_test.ts             # skip per-step, embedding + bench only
+BATCH=3 bun tools/clip/pointwise_report.ts      # static pointwise math/layout report
 ```
 
 `tools/clip/graph_dump.py` prints the op inventory (debugging aid for κ).

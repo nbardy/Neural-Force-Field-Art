@@ -177,47 +177,6 @@ Total isolated timestamp sum was `160.30 ms`. The main conclusion is unchanged:
 optimize pointwise backward/forward, spatial backward, and conv-family kernels
 before spending serious time on attention backward.
 
-## Pointwise Static Roofline
-
-`tools/clip/pointwise_report.ts` is a CPU-only report that reads
-`plan_train.json` and explains the pointwise workload without requiring a GPU
-run:
-
-```bash
-BATCH=3 TOP=14 OUT=/tmp/pointwise_report.md bun tools/clip/pointwise_report.ts
-```
-
-For the current `3x256x256` MobileCLIP train plan at batch 3:
-
-| Metric | Batch 3 |
-| --- | ---: |
-| forward pointwise dispatches | 48 |
-| backward `pw_bwd` dispatches | 48 |
-| forward pointwise+GELU candidates | 24 |
-| pointwise FLOPs | 26.575 GFLOP |
-| lower-bound staged global traffic | 3445.13 MiB |
-| pointwise workgroups | 51648 |
-
-Same-session timestamp cross-check:
-
-```bash
-CSV=1 TIMESTAMP=1 STEM_SPATIAL_BWD=1 FUSE_PW_GELU=1 MODE=train BATCH=3 RUNS=1 WARMUP=1 bun tools/clip/dispatch_profile.ts
-```
-
-| Group | Timestamp Sum | Share |
-| --- | ---: | ---: |
-| `pw_bwd` | 34.34 ms | 26.3% |
-| `pw` | 18.02 ms | 13.8% |
-| `pw+gelu` | 14.94 ms | 11.5% |
-| pointwise family | 67.31 ms | 51.6% |
-| `spatial_bwd` | 26.87 ms | 20.6% |
-
-This reconciles the earlier f16 question: the existing f16 path is weights-only
-storage with f32 math/activations. It halves weight payload but does not remove
-the f32 activation traffic or the need for accurate `dL/dimage`, and the v02
-gate did not promote it. The next exact-math CLIP fork should target selected
-rectangular pointwise tiles or split-K `pw_bwd`, not blanket f16.
-
 ## Integrated Timestamp Step Profile
 
 `tools/splat3d/step_bench.ts` now also accepts `TIMESTAMP=1` for integrated step
