@@ -1,5 +1,6 @@
 /// <reference types="@webgpu/types" />
 import { VisionTrainer, type TrainPlan } from "../clip/vision";
+import { BatchMajorVisionTrainer } from "../clip/vision_batch";
 import { type AdamHyper, DEFAULT_HYPER } from "../splat/adam_wgsl";
 import { DEFAULT_3D_CAMERAS, type Camera3D, type PreparedCamera3D, prepareCamera } from "./cameras";
 import { Raster3DEngine, type AdamLRs3D, DEFAULT_3D_LRS } from "./raster";
@@ -27,16 +28,23 @@ export interface Splat3DOptimizerConfig {
   cameras?: Camera3D[];
   lrs?: AdamLRs3D;
   hyper?: AdamHyper;
+  clipBatchSize?: number;
 }
+
+export type Splat3DClipMode = "single" | "batch";
 
 export interface Splat3DStepTimings {
   views: number;
   totalViews: number;
+  clipMode: Splat3DClipMode;
+  clipBatchSize: number;
   total: number;
   clear: number;
   rasterFwd: number;
+  rasterReplay: number;
   clipFwd: number;
   clipBwd: number;
+  clipBatch: number;
   rasterBwd: number;
   adam: number;
   display: number;
@@ -55,8 +63,10 @@ export class Splat3DOptimizer {
   readonly device: GPUDevice;
   readonly raster: Raster3DEngine;
   readonly trainer: VisionTrainer;
+  readonly batchTrainer: BatchMajorVisionTrainer | null;
   readonly cameras: PreparedCamera3D[];
   readonly side = SIDE;
+  readonly clipBatchSize: number;
   private readonly textBuffers: GPUBuffer[];
   private readonly lrs: AdamLRs3D;
   private readonly hyper: AdamHyper;
@@ -87,22 +97,28 @@ export class Splat3DOptimizer {
       cameras,
     });
     const trainer = await VisionTrainer.create(device, trainPlan, weights);
+    const clipBatchSize = normalizeClipBatchSize(cfg.clipBatchSize);
+    const batchTrainer =
+      clipBatchSize > 1 ? await BatchMajorVisionTrainer.create(device, trainPlan, weights, clipBatchSize) : null;
     raster.setParams(cfg.initParams ?? randomSplats3D(G, cfg.seed ?? 1, cfg.init));
     raster.zeroAdamState();
-    return new Splat3DOptimizer(device, raster, trainer, cameras, cfg);
+    return new Splat3DOptimizer(device, raster, trainer, batchTrainer, cameras, cfg);
   }
 
   private constructor(
     device: GPUDevice,
     raster: Raster3DEngine,
     trainer: VisionTrainer,
+    batchTrainer: BatchMajorVisionTrainer | null,
     cameras: PreparedCamera3D[],
     cfg: Splat3DOptimizerConfig
   ) {
     this.device = device;
     this.raster = raster;
     this.trainer = trainer;
+    this.batchTrainer = batchTrainer;
     this.cameras = cameras;
+    this.clipBatchSize = batchTrainer?.batch ?? 1;
     this.lrs = cfg.lrs ?? DEFAULT_3D_LRS;
     this.hyper = cfg.hyper ?? DEFAULT_HYPER;
     this.rngState = ((cfg.seed ?? 1) ^ 0x9e3779b9) >>> 0 || 1;
@@ -133,14 +149,7 @@ export class Splat3DOptimizer {
     const views = this.sampleViews(viewsPerStep);
     const enc = this.device.createCommandEncoder();
     this.raster.recordClearRawGrad(enc);
-    for (const v of views) {
-      enc.copyBufferToBuffer(this.textBuffers[v], 0, this.trainer.textBuffer, 0, this.trainer.plan.textDim * 4);
-      this.raster.recordForward(enc, v);
-      enc.copyBufferToBuffer(this.raster.image, 0, this.trainer.inputBuffer, 0, IMG_BYTES);
-      this.trainer.encode(enc, { backward: true });
-      enc.copyBufferToBuffer(this.trainer.inputGradBuffer, 0, this.raster.gradImage, 0, IMG_BYTES);
-      this.raster.recordBackwardAdd(enc, v);
-    }
+    this.recordTrainingViews(enc, views);
     this.step_ += 1;
     this.raster.recordAdam(enc, this.step_, this.lrs, this.hyper);
     this.raster.recordForward(enc, displayView);
@@ -154,11 +163,15 @@ export class Splat3DOptimizer {
     const timings: Splat3DStepTimings = {
       views: views.length,
       totalViews: this.cameras.length,
+      clipMode: this.useBatchFor(views) ? "batch" : "single",
+      clipBatchSize: this.clipBatchSize,
       total: 0,
       clear: 0,
       rasterFwd: 0,
+      rasterReplay: 0,
       clipFwd: 0,
       clipBwd: 0,
+      clipBatch: 0,
       rasterBwd: 0,
       adam: 0,
       display: 0,
@@ -169,22 +182,39 @@ export class Splat3DOptimizer {
       this.raster.recordClearRawGrad(enc);
     });
 
-    for (const v of views) {
-      timings.rasterFwd += await this.submitTimed((enc) => {
-        this.raster.recordForward(enc, v);
-        enc.copyBufferToBuffer(this.raster.image, 0, this.trainer.inputBuffer, 0, IMG_BYTES);
-      });
-      timings.clipFwd += await this.submitTimed((enc) => {
-        this.trainer.encodeForward(enc);
-      });
-      timings.clipBwd += await this.submitTimed((enc) => {
-        enc.copyBufferToBuffer(this.textBuffers[v], 0, this.trainer.textBuffer, 0, this.trainer.plan.textDim * 4);
-        this.trainer.encodeBackward(enc);
-      });
-      timings.rasterBwd += await this.submitTimed((enc) => {
-        enc.copyBufferToBuffer(this.trainer.inputGradBuffer, 0, this.raster.gradImage, 0, IMG_BYTES);
-        this.raster.recordBackwardAdd(enc, v);
-      });
+    if (this.useBatchFor(views)) {
+      const batch = this.batchTrainer!;
+      for (let start = 0; start < views.length; start += batch.batch) {
+        const chunk = views.slice(start, start + batch.batch);
+        if (chunk.length < batch.batch) {
+          for (const view of chunk) {
+            timings.rasterFwd += await this.submitTimed((enc) => this.recordSingleForwardToTrainer(enc, view));
+            timings.clipFwd += await this.submitTimed((enc) => this.trainer.encodeForward(enc));
+            timings.clipBwd += await this.submitTimed((enc) => this.recordSingleTextAndBackward(enc, view));
+            timings.rasterBwd += await this.submitTimed((enc) => this.recordSingleRasterBackward(enc, view));
+          }
+          continue;
+        }
+        timings.rasterFwd += await this.submitTimed((enc) => this.recordBatchInputs(enc, chunk));
+        timings.clipBatch += await this.submitTimed((enc) => batch.encode(enc, { backward: true }));
+        for (let lane = 0; lane < chunk.length; lane++) {
+          const view = chunk[lane];
+          timings.rasterReplay += await this.submitTimed((enc) => this.raster.recordForward(enc, view));
+          timings.rasterBwd += await this.submitTimed((enc) => {
+            enc.copyBufferToBuffer(batch.inputGradBuffer, batch.inputGradOffsetBytes(lane), this.raster.gradImage, 0, IMG_BYTES);
+            this.raster.recordBackwardAdd(enc, view);
+          });
+        }
+      }
+    } else {
+      for (const v of views) {
+        timings.rasterFwd += await this.submitTimed((enc) => this.recordSingleForwardToTrainer(enc, v));
+        timings.clipFwd += await this.submitTimed((enc) => {
+          this.trainer.encodeForward(enc);
+        });
+        timings.clipBwd += await this.submitTimed((enc) => this.recordSingleTextAndBackward(enc, v));
+        timings.rasterBwd += await this.submitTimed((enc) => this.recordSingleRasterBackward(enc, v));
+      }
     }
 
     this.step_ += 1;
@@ -222,11 +252,74 @@ export class Splat3DOptimizer {
 
   destroy(): void {
     this.raster.destroy();
+    this.trainer.destroy();
+    this.batchTrainer?.destroy();
     for (const b of this.textBuffers) {
       try {
         b.destroy();
       } catch (_) {}
     }
+  }
+
+  private useBatchFor(views: number[]): boolean {
+    return !!this.batchTrainer && views.length >= this.batchTrainer.batch;
+  }
+
+  private recordTrainingViews(enc: GPUCommandEncoder, views: number[]): void {
+    if (!this.useBatchFor(views)) {
+      for (const v of views) this.recordSingleTrainingView(enc, v);
+      return;
+    }
+    const batch = this.batchTrainer!;
+    for (let start = 0; start < views.length; start += batch.batch) {
+      const chunk = views.slice(start, start + batch.batch);
+      if (chunk.length < batch.batch) {
+        for (const view of chunk) this.recordSingleTrainingView(enc, view);
+        continue;
+      }
+      this.recordBatchInputs(enc, chunk);
+      batch.encode(enc, { backward: true });
+      for (let lane = 0; lane < chunk.length; lane++) {
+        const view = chunk[lane];
+        this.raster.recordForward(enc, view);
+        enc.copyBufferToBuffer(batch.inputGradBuffer, batch.inputGradOffsetBytes(lane), this.raster.gradImage, 0, IMG_BYTES);
+        this.raster.recordBackwardAdd(enc, view);
+      }
+    }
+  }
+
+  private recordSingleTrainingView(enc: GPUCommandEncoder, view: number): void {
+    enc.copyBufferToBuffer(this.textBuffers[view], 0, this.trainer.textBuffer, 0, this.trainer.plan.textDim * 4);
+    this.raster.recordForward(enc, view);
+    enc.copyBufferToBuffer(this.raster.image, 0, this.trainer.inputBuffer, 0, IMG_BYTES);
+    this.trainer.encode(enc, { backward: true });
+    enc.copyBufferToBuffer(this.trainer.inputGradBuffer, 0, this.raster.gradImage, 0, IMG_BYTES);
+    this.raster.recordBackwardAdd(enc, view);
+  }
+
+  private recordBatchInputs(enc: GPUCommandEncoder, views: number[]): void {
+    const batch = this.batchTrainer!;
+    for (let lane = 0; lane < views.length; lane++) {
+      const view = views[lane];
+      enc.copyBufferToBuffer(this.textBuffers[view], 0, batch.textBuffer, batch.textOffsetBytes(lane), batch.plan.textDim * 4);
+      this.raster.recordForward(enc, view);
+      enc.copyBufferToBuffer(this.raster.image, 0, batch.inputBuffer, batch.slotOffsetBytes(lane, batch.plan.inputSlot), IMG_BYTES);
+    }
+  }
+
+  private recordSingleForwardToTrainer(enc: GPUCommandEncoder, view: number): void {
+    this.raster.recordForward(enc, view);
+    enc.copyBufferToBuffer(this.raster.image, 0, this.trainer.inputBuffer, 0, IMG_BYTES);
+  }
+
+  private recordSingleTextAndBackward(enc: GPUCommandEncoder, view: number): void {
+    enc.copyBufferToBuffer(this.textBuffers[view], 0, this.trainer.textBuffer, 0, this.trainer.plan.textDim * 4);
+    this.trainer.encodeBackward(enc);
+  }
+
+  private recordSingleRasterBackward(enc: GPUCommandEncoder, view: number): void {
+    enc.copyBufferToBuffer(this.trainer.inputGradBuffer, 0, this.raster.gradImage, 0, IMG_BYTES);
+    this.raster.recordBackwardAdd(enc, view);
   }
 
   private async submitTimed(record: (enc: GPUCommandEncoder) => void): Promise<number> {
@@ -266,6 +359,11 @@ export class Splat3DOptimizer {
     this.rngState = (Math.imul(this.rngState, 1664525) + 1013904223) >>> 0;
     return this.rngState;
   }
+}
+
+function normalizeClipBatchSize(value: number | undefined): number {
+  const n = Number.isFinite(value) ? value! | 0 : 1;
+  return n > 1 ? Math.min(9, n) : 1;
 }
 
 export function randomSplats3D(G: number, seed = 1, init: Splat3DInit = {}): Float32Array {

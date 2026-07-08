@@ -31,6 +31,9 @@ Date: 2026-07-08
 Hypothesis: Batching selected camera views through `BatchMajorVisionTrainer`
 will reduce 3D optimizer wall time versus repeated single-view CLIP.
 
+Status: attempted and landed behind an opt-in UI toggle. Default remains single
+CLIP until the win is more stable for the default `3/9` path.
+
 Implementation notes:
 
 - Add a toggled path in `src/splat3d/optimize.ts`.
@@ -56,6 +59,43 @@ Kill/rework gate:
 
 - If conservative raster replay erases the batch CLIP win, move to per-lane
   raster state before making it default.
+
+Attempt 1 result:
+
+- Implemented conservative batch-major CLIP in `Splat3DOptimizer`.
+- Added `single CLIP`, `batch CLIP x3`, and `batch CLIP x9` modes to the 3D
+  page.
+- Added `tools/splat3d/step_bench.ts`.
+- The scheduler falls back to single CLIP when the active view count is smaller
+  than the selected batch size, so `batch CLIP x9` is intended for `9/9`.
+
+Commands run:
+
+```bash
+CLIP_BATCH=1 VIEWS=3 RUNS=8 WARMUP=4 bun tools/splat3d/step_bench.ts
+CLIP_BATCH=3 VIEWS=3 RUNS=8 WARMUP=4 bun tools/splat3d/step_bench.ts
+CLIP_BATCH=1 VIEWS=9 RUNS=3 WARMUP=2 bun tools/splat3d/step_bench.ts
+CLIP_BATCH=3 VIEWS=9 RUNS=3 WARMUP=2 bun tools/splat3d/step_bench.ts
+CLIP_BATCH=9 VIEWS=9 RUNS=3 WARMUP=2 bun tools/splat3d/step_bench.ts
+```
+
+Observed results:
+
+| Views | CLIP batch | Normal step avg | Profile total | Note |
+| --- | ---: | ---: | ---: | --- |
+| 3/9 | 1 | 104.32 ms | 129.47 ms | second sequential run |
+| 3/9 | 3 | 93.41 ms | 121.43 ms | modest win, noisy |
+| 9/9 | 1 | 381.18 ms | 412.02 ms | same-session matrix |
+| 9/9 | 3 | 292.10 ms | 314.28 ms | clear all-view win |
+| 9/9 | 9 | 299.93 ms | 330.83 ms | clear win, not better than x3 here |
+
+Interpretation:
+
+- Conservative batch CLIP is useful enough to keep as an ablation toggle.
+- It is not strong enough to make default while it still replays raster forward
+  before each raster backward.
+- The next real promotion path is per-lane raster state, not more partial-chunk
+  batching.
 
 ### 2. CLIP Dispatch Profiler
 

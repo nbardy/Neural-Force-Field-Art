@@ -93,3 +93,42 @@ Use the overlay first:
   larger splat counts.
 - If Adam/display/clear are visible but small, leave them alone until CLIP and
   raster are under control.
+
+## Batch-Major CLIP Integration Attempt
+
+The first app-level batch integration is now behind an opt-in 3D page control:
+
+- `single CLIP`
+- `batch CLIP x3`
+- `batch CLIP x9`
+
+The implementation is conservative. It renders selected views into CLIP batch
+lanes, runs one batch-major CLIP train pass, then re-renders each view before
+applying that lane's image gradient. This preserves current raster correctness
+because the rasterizer still owns only one view's tile bins and sorted order at a
+time.
+
+Headless integrated benchmark:
+
+```bash
+CLIP_BATCH=1 VIEWS=3 RUNS=8 WARMUP=4 bun tools/splat3d/step_bench.ts
+CLIP_BATCH=3 VIEWS=3 RUNS=8 WARMUP=4 bun tools/splat3d/step_bench.ts
+CLIP_BATCH=1 VIEWS=9 RUNS=3 WARMUP=2 bun tools/splat3d/step_bench.ts
+CLIP_BATCH=3 VIEWS=9 RUNS=3 WARMUP=2 bun tools/splat3d/step_bench.ts
+CLIP_BATCH=9 VIEWS=9 RUNS=3 WARMUP=2 bun tools/splat3d/step_bench.ts
+```
+
+Representative measurements on Apple `metal-3`:
+
+| Views / Step | CLIP Batch | Normal Step Avg | Split Profile Total | Notes |
+| --- | ---: | ---: | ---: | --- |
+| 3 / 9 | 1 | 104.32 ms | 129.47 ms | sequential run |
+| 3 / 9 | 3 | 93.41 ms | 121.43 ms | modest, noisy win |
+| 9 / 9 | 1 | 381.18 ms | 412.02 ms | same-session matrix |
+| 9 / 9 | 3 | 292.10 ms | 314.28 ms | clear all-view win |
+| 9 / 9 | 9 | 299.93 ms | 330.83 ms | not better than x3 here |
+
+Takeaway: keep batch CLIP as an ablation/screenshot toggle, but do not make it
+the default yet. The replayed raster forward eats enough of the CLIP batching win
+that the next promotion step should be per-lane raster state or direct
+raster/CLIP buffer binding.

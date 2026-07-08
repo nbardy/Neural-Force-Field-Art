@@ -21,6 +21,7 @@ interface Status {
   blackBgText: boolean;
   profiling: boolean;
   viewsPerStep: number;
+  clipBatchSize: number;
 }
 
 const status: Status = {
@@ -37,6 +38,7 @@ const status: Status = {
   blackBgText: true,
   profiling: false,
   viewsPerStep: 3,
+  clipBatchSize: 1,
 };
 (window as any).__splat3d = status;
 
@@ -46,6 +48,7 @@ const viewSelect = document.getElementById("view") as HTMLSelectElement;
 const promptModeSelect = document.getElementById("promptMode") as HTMLSelectElement;
 const bgTextModeSelect = document.getElementById("bgTextMode") as HTMLSelectElement;
 const viewBatchSelect = document.getElementById("viewBatch") as HTMLSelectElement;
+const clipModeSelect = document.getElementById("clipMode") as HTMLSelectElement;
 const optimizeBtn = document.getElementById("optimize") as HTMLButtonElement;
 const resetBtn = document.getElementById("reset") as HTMLButtonElement;
 const readoutEl = document.getElementById("readout") as HTMLDivElement;
@@ -69,6 +72,7 @@ function renderReadout(): void {
   const camera = opt?.cameras[displayView]?.name ?? "view";
   const parts: string[] = [`step ${status.step}`, camera];
   if (opt) parts.push(`${status.viewsPerStep}/${opt.cameras.length} views`);
+  parts.push(status.clipBatchSize > 1 ? `clip x${status.clipBatchSize}` : "clip x1");
   parts.push(status.promptMode === "camera" ? "camera text" : "same text");
   if (status.blackBgText) parts.push("black bg");
   if (status.cos !== null) {
@@ -93,21 +97,22 @@ function renderTimings(): void {
     const pct = (100 * ms) / total;
     return `${name.padEnd(11)} ${ms.toFixed(1).padStart(6)} ms ${pct.toFixed(0).padStart(3)}%`;
   };
-  timingsEl.textContent = [
+  const lines = [
     `sampled wall step ${status.step}`,
-    `${t.views}/${t.totalViews} views · split submit path`,
+    `${t.views}/${t.totalViews} views · ${t.clipMode === "batch" ? `batch CLIP x${t.clipBatchSize}` : "single CLIP"} · split submit path`,
     line("opt total", t.total),
-    line("raster", t.rasterFwd + t.rasterBwd),
+    line("raster", t.rasterFwd + t.rasterReplay + t.rasterBwd),
     line("  fwd", t.rasterFwd),
-    line("  bwd", t.rasterBwd),
-    line("clip", t.clipFwd + t.clipBwd),
-    line("  fwd", t.clipFwd),
-    line("  bwd", t.clipBwd),
-    line("adam", t.adam),
-    line("display", t.display),
-    line("clear", t.clear),
-    `sample every ${PROFILE_PERIOD} steps`,
-  ].join("\n");
+  ];
+  if (t.rasterReplay > 0) lines.push(line("  replay", t.rasterReplay));
+  lines.push(line("  bwd", t.rasterBwd));
+  if (t.clipMode === "batch") {
+    lines.push(line("clip batch", t.clipBatch));
+  } else {
+    lines.push(line("clip", t.clipFwd + t.clipBwd), line("  fwd", t.clipFwd), line("  bwd", t.clipBwd));
+  }
+  lines.push(line("adam", t.adam), line("display", t.display), line("clear", t.clear), `sample every ${PROFILE_PERIOD} steps`);
+  timingsEl.textContent = lines.join("\n");
 }
 
 let device!: GPUDevice;
@@ -126,6 +131,31 @@ let blitBind: GPUBindGroup | null = null;
 let viewCtxs: GPUCanvasContext[] = [];
 let viewTiles: HTMLDivElement[] = [];
 let canvasFormat!: GPUTextureFormat;
+
+function selectedClipBatchSize(): number {
+  const n = Number(clipModeSelect.value);
+  return Number.isFinite(n) && n > 1 ? Math.min(9, n | 0) : 1;
+}
+
+async function rebuildOptimizer(nextSeed: number, phase: string): Promise<void> {
+  status.phase = phase;
+  status.clipBatchSize = selectedClipBatchSize();
+  renderReadout();
+  const old = opt;
+  opt = await Splat3DOptimizer.create(device, plan, weights, {
+    seed: nextSeed,
+    clipBatchSize: status.clipBatchSize,
+  });
+  status.clipBatchSize = opt.clipBatchSize;
+  old?.destroy();
+  populateViews();
+  rebuildBlitBind();
+  gridDirty = true;
+  status.step = 0;
+  latestTimings = null;
+  renderTimings();
+  renderReadout();
+}
 
 const BLIT_WGSL = /* wgsl */ `
 @vertex
@@ -321,6 +351,7 @@ async function onOptimize(): Promise<void> {
   promptModeSelect.disabled = true;
   bgTextModeSelect.disabled = true;
   viewBatchSelect.disabled = true;
+  clipModeSelect.disabled = true;
   status.running = false;
   status.phase = "encoding";
   status.cos = null;
@@ -360,6 +391,7 @@ async function onOptimize(): Promise<void> {
     promptModeSelect.disabled = false;
     bgTextModeSelect.disabled = false;
     viewBatchSelect.disabled = false;
+    clipModeSelect.disabled = false;
   }
 }
 
@@ -376,14 +408,9 @@ async function onReset(): Promise<void> {
   latestTimings = null;
   status.phase = "reset";
   seed += 1;
-  const old = opt;
-  opt = await Splat3DOptimizer.create(device, plan, weights, { seed });
-  old.destroy();
-  rebuildBlitBind();
-  gridDirty = true;
-  status.step = 0;
+  await rebuildOptimizer(seed, "reset");
+  status.phase = "idle";
   setNotice("");
-  renderTimings();
   renderReadout();
 }
 
@@ -428,6 +455,43 @@ function onViewBatchChange(): void {
   latestTimings = null;
   renderTimings();
   renderReadout();
+}
+
+async function onClipModeChange(): Promise<void> {
+  if (!status.ready) return;
+  if (profileBusy) {
+    setNotice("wait for profiling sample to finish before changing CLIP mode");
+    clipModeSelect.value = String(status.clipBatchSize);
+    return;
+  }
+  status.running = false;
+  viewEmbeds = null;
+  status.cos = null;
+  status.initialCos = null;
+  latestTimings = null;
+  optimizeBtn.disabled = true;
+  resetBtn.disabled = true;
+  viewSelect.disabled = true;
+  promptModeSelect.disabled = true;
+  bgTextModeSelect.disabled = true;
+  viewBatchSelect.disabled = true;
+  clipModeSelect.disabled = true;
+  try {
+    await rebuildOptimizer(seed, "optimizer");
+    setNotice("");
+    status.phase = "idle";
+  } catch (e: any) {
+    fail(`clip mode change failed: ${e?.message ?? e}`);
+  } finally {
+    optimizeBtn.disabled = false;
+    resetBtn.disabled = false;
+    viewSelect.disabled = false;
+    promptModeSelect.disabled = false;
+    bgTextModeSelect.disabled = false;
+    viewBatchSelect.disabled = false;
+    clipModeSelect.disabled = false;
+    renderReadout();
+  }
 }
 
 function populateViews(): void {
@@ -477,6 +541,7 @@ async function boot(): Promise<void> {
     promptModeSelect.disabled = true;
     bgTextModeSelect.disabled = true;
     viewBatchSelect.disabled = true;
+    clipModeSelect.disabled = true;
     return;
   }
   status.phase = "adapter";
@@ -518,7 +583,8 @@ async function boot(): Promise<void> {
   status.phase = "optimizer";
   readoutEl.textContent = "building 3D optimizer…";
   await buildBlitPipeline();
-  opt = await Splat3DOptimizer.create(device, plan, weights, { seed });
+  opt = await Splat3DOptimizer.create(device, plan, weights, { seed, clipBatchSize: selectedClipBatchSize() });
+  status.clipBatchSize = opt.clipBatchSize;
   populateViews();
   rebuildBlitBind();
   gridDirty = true;
@@ -536,6 +602,7 @@ async function boot(): Promise<void> {
   promptModeSelect.disabled = false;
   bgTextModeSelect.disabled = false;
   viewBatchSelect.disabled = false;
+  clipModeSelect.disabled = false;
   setNotice("");
   renderReadout();
   requestAnimationFrame(frame);
@@ -547,6 +614,7 @@ viewSelect.addEventListener("change", () => void onViewChange());
 promptModeSelect.addEventListener("change", onPromptModeChange);
 bgTextModeSelect.addEventListener("change", onPromptModeChange);
 viewBatchSelect.addEventListener("change", onViewBatchChange);
+clipModeSelect.addEventListener("change", () => void onClipModeChange());
 promptInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") void onOptimize();
 });

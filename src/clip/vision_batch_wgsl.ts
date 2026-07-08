@@ -80,7 +80,7 @@ function addBatchOffsets(plan: VisionPlan, spec: DispatchSpec): string {
 
   const withWid = addWorkgroupIdIfNeeded(spec.code);
   const sig = mainSignature(withWid.code);
-  const unique = new Map<string, SlotBinding>();
+  const unique = new Map<string, BatchBinding>();
   for (const b of bindings) {
     if (unique.has(b.name)) {
       throw new Error(`vision_batch_wgsl: duplicate slot variable '${b.name}' in ${spec.label}`);

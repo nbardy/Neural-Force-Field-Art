@@ -335,4 +335,10 @@ export class VisionTrainer {
     this.encode(enc, opts);
     this.device.queue.submit([enc.finish()]);
   }
+
+  destroy(): void {
+    this.weightsBuffer.destroy();
+    this.textBuffer.destroy();
+    for (const b of this.slotBuffers) b.destroy();
+  }
 }
