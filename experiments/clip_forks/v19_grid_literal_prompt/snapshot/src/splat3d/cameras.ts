@@ -77,7 +77,7 @@ export const DEFAULT_3D_CAMERAS: Camera3D[] = [
 ];
 
 export const BLACK_BACKGROUND_PROMPT = "on a black background";
-export type Grid9PromptMode = "contact_sheet" | "literal" | "same";
+export type Grid9PromptMode = "contact_sheet" | "same";
 
 export function buildBasePrompt(base: string, includeBlackBackground = true): string {
   const text = base.trim() || "a photo of a cat";
@@ -99,19 +99,11 @@ export function buildGrid9Prompt(
   const bg = includeBlackBackground && !/\bblack background\b/i.test(text)
     ? ", centered on a black background"
     : "";
-  const viewList =
-    "top-down view, front-facing view, right side view, rear view, left side view, " +
-    "elevated front-left view looking down, elevated front-right view looking down, " +
-    "low rear-right view looking up, and low rear-left view looking up";
-  if (mode === "literal") {
-    return (
-      `a 3x3 grid showing ${text} from 9 different camera angles${bg}. ` +
-      `The 9 panels show the same subject in reading order: ${viewList}`
-    );
-  }
   return (
     `a 3x3 image grid showing the same subject, ${text}, from nine different camera angles${bg}: ` +
-    viewList
+    "top-down view, front-facing view, right side view, rear view, left side view, " +
+    "elevated front-left view looking down, elevated front-right view looking down, " +
+    "low rear-right view looking up, and low rear-left view looking up"
   );
 }
 

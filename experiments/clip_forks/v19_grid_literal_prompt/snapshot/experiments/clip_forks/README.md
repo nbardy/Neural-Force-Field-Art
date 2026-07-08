@@ -35,7 +35,6 @@ node experiments/clip_forks/diff_fork.mjs v15_cached_lr_scale
 node experiments/clip_forks/diff_fork.mjs v16_grid_real_prompt_quality
 node experiments/clip_forks/diff_fork.mjs v17_pointwise_roofline
 node experiments/clip_forks/diff_fork.mjs v18_pointwise_rect8x16
-node experiments/clip_forks/diff_fork.mjs v19_grid_literal_prompt
 ```
 
 ## Standard Gate
@@ -87,8 +86,6 @@ Use the gate-specific env vars in addition to the commands above.
   CLIP math, memory layout, f16 reality, and next exact-math pointwise forks.
 - `v18_pointwise_rect8x16`: exact-math `8x16` forward pointwise tile variant
   and step allowlist plumbing; recorded as no-promote after timing gates.
-- `v19_grid_literal_prompt`: adds a literal "3x3 grid ... from 9 angles" prompt
-  mode for the existing `grid9_close2` contact-sheet lane.
 
 ## Snapshot Coverage
 
@@ -125,8 +122,6 @@ Use the gate-specific env vars in addition to the commands above.
 - `v18_pointwise_rect8x16`: CLIP forward/batch WGSL emitters, 3D optimizer
   wiring, CLIP/3D benchmark env gates, grid/cadence quality harnesses, perf
   notes, and fork-index context.
-- `v19_grid_literal_prompt`: 3D camera prompt builders, 3D page controls, grid
-  quality harness, perf notes, and fork-index context.
 
 ## Related Notes
 
@@ -149,7 +144,3 @@ Use the gate-specific env vars in addition to the commands above.
 - `agent_notes/optimization_session/v18_agent_pointwise_f16.md`
 - `agent_notes/optimization_session/v18_agent_pointwise_gates.md`
 - `agent_notes/optimization_session/v18_agent_grid_speed_quality.md`
-- `agent_notes/optimization_session/v19_agent_fp16_truth.md`
-- `agent_notes/optimization_session/v19_agent_pointwise_math_layout.md`
-- `agent_notes/optimization_session/v19_agent_grid_prompt_strategy.md`
-- `agent_notes/optimization_session/v19_agent_real_gpu_profiling.md`

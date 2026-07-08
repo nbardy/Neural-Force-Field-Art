@@ -249,30 +249,6 @@ next pointwise leap should be more structural than simply widening the
 workgroup: true dual-cout accumulation, split-K `pw_bwd`, or narrow precision
 forks with a full `dL/dimage` gate.
 
-## Grid Literal Prompt Gate
-
-`grid9_close2` does not change MobileCLIP's input resolution. Lane 0 remains a
-normal `3x256x256` CLIP image; it contains a 3x3 contact sheet of nine camera
-views. Lanes 1 and 2 remain full-resolution per-view renders. With
-`grid raster 80`, the grid cells are rasterized directly at `80x80` before
-being copied into the 256px contact sheet.
-
-`Grid9PromptMode` now has a third option:
-
-```text
-contact_sheet: a 3x3 image grid showing the same subject...
-literal:       a 3x3 grid showing {prompt} from 9 different camera angles...
-same:          {prompt}
-```
-
-This is an opt-in prompt-quality gate, not a speed fork. Browser screenshots can
-select `3x3 grid + 2`, `literal grid`, and `grid raster 80`. The quality harness
-uses:
-
-```bash
-CONFIGS='base3=3:3,grid80=9:3:grid9:directgrid,grid80literal=9:3:grid9:directgrid:literal' bun tools/splat3d/grid_quality.ts
-```
-
 ## Integrated Timestamp Step Profile
 
 `tools/splat3d/step_bench.ts` now also accepts `TIMESTAMP=1` for integrated step

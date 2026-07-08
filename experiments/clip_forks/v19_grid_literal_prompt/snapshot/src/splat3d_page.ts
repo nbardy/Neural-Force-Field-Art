@@ -94,13 +94,7 @@ function renderReadout(): void {
   parts.push(status.clipBatchSize > 1 ? `clip x${status.clipBatchSize}` : "clip x1");
   if (status.clipLayout === "grid9_close2") parts.push("grid+2");
   if (status.clipLayout === "grid9_close2") {
-    const gridText =
-      status.gridPromptMode === "same"
-        ? "grid=same text"
-        : status.gridPromptMode === "literal"
-          ? "literal grid text"
-          : "grid text";
-    parts.push(gridText);
+    parts.push(status.gridPromptMode === "contact_sheet" ? "grid text" : "grid=same text");
     if (status.gridDirectRaster) parts.push("80px grid raster");
   }
   parts.push(status.promptMode === "camera" ? "camera text" : "same text");
@@ -184,9 +178,7 @@ function selectedViewSampler(): Splat3DViewSampler {
 }
 
 function selectedGridPromptMode(): Grid9PromptMode {
-  if (gridPromptModeSelect.value === "same") return "same";
-  if (gridPromptModeSelect.value === "literal") return "literal";
-  return "contact_sheet";
+  return gridPromptModeSelect.value === "same" ? "same" : "contact_sheet";
 }
 
 function selectedGridDirectRaster(): boolean {
