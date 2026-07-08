@@ -1,0 +1,143 @@
+{
+  "date": "2026-07-08T13:21:27.584Z",
+  "adapter": {
+    "nextInChain": 0,
+    "vendor": "apple",
+    "architecture": "metal-3",
+    "device": "apple-m4",
+    "description": "Metal driver on macOS Version 15.5 (Build 24F74)",
+    "backendType": 5,
+    "adapterType": 2,
+    "vendorID": 4203,
+    "deviceID": 0,
+    "subgroupMinSize": 4,
+    "subgroupMaxSize": 64,
+    "isFallbackAdapter": false
+  },
+  "prompt": "a photo of a cat",
+  "blackBgText": true,
+  "viewPromptTexts": [
+    "a photo of a cat, a top-down camera angle, on a black background",
+    "a photo of a cat, a front-facing camera angle, on a black background",
+    "a photo of a cat, a camera angle from the right side, on a black background",
+    "a photo of a cat, a camera angle from behind, on a black background",
+    "a photo of a cat, a camera angle from the left side, on a black background",
+    "a photo of a cat, an elevated 45 degree camera angle from the front left looking down, on a black background",
+    "a photo of a cat, an elevated 45 degree camera angle from the front right looking down, on a black background",
+    "a photo of a cat, a low 45 degree camera angle from the rear right looking up, on a black background",
+    "a photo of a cat, a low 45 degree camera angle from the rear left looking up, on a black background"
+  ],
+  "config": {
+    "G": 4096,
+    "cap": 2048,
+    "seed": 1,
+    "viewSampler": "epoch",
+    "clipPrecision": "f32",
+    "weightsFile": "weights_train.bin",
+    "budgetMs": 5000,
+    "runSteps": null
+  },
+  "baseline": {
+    "meanCos": 0.12830799316993444,
+    "minCos": 0.11404283028478056,
+    "maxCos": 0.14830967242454932,
+    "viewCos": [
+      0.14098093465109468,
+      0.12039764046501433,
+      0.13346074511265923,
+      0.11790847882916339,
+      0.12417042386568543,
+      0.11404283028478056,
+      0.12167098435068896,
+      0.13383022854577406,
+      0.14830967242454932
+    ],
+    "sheetPath": "/tmp/nffa_grid_quality_cat/initial_views.png"
+  },
+  "results": [
+    {
+      "label": "base3",
+      "views": 3,
+      "clipBatch": 3,
+      "clipLayout": "per_view",
+      "gridDirectRaster": false,
+      "gridPromptMode": "contact_sheet",
+      "steps": 96,
+      "trainMs": 5022.337083,
+      "stepsPerSecond": 19.11460708699707,
+      "meanDelta": 0.13065656622502578,
+      "minDelta": 0.11115480679670316,
+      "meanCos": 0.2589645593949602,
+      "minCos": 0.22519763708148371,
+      "maxCos": 0.28539616399072343,
+      "viewCos": [
+        0.2624783313953257,
+        0.22519763708148371,
+        0.26533222670021805,
+        0.24037645533889468,
+        0.2557679613174234,
+        0.25981853696466656,
+        0.2529203630204291,
+        0.28539616399072343,
+        0.2833933587454773
+      ],
+      "sheetPath": "/tmp/nffa_grid_quality_cat/base3_views.png"
+    },
+    {
+      "label": "full9",
+      "views": 9,
+      "clipBatch": 3,
+      "clipLayout": "per_view",
+      "gridDirectRaster": false,
+      "gridPromptMode": "contact_sheet",
+      "steps": 34,
+      "trainMs": 5116.907166999999,
+      "stepsPerSecond": 6.6446388199639586,
+      "meanDelta": 0.14031787825757355,
+      "minDelta": 0.13937028037775823,
+      "meanCos": 0.268625871427508,
+      "minCos": 0.2534131106625388,
+      "maxCos": 0.2795180455191236,
+      "viewCos": [
+        0.2795180455191236,
+        0.2600539719548526,
+        0.2719020900028435,
+        0.25737846622134136,
+        0.2534131106625388,
+        0.27817790251848823,
+        0.27115504240411986,
+        0.2718343398350485,
+        0.2741998737292156
+      ],
+      "sheetPath": "/tmp/nffa_grid_quality_cat/full9_views.png"
+    },
+    {
+      "label": "grid80",
+      "views": 9,
+      "clipBatch": 3,
+      "clipLayout": "grid9_close2",
+      "gridDirectRaster": true,
+      "gridPromptMode": "contact_sheet",
+      "steps": 86,
+      "trainMs": 5031.186125000002,
+      "stepsPerSecond": 17.093384713530146,
+      "meanDelta": 0.10699484606281004,
+      "minDelta": 0.0960979919426408,
+      "meanCos": 0.23530283923274448,
+      "minCos": 0.21014082222742136,
+      "maxCos": 0.2742939363161513,
+      "viewCos": [
+        0.25300733528493596,
+        0.21735138215449612,
+        0.21014082222742136,
+        0.2170202615345331,
+        0.23300521854905695,
+        0.23851078714734944,
+        0.25169424346742436,
+        0.22270156641333178,
+        0.2742939363161513
+      ],
+      "sheetPath": "/tmp/nffa_grid_quality_cat/grid80_views.png"
+    }
+  ]
+}

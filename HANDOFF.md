@@ -1,18 +1,25 @@
 # Handoff — Neural Force Field Art (WebGPU) + the fused-kernel plan
 
-> **NEW (2026-07): fused WGSL CLIP vision encoder — SHIPPED & verified.**
-> MobileCLIP-S0's image encoder (11.35M params, 2.4 GMACs) runs as 99
-> hand-generated WGSL dispatches in ONE submit: **≈6.2–6.6 ms/forward on
-> Metal-3 (~9× ORT CPU ≈60 ms, ~1.8× ORT-WebGPU ≈11.3 ms measured on the same
-> adapter), ≈0.15 ms CPU-side, embedding cosine 1.000000 vs the ONNX oracle,
-> all 99 steps verified per-layer.** This is the perception half of
-> the prompt-guidance loss (text prompt → CLIP → gradient → force field).
-> Everything lives in `tools/clip/` + `src/clip/` — **read
-> `tools/clip/README.md` first**; it has the full pipeline (κ plan compiler →
-> per-step ORT goldens → bun-webgpu verification), the measured perf ladder,
-> and the gotchas (pinned input slot, Metal lazy-JIT warmup). Next:
-> canvas→NCHW input kernel, one-shot text embedding, hand-written backward to
-> dL/dpixels (weights frozen — much simpler than the trainer's backward).
+> **NEW (2026-07): prompt→splats app — COMPLETE & verified end-to-end.**
+> A SECOND app (separate from the particle art): type a text prompt → ~12K 2D
+> Gaussian splats live-optimize on a canvas to match it, entirely GPU-resident.
+> The loop, one submit per step: rasterize splats → **fused WGSL MobileCLIP-S0
+> forward** (99 dispatches, ≈6.2 ms/forward on Metal-3, cosine 1.000000 vs the
+> ONNX oracle) → −cos(image, text) loss → **hand-written analytical CLIP
+> backward** (weights frozen → dL/dpixels only) → **splat rasterizer backward**
+> → **fused Adam**. Text embedding via transformers.js (once per prompt).
+> Verified: `bun tools/splat/optimize_test.ts` (cos to "cat" rises 0.17→0.34 in
+> 20 steps, ranks cat>dog>diagram) and `node tools/splat/page_smoke.mjs` (real
+> GPU: readable cat, cosine 0.15→0.46). Page: `src/splat_page.ts` +
+> `src/splat.html` (2nd parcel entry). **Read `tools/clip/README.md` first**
+> (pipeline, perf ladder, gotchas) then `docs/splat_raster_spec.md` +
+> `docs/clip_backward_spec.md`. **Deploy target: static GitHub Pages** (see the
+> pipeline memory note / `tools/clip/README.md`). Known next quality lever:
+> CLIP-augmentation (random crops) to reduce the rainbow "confetti".
+>
+> Non-obvious config trap: the LEGIBLE defaults are ~12K LARGE opaque splats
+> (`LEGIBLE_*` in `src/splat/optimize.ts`); the old 200K tiny translucent
+> splats average to gray NOISE by construction — never use that for output.
 
 Live: **https://nbardy.github.io/Neural-Force-Field-Art/** · `main` @ deploy is pushed to the `gh-pages` branch (see AGENTS.md for build/deploy).
 

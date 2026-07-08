@@ -105,12 +105,37 @@ export class AdvectKernel {
     const [g, r] = field.heads;
     const hg = ingestSequential(g, "helmholtz.g");
     const hr = ingestSequential(r, "helmholtz.r");
-    // classes come from the field config; layoutField validates that r's
-    // live layer-0 input width is exactly 2+classes (D-trap rule, extended)
-    const layout = layoutField("helmholtz", [hg.dims, hr.dims], {
+    // Override activations from the FIELD, not the tf config: SIREN builds
+    // LINEAR tf layers and applies sin/tanh manually, so the config reads
+    // "linear" — the field declares the real hidden activation. Standard is a
+    // no-op (selu/tanh already). Hidden layers → hiddenActivation, last → tanh.
+    const hidden = field.hiddenActivation;
+    const remap = (dims: LayerDims[]) =>
+      dims.map((d, i) => ({
+        ...d,
+        activation: (i === dims.length - 1 ? "tanh" : hidden) as Activation,
+      }));
+    // classes + encoding come from the field config; layoutField validates
+    // that r's live layer-0 input width matches encDim(+classes) (D-trap rule).
+    const encoding =
+      field.modelType === "fourier"
+        ? ({ kind: "fourier", octaves: field.fourierOctaves } as const)
+        : field.modelType === "hashgrid"
+        ? ({ kind: "hashgrid", gridSize: field.gridSize, features: field.gridFeatures } as const)
+        : ({ kind: "raw" } as const);
+    const layout = layoutField("helmholtz", [remap(hg.dims), remap(hr.dims)], {
       classes: field.classes ?? 0,
+      encoding,
     });
-    return new AdvectKernel(layout, [...hg.vars, ...hr.vars], physics, particleCount);
+    // hashgrid: the grid tf.Variable is FIRST (matches the "grid" segment at
+    // offset 0); then the head variables.
+    const gridVar = field.grid ? [field.grid] : [];
+    return new AdvectKernel(
+      layout,
+      [...gridVar, ...hg.vars, ...hr.vars],
+      physics,
+      particleCount
+    );
   }
 
   /** Legacy path: single sigmoid MLP, output re-centered by -0.5 in-shader. */
@@ -185,7 +210,10 @@ export class AdvectKernel {
     // on the device — tfjs creates the device and requests only its own
     // features, so main.ts wraps GPUAdapter.requestDevice to append
     // "shader-f16" (device features are fixed at creation time).
-    const unrolled = totalMacs(layout) <= UNROLL_MAC_LIMIT;
+    // Fourier (and any non-raw encoding) forces the LOOPED emitter, which has
+    // no f16 variant — so it only qualifies for f16 when unrolled AND raw.
+    const unrolled =
+      totalMacs(layout) <= UNROLL_MAC_LIMIT && layout.encoding.kind === "raw";
     const precision: "f32" | "f16" =
       device.features.has("shader-f16") && stageWeights && unrolled
         ? "f16"

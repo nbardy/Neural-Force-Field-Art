@@ -1,0 +1,16 @@
+TOTAL 79.1667 100.0
+pw_bwd 21.7577 27.5
+spatial_bwd 16.3839 20.7
+pw 10.2894 13.0
+pw+gelu 9.6997 12.3
+conv 8.7159 11.0
+attn_core_bwd 4.7186 6.0
+gelu_bwd 4.1285 5.2
+se_bwd 0.9175 1.2
+residual_bwd 0.7862 1.0
+head 0.4588 0.6
+se 0.4587 0.6
+gelu 0.3931 0.5
+head_bwd 0.3277 0.4
+attn.core 0.1310 0.2
+loss_bwd 0.0000 0.0

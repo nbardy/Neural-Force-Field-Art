@@ -54,6 +54,7 @@ function refAct(a: Activation, x: number): number {
     return x > 0 ? 1.0507009873554805 * x : 1.7580993408473768 * (Math.exp(x) - 1);
   if (a === "sigmoid") return 1 / (1 + Math.exp(-x));
   if (a === "tanh") return Math.tanh(x);
+  if (a === "sin") return Math.sin(x); // SIREN activation
   return x;
 }
 
@@ -73,8 +74,39 @@ function refHead(
   cls = 0
 ): [number, number] {
   const in0 = layout.spec.heads[head].layers[0].inSize;
-  let act: number[] = [px, py];
-  for (let k = 2; k < in0; k++) act.push(k - 2 === cls ? 1 : 0);
+  // encoded input: fourier γ(p) = [x,y, sin(ωk x),sin(ωk y),cos(ωk x),cos(ωk y)]
+  // (same order as helmholtz.ts / the WGSL emitter); else raw [x,y].
+  let act: number[];
+  let encDim: number;
+  if (layout.encoding.kind === "fourier") {
+    act = [px, py];
+    for (let k = 0; k < layout.encoding.octaves; k++) {
+      const w = Math.pow(2, k) * 2 * Math.PI;
+      act.push(Math.sin(w * px), Math.sin(w * py), Math.cos(w * px), Math.cos(w * py));
+    }
+    encDim = 2 + 4 * layout.encoding.octaves;
+  } else if (layout.encoding.kind === "hashgrid") {
+    // bilinear interp of the grid (offset 0 in W) — same indexing as the emitter
+    const gs = layout.encoding.gridSize, F = layout.encoding.features;
+    const gxf = Math.min(1, Math.max(0, px)) * (gs - 1);
+    const gyf = Math.min(1, Math.max(0, py)) * (gs - 1);
+    const ix = Math.floor(gxf), iy = Math.floor(gyf);
+    const fx = gxf - ix, fy = gyf - iy;
+    const ix1 = Math.min(ix + 1, gs - 1), iy1 = Math.min(iy + 1, gs - 1);
+    const b = (jx: number, jy: number) => (jy * gs + jx) * F;
+    const w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy), w01 = (1 - fx) * fy, w11 = fx * fy;
+    act = [];
+    for (let fi = 0; fi < F; fi++)
+      act.push(
+        w00 * W[b(ix, iy) + fi] + w10 * W[b(ix1, iy) + fi] +
+        w01 * W[b(ix, iy1) + fi] + w11 * W[b(ix1, iy1) + fi]
+      );
+    encDim = F;
+  } else {
+    act = [px, py];
+    encDim = 2;
+  }
+  for (let k = encDim; k < in0; k++) act.push(k - encDim === cls ? 1 : 0);
   for (const L of layout.spec.heads[head].layers) {
     const out: number[] = new Array(L.outSize);
     for (let j = 0; j < L.outSize; j++) {
@@ -339,6 +371,55 @@ await numericCase(
   { stageWeights: true },
   HELM
 );
+
+// 1b — SIREN: sin hidden activations (the advect-forward half of the SIREN
+//      field type; training runs through tfjs autograd, this verifies the
+//      fused forward matches sin-net semantics).
+await numericCase(
+  "helmholtz SIREN sin [32,32]        ",
+  layoutField("helmholtz", [chain([32, 32], "sin", "tanh"), chain([32, 32], "sin", "tanh")]),
+  { stageWeights: true },
+  HELM
+);
+
+// 1c — FOURIER encoding: layer-0 input is γ(p) (2 + 4·octaves = 18 for 4
+//      octaves). Forces the looped emitter; the reference applies the same γ.
+{
+  const oct = 4;
+  const inDim = 2 + 4 * oct;
+  const fourierChain = (): LayerDims[] => [
+    { inSize: inDim, outSize: 32, activation: "selu" },
+    { inSize: 32, outSize: 32, activation: "selu" },
+    { inSize: 32, outSize: 2, activation: "tanh" },
+  ];
+  await numericCase(
+    "helmholtz FOURIER γ oct=4 [32,32] ",
+    layoutField("helmholtz", [fourierChain(), fourierChain()], {
+      encoding: { kind: "fourier", octaves: oct },
+    }),
+    { stageWeights: true },
+    HELM
+  );
+}
+
+// 1d — HASHGRID: layer-0 input is the bilinear-interpolated learned feature
+//      grid (packed at offset 0). gs=8, F=4. Reference interpolates the same.
+{
+  const gs = 8, F = 4;
+  const hgChain = (): LayerDims[] => [
+    { inSize: F, outSize: 32, activation: "selu" },
+    { inSize: 32, outSize: 32, activation: "selu" },
+    { inSize: 32, outSize: 2, activation: "tanh" },
+  ];
+  await numericCase(
+    "helmholtz HASHGRID gs=8 F=4       ",
+    layoutField("helmholtz", [hgChain(), hgChain()], {
+      encoding: { kind: "hashgrid", gridSize: gs, features: F },
+    }),
+    { stageWeights: true },
+    HELM
+  );
+}
 
 // 2 — asymmetric + non-multiple-of-4 width: hardcoded-dim trap + the scalar
 //     fallback inside the unrolled emitter (18 % 4 != 0)

@@ -39,7 +39,9 @@
 // Canonical types
 // ---------------------------------------------------------------------------
 
-export type Activation = "linear" | "selu" | "tanh" | "sigmoid";
+// "sin" is the SIREN activation. The SIREN ω0 frequency is folded into the
+// trained weights (init scales them), so the WGSL activation is plain sin.
+export type Activation = "linear" | "selu" | "tanh" | "sigmoid" | "sin";
 
 /** Shape+activation of one dense layer, as read off the live model. */
 export interface LayerDims {
@@ -70,11 +72,38 @@ export type FieldSpec =
   | { kind: "helmholtz"; heads: [HeadSpec, HeadSpec] }
   | { kind: "mlp"; heads: [HeadSpec] };
 
+/**
+ * Input encoding for the field heads (a SELECTABLE model axis):
+ *   raw     — the head reads [x, y] directly (standard / SIREN).
+ *   fourier — the head reads γ(p) = [x, y, sin(ωk x), sin(ωk y), cos(ωk x),
+ *             cos(ωk y)] for k=0..octaves-1, ωk = 2^k·2π. encDim = 2 + 4·octaves.
+ *             MUST match src/core/field/helmholtz.ts fourierEncode (feature
+ *             order = the tfjs concat order the trained weights expect).
+ */
+export type Encoding =
+  | { kind: "raw" }
+  | { kind: "fourier"; octaves: number }
+  | { kind: "hashgrid"; gridSize: number; features: number };
+
+/** encoded input dimension (before the class one-hot). */
+export function encodingDim(e: Encoding): number {
+  if (e.kind === "fourier") return 2 + 4 * e.octaves;
+  if (e.kind === "hashgrid") return e.features;
+  return 2;
+}
+
+/** Trainable-parameter floats the encoding adds AHEAD of the heads (a learned
+ *  feature grid for hashgrid; 0 otherwise). Packed at offset 0 of the weights
+ *  buffer so the fill can read it via W(). */
+export function encodingParamFloats(e: Encoding): number {
+  return e.kind === "hashgrid" ? e.gridSize * e.gridSize * e.features : 0;
+}
+
 /** One packed tensor's location — pairs 1:1 with the model's variable list. */
 export interface PackedSegment {
   floatOffset: number;
   floatLength: number;
-  role: "kernel" | "bias";
+  role: "kernel" | "bias" | "grid";
   head: number;
   layer: number;
 }
@@ -89,6 +118,8 @@ export interface FieldLayout {
    * the advect kernel, the trainer, and the renderer.
    */
   classes: number;
+  /** input encoding (raw / fourier) — the head's layer-0 input width. */
+  encoding: Encoding;
   /** total packed weights buffer length in floats (multiple of 4) */
   totalFloats: number;
   /**
@@ -119,6 +150,7 @@ const ACTIVATIONS: ReadonlySet<string> = new Set([
   "selu",
   "tanh",
   "sigmoid",
+  "sin",
 ]);
 
 function validateChain(dims: LayerDims[], label: string, wantIn: number): void {
@@ -168,14 +200,19 @@ function validateChain(dims: LayerDims[], label: string, wantIn: number): void {
 export function layoutField(
   kind: FieldSpec["kind"],
   headsDims: LayerDims[][],
-  opts: { classes?: number } = {}
+  opts: { classes?: number; encoding?: Encoding } = {}
 ): FieldLayout {
   const classes = opts.classes ?? 0;
+  const encoding: Encoding = opts.encoding ?? { kind: "raw" };
+  const encDim = encodingDim(encoding);
   if (!Number.isInteger(classes) || classes < 0 || classes > 16) {
     throw new Error(`advect: classes ${classes} outside [0, 16]`);
   }
   if (classes > 0 && kind !== "helmholtz") {
     throw new Error(`advect: classes need the helmholtz kind (got '${kind}')`);
+  }
+  if (encoding.kind !== "raw" && classes > 0) {
+    throw new Error(`advect: ${encoding.kind} + classes not supported yet`);
   }
   const wantHeads = kind === "helmholtz" ? 2 : 1;
   if (headsDims.length !== wantHeads) {
@@ -187,10 +224,21 @@ export function layoutField(
   const align4 = (x: number) => (x + 3) & ~3;
   let off = 0;
   const segments: PackedSegment[] = [];
+  // hashgrid: reserve the learned feature grid at the FRONT of the buffer
+  // (offset 0) so the encoding-fill reads it via W(); pairs 1:1 with the grid
+  // tf.Variable, which the field lists FIRST in trainableWeights.
+  const gridFloats = encodingParamFloats(encoding);
+  if (gridFloats > 0) {
+    segments.push({
+      floatOffset: 0, floatLength: gridFloats, role: "grid", head: -1, layer: -1,
+    });
+    off = align4(gridFloats);
+  }
   const heads: HeadSpec[] = headsDims.map((dims, h) => {
     // head 1 (chaos lane) carries the one-hot class channels; head 0 (order)
-    // and the legacy mlp stay class-blind at 2 inputs.
-    validateChain(dims, `${kind}[${h}]`, h === 1 ? 2 + classes : 2);
+    // and the legacy mlp stay class-blind. Both take the ENCODED input width
+    // (encDim = 2 for raw, 2+4·octaves for fourier).
+    validateChain(dims, `${kind}[${h}]`, h === 1 ? encDim + classes : encDim);
     const layers: LayerSpec[] = dims.map((d, l) => {
       const weightOffset = align4(off);
       off = weightOffset + d.inSize * d.outSize;
@@ -211,7 +259,7 @@ export function layoutField(
     kind === "helmholtz"
       ? { kind, heads: heads as [HeadSpec, HeadSpec] }
       : { kind, heads: heads as [HeadSpec] };
-  return { spec, classes, totalFloats: align4(off), segments };
+  return { spec, classes, encoding, totalFloats: align4(off), segments };
 }
 
 /** Salt for the storage-free class hash — must match trainer + renderer. */
@@ -236,6 +284,7 @@ function actExpr(a: Activation, s: string): string {
     case "selu":    return `selu(${s})`;
     case "tanh":    return `tanh(${s})`;
     case "sigmoid": return `sigmoid_(${s})`;
+    case "sin":     return `sin(${s})`;
   }
 }
 function actExpr4(a: Activation, s: string): string {
@@ -244,6 +293,7 @@ function actExpr4(a: Activation, s: string): string {
     case "selu":    return `selu4(${s})`;
     case "tanh":    return `tanh(${s})`;
     case "sigmoid": return `sigmoid4(${s})`;
+    case "sin":     return `sin(${s})`;
   }
 }
 
@@ -395,18 +445,58 @@ function emitHeadUnrolledF16(h: number, head: HeadSpec): string {
  * inner loops where outSize%4==0. Const loop bounds; ~4× fewer weight loads
  * than a scalar loop.
  */
-function emitHeadLooped(h: number, head: HeadSpec, maxW: number): string {
-  const classChannels = head.layers[0].inSize - 2;
+function emitHeadLooped(
+  h: number,
+  head: HeadSpec,
+  maxW: number,
+  encoding: Encoding = { kind: "raw" }
+): string {
+  const encDim = encodingDim(encoding);
+  const classChannels = head.layers[0].inSize - encDim;
   const bufs = [`h0_${h}`, `h1_${h}`];
   const lines: string[] = [`fn eval_head_${h}(p : vec2f, cls : u32) -> vec2f {`];
   if (classChannels === 0) lines.push(`  let _cls = cls; // classless head`);
   lines.push(`  var ${bufs[0]} : array<f32, ${maxW}>;`);
   lines.push(`  var ${bufs[1]} : array<f32, ${maxW}>;`);
+  // encoded input γ(p): raw = [x,y]; fourier prepends the raw coords then, per
+  // octave, [sin(ωk·x), sin(ωk·y), cos(ωk·x), cos(ωk·y)] — the SAME feature
+  // order as helmholtz.ts fourierEncode (what the trained weights expect).
   lines.push(`  ${bufs[0]}[0] = p.x;`);
   lines.push(`  ${bufs[0]}[1] = p.y;`);
+  if (encoding.kind === "fourier") {
+    for (let k = 0; k < encoding.octaves; k++) {
+      const w = (Math.pow(2, k) * 2 * Math.PI).toFixed(8);
+      const o = 2 + 4 * k;
+      lines.push(`  ${bufs[0]}[${o}] = sin(${w} * p.x);`);
+      lines.push(`  ${bufs[0]}[${o + 1}] = sin(${w} * p.y);`);
+      lines.push(`  ${bufs[0]}[${o + 2}] = cos(${w} * p.x);`);
+      lines.push(`  ${bufs[0]}[${o + 3}] = cos(${w} * p.y);`);
+    }
+  } else if (encoding.kind === "hashgrid") {
+    // Bilinear interp of the learned feature grid (row-major, offset 0 in W —
+    // same indexing as helmholtz.ts). encDim = features; fills h0[0..F-1],
+    // OVERWRITING the raw [x,y] above (the grid IS the encoded input).
+    const { gridSize: gs, features: F } = encoding;
+    lines.push(`  {`);
+    lines.push(`    let gxf = clamp(p.x, 0.0, 1.0) * ${(gs - 1).toFixed(1)};`);
+    lines.push(`    let gyf = clamp(p.y, 0.0, 1.0) * ${(gs - 1).toFixed(1)};`);
+    lines.push(`    let ix = u32(floor(gxf)); let iy = u32(floor(gyf));`);
+    lines.push(`    let fx = gxf - floor(gxf); let fy = gyf - floor(gyf);`);
+    lines.push(`    let ix1 = min(ix + 1u, ${gs - 1}u); let iy1 = min(iy + 1u, ${gs - 1}u);`);
+    lines.push(`    let b00 = (iy * ${gs}u + ix) * ${F}u;`);
+    lines.push(`    let b10 = (iy * ${gs}u + ix1) * ${F}u;`);
+    lines.push(`    let b01 = (iy1 * ${gs}u + ix) * ${F}u;`);
+    lines.push(`    let b11 = (iy1 * ${gs}u + ix1) * ${F}u;`);
+    lines.push(`    let w00 = (1.0 - fx) * (1.0 - fy); let w10 = fx * (1.0 - fy);`);
+    lines.push(`    let w01 = (1.0 - fx) * fy; let w11 = fx * fy;`);
+    lines.push(`    for (var fi = 0u; fi < ${F}u; fi = fi + 1u) {`);
+    lines.push(`      ${bufs[0]}[fi] = w00 * W(b00 + fi) + w10 * W(b10 + fi) + w01 * W(b01 + fi) + w11 * W(b11 + fi);`);
+    lines.push(`    }`);
+    lines.push(`  }`);
+  }
   if (classChannels > 0) {
     lines.push(`  for (var k = 0u; k < ${classChannels}u; k = k + 1u) {`);
-    lines.push(`    ${bufs[0]}[2u + k] = select(0.0, 1.0, k == cls);`);
+    lines.push(`    ${bufs[0]}[${encDim}u + k] = select(0.0, 1.0, k == cls);`);
     lines.push(`  }`);
   }
   head.layers.forEach((L, l) => {
@@ -507,7 +597,12 @@ export function advectShader(
   const { spec, totalFloats } = layout;
   const CLASS_SALT_LITERAL = CLASS_SALT;
   const WG = opts.workgroupSize ?? WORKGROUP_SIZE;
-  const unroll = opts.unroll ?? totalMacs(layout) <= UNROLL_MAC_LIMIT;
+  // Fourier encoding is only wired into the LOOPED emitter (it fills the
+  // encoded input array); force looped when encoding != raw.
+  const forceLooped = layout.encoding.kind !== "raw";
+  const unroll = forceLooped
+    ? false
+    : opts.unroll ?? totalMacs(layout) <= UNROLL_MAC_LIMIT;
   const precision = opts.precision ?? "f32";
   const total4 = totalFloats / 4; // layoutField pads to a multiple of 4
   const maxW = Math.max(
@@ -559,7 +654,9 @@ export function advectShader(
 
   const emitUnrolled = precision === "f16" ? emitHeadUnrolledF16 : emitHeadUnrolled;
   const heads = spec.heads
-    .map((h, i) => (unroll ? emitUnrolled(i, h) : emitHeadLooped(i, h, maxW)))
+    .map((h, i) =>
+      unroll ? emitUnrolled(i, h) : emitHeadLooped(i, h, maxW, layout.encoding)
+    )
     .join("\n\n");
 
   // `enable` directives must precede all declarations; "" for f32 keeps the

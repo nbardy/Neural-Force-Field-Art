@@ -5,3 +5,8 @@ yarn-error.log
 .parcel-cache
 dist_verify
 dist_deploy/
+dist_ship/
+dist_gh/
+models/
+.env
+.env.*

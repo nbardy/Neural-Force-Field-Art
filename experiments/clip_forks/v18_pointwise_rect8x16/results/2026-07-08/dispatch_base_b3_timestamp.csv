@@ -1,0 +1,258 @@
+index,phase,group,label,wgx,wgy,wgz,workgroups,median_ms
+0,forward,conv,"conv3 3->64 g1 @128x128",64,64,3,12288,0.9175
+1,forward,gelu,"gelu n1048576",4096,1,3,12288,0.2621
+2,forward,conv,"conv3 64->64 g64 @64x64",16,64,3,3072,0.1966
+3,forward,gelu,"gelu n262144",1024,1,3,3072,0.0655
+4,forward,pw+gelu,"pw+gelu 64->64 @64x64",128,2,3,768,0.1311
+5,forward,conv,"conv3 64->64 g64 @64x64",16,64,3,3072,0.1311
+6,forward,conv,"conv7 64->64 g64 @64x64",16,64,3,3072,0.5243
+7,forward,pw+gelu,"pw+gelu 64->192 @64x64",128,6,3,2304,0.3932
+8,forward,pw,"pw 192->64 @64x64",128,2,3,768,0.2621
+9,forward,conv,"conv3 64->64 g64 @64x64",16,64,3,3072,0.0655
+10,forward,conv,"conv7 64->64 g64 @64x64",16,64,3,3072,1.1141
+11,forward,pw+gelu,"pw+gelu 64->192 @64x64",128,6,3,2304,0.5898
+12,forward,pw,"pw 192->64 @64x64",128,2,3,768,0.3277
+13,forward,conv,"conv7 64->128 g64 @32x32",4,128,3,1536,0.2621
+14,forward,gelu,"gelu n131072",512,1,3,1536,0.0655
+15,forward,pw+gelu,"pw+gelu 128->128 @32x32",32,4,3,384,0.1311
+16,forward,conv,"conv3 128->128 g128 @32x32",4,128,3,1536,0.0655
+17,forward,conv,"conv7 128->128 g128 @32x32",4,128,3,1536,0.2621
+18,forward,pw+gelu,"pw+gelu 128->384 @32x32",32,12,3,1152,0.4588
+19,forward,pw,"pw 384->128 @32x32",32,4,3,384,0.4588
+20,forward,conv,"conv3 128->128 g128 @32x32",4,128,3,1536,0.0655
+21,forward,conv,"conv7 128->128 g128 @32x32",4,128,3,1536,0.1966
+22,forward,pw+gelu,"pw+gelu 128->384 @32x32",32,12,3,1152,0.2621
+23,forward,pw,"pw 384->128 @32x32",32,4,3,384,0.4588
+24,forward,conv,"conv3 128->128 g128 @32x32",4,128,3,1536,0.0000
+25,forward,conv,"conv7 128->128 g128 @32x32",4,128,3,1536,0.3277
+26,forward,pw+gelu,"pw+gelu 128->384 @32x32",32,12,3,1152,0.3277
+27,forward,pw,"pw 384->128 @32x32",32,4,3,384,0.3277
+28,forward,conv,"conv3 128->128 g128 @32x32",4,128,3,1536,0.0655
+29,forward,conv,"conv7 128->128 g128 @32x32",4,128,3,1536,0.2621
+30,forward,pw+gelu,"pw+gelu 128->384 @32x32",32,12,3,1152,0.3277
+31,forward,pw,"pw 384->128 @32x32",32,4,3,384,0.3932
+32,forward,conv,"conv3 128->128 g128 @32x32",4,128,3,1536,0.0000
+33,forward,conv,"conv7 128->128 g128 @32x32",4,128,3,1536,0.2621
+34,forward,pw+gelu,"pw+gelu 128->384 @32x32",32,12,3,1152,0.3932
+35,forward,pw,"pw 384->128 @32x32",32,4,3,384,0.3932
+36,forward,conv,"conv3 128->128 g128 @32x32",4,128,3,1536,0.1311
+37,forward,conv,"conv7 128->128 g128 @32x32",4,128,3,1536,0.4588
+38,forward,pw+gelu,"pw+gelu 128->384 @32x32",32,12,3,1152,0.3277
+39,forward,pw,"pw 384->128 @32x32",32,4,3,384,0.3932
+40,forward,conv,"conv7 128->256 g128 @16x16",1,256,3,768,0.1311
+41,forward,se,"se c256 mid64 @16x16",1,1,3,3,0.0655
+42,forward,gelu,"gelu n65536",256,1,3,768,0.0000
+43,forward,pw+gelu,"pw+gelu 256->256 @16x16",8,8,3,192,0.1311
+44,forward,conv,"conv3 256->256 g256 @16x16",1,256,3,768,0.0000
+45,forward,conv,"conv7 256->256 g256 @16x16",1,256,3,768,0.1966
+46,forward,pw+gelu,"pw+gelu 256->768 @16x16",8,24,3,576,0.3932
+47,forward,pw,"pw 768->256 @16x16",8,8,3,192,0.4588
+48,forward,conv,"conv3 256->256 g256 @16x16",1,256,3,768,0.0655
+49,forward,conv,"conv7 256->256 g256 @16x16",1,256,3,768,0.1311
+50,forward,pw+gelu,"pw+gelu 256->768 @16x16",8,24,3,576,0.4588
+51,forward,pw,"pw 768->256 @16x16",8,8,3,192,0.5243
+52,forward,conv,"conv3 256->256 g256 @16x16",1,256,3,768,0.0000
+53,forward,conv,"conv7 256->256 g256 @16x16",1,256,3,768,0.1966
+54,forward,pw+gelu,"pw+gelu 256->768 @16x16",8,24,3,576,0.4588
+55,forward,pw,"pw 768->256 @16x16",8,8,3,192,0.3932
+56,forward,conv,"conv3 256->256 g256 @16x16",1,256,3,768,0.0000
+57,forward,conv,"conv7 256->256 g256 @16x16",1,256,3,768,0.1966
+58,forward,pw+gelu,"pw+gelu 256->768 @16x16",8,24,3,576,0.4588
+59,forward,pw,"pw 768->256 @16x16",8,8,3,192,0.3932
+60,forward,conv,"conv3 256->256 g256 @16x16",1,256,3,768,0.0655
+61,forward,conv,"conv7 256->256 g256 @16x16",1,256,3,768,0.1966
+62,forward,pw+gelu,"pw+gelu 256->768 @16x16",8,24,3,576,0.4588
+63,forward,pw,"pw 768->256 @16x16",8,8,3,192,0.7209
+64,forward,conv,"conv3 256->256 g256 @16x16",1,256,3,768,0.0655
+65,forward,conv,"conv7 256->256 g256 @16x16",1,256,3,768,0.3932
+66,forward,pw+gelu,"pw+gelu 256->768 @16x16",8,24,3,576,0.3932
+67,forward,pw,"pw 768->256 @16x16",8,8,3,192,0.4588
+68,forward,conv,"conv3 256->256 g256 @16x16",1,256,3,768,0.0000
+69,forward,conv,"conv7 256->256 g256 @16x16",1,256,3,768,0.1966
+70,forward,pw+gelu,"pw+gelu 256->768 @16x16",8,24,3,576,0.7864
+71,forward,pw,"pw 768->256 @16x16",8,8,3,192,0.5243
+72,forward,conv,"conv3 256->256 g256 @16x16",1,256,3,768,0.0000
+73,forward,conv,"conv7 256->256 g256 @16x16",1,256,3,768,0.1966
+74,forward,pw+gelu,"pw+gelu 256->768 @16x16",8,24,3,576,0.8520
+75,forward,pw,"pw 768->256 @16x16",8,8,3,192,0.5243
+76,forward,conv,"conv3 256->256 g256 @16x16",1,256,3,768,0.0000
+77,forward,conv,"conv7 256->256 g256 @16x16",1,256,3,768,0.2621
+78,forward,pw+gelu,"pw+gelu 256->768 @16x16",8,24,3,576,0.5243
+79,forward,pw,"pw 768->256 @16x16",8,8,3,192,0.9175
+80,forward,conv,"conv3 256->256 g256 @16x16",1,256,3,768,0.0655
+81,forward,conv,"conv7 256->256 g256 @16x16",1,256,3,768,0.1966
+82,forward,pw+gelu,"pw+gelu 256->768 @16x16",8,24,3,576,0.6554
+83,forward,pw,"pw 768->256 @16x16",8,8,3,192,0.5243
+84,forward,conv,"conv7 256->512 g256 @8x8",1,512,3,1536,0.3932
+85,forward,se,"se c512 mid128 @8x8",1,1,3,3,0.0655
+86,forward,gelu,"gelu n32768",128,1,3,384,0.0000
+87,forward,pw+gelu,"pw+gelu 512->512 @8x8",2,16,3,96,0.1311
+88,forward,conv,"conv7 512->512 g512 @8x8",1,512,3,1536,0.1966
+89,forward,pw,"pw 512->1536 @8x8",2,48,3,288,0.4588
+90,forward,attn.core,"attn.core h16 n64",16,1,3,48,0.0655
+91,forward,pw,"pw 512->512 @8x8",2,16,3,96,0.1966
+92,forward,conv,"conv7 512->512 g512 @8x8",1,512,3,1536,0.1311
+93,forward,pw+gelu,"pw+gelu 512->1536 @8x8",2,48,3,288,0.3277
+94,forward,pw,"pw 1536->512 @8x8",2,16,3,96,0.3932
+95,forward,pw,"pw 512->1536 @8x8",2,48,3,288,0.3277
+96,forward,attn.core,"attn.core h16 n64",16,1,3,48,0.0655
+97,forward,pw,"pw 512->512 @8x8",2,16,3,96,0.1311
+98,forward,conv,"conv7 512->512 g512 @8x8",1,512,3,1536,0.1311
+99,forward,pw+gelu,"pw+gelu 512->1536 @8x8",2,48,3,288,0.3277
+100,forward,pw,"pw 1536->512 @8x8",2,16,3,96,0.3277
+101,forward,conv,"conv3 512->1024 g512 @8x8",1,1024,3,3072,0.0000
+102,forward,se,"se c1024 mid64 @8x8",1,1,3,3,0.3277
+103,forward,gelu,"gelu n65536",256,1,3,768,0.0000
+104,forward,head,"head 1024->512",1,1,3,3,0.4588
+105,backward,loss_bwd,"loss_bwd -cos dim512",1,1,3,3,0.0000
+106,backward,head_bwd,"head_bwd 512->1024",1,1,3,3,0.3277
+107,backward,gelu_bwd,"gelu_bwd n65536",256,1,3,768,0.0000
+108,backward,se_bwd,"se_bwd c1024 mid64 @8x8",1,1,3,3,0.3932
+109,backward,spatial_bwd,"spatial_bwd k3s1 512<-1024 g512 @8x8",1,512,3,1536,0.0655
+110,backward,residual_bwd,"residual_bwd n32768",128,1,3,384,0.0000
+111,backward,pw_bwd,"pw_bwd 512->1536 @8x8",2,48,3,288,0.8520
+112,backward,gelu_bwd,"gelu_bwd n98304",384,1,3,1152,0.0655
+113,backward,pw_bwd,"pw_bwd 1536->512 @8x8",2,16,3,96,0.9175
+114,backward,spatial_bwd,"spatial_bwd k7s1 512<-512 g512 @8x8 +=",1,512,3,1536,0.2621
+115,backward,residual_bwd,"residual_bwd n32768",128,1,3,384,0.0000
+116,backward,pw_bwd,"pw_bwd 512->512 @8x8",2,16,3,96,0.1311
+117,backward,attn_core_bwd,"attn_core_bwd h16 n64",16,1,3,48,2.2282
+118,backward,pw_bwd,"pw_bwd 1536->512 @8x8 +=",2,16,3,96,0.9175
+119,backward,residual_bwd,"residual_bwd n32768",128,1,3,384,0.0000
+120,backward,pw_bwd,"pw_bwd 512->1536 @8x8",2,48,3,288,0.8520
+121,backward,gelu_bwd,"gelu_bwd n98304",384,1,3,1152,0.0655
+122,backward,pw_bwd,"pw_bwd 1536->512 @8x8",2,16,3,96,0.9175
+123,backward,spatial_bwd,"spatial_bwd k7s1 512<-512 g512 @8x8 +=",1,512,3,1536,0.3932
+124,backward,residual_bwd,"residual_bwd n32768",128,1,3,384,0.0000
+125,backward,pw_bwd,"pw_bwd 512->512 @8x8",2,16,3,96,0.3277
+126,backward,attn_core_bwd,"attn_core_bwd h16 n64",16,1,3,48,2.4904
+127,backward,pw_bwd,"pw_bwd 1536->512 @8x8 +=",2,16,3,96,0.9175
+128,backward,spatial_bwd,"spatial_bwd k7s1 512<-512 g512 @8x8",1,512,3,1536,0.3277
+129,backward,gelu_bwd,"gelu_bwd n32768",128,1,3,384,0.0655
+130,backward,pw_bwd,"pw_bwd 512->512 @8x8",2,16,3,96,0.2621
+131,backward,gelu_bwd,"gelu_bwd n32768",128,1,3,384,0.0655
+132,backward,se_bwd,"se_bwd c512 mid128 @8x8",1,1,3,3,0.3277
+133,backward,spatial_bwd,"spatial_bwd k7s2 256<-512 g256 @16x16",4,256,3,3072,1.7695
+134,backward,residual_bwd,"residual_bwd n65536",256,1,3,768,0.0000
+135,backward,pw_bwd,"pw_bwd 256->768 @16x16",8,24,3,576,0.7864
+136,backward,gelu_bwd,"gelu_bwd n196608",768,1,3,2304,0.1311
+137,backward,pw_bwd,"pw_bwd 768->256 @16x16",8,8,3,192,0.8520
+138,backward,spatial_bwd,"spatial_bwd k7s1 256<-256 g256 @16x16 +=",4,256,3,3072,0.5898
+139,backward,spatial_bwd,"spatial_bwd k3s1 256<-256 g256 @16x16",4,256,3,3072,0.0655
+140,backward,residual_bwd,"residual_bwd n65536",256,1,3,768,0.0655
+141,backward,pw_bwd,"pw_bwd 256->768 @16x16",8,24,3,576,0.7864
+142,backward,gelu_bwd,"gelu_bwd n196608",768,1,3,2304,0.1311
+143,backward,pw_bwd,"pw_bwd 768->256 @16x16",8,8,3,192,0.9175
+144,backward,spatial_bwd,"spatial_bwd k7s1 256<-256 g256 @16x16 +=",4,256,3,3072,0.5898
+145,backward,spatial_bwd,"spatial_bwd k3s1 256<-256 g256 @16x16",4,256,3,3072,0.1311
+146,backward,residual_bwd,"residual_bwd n65536",256,1,3,768,0.3277
+147,backward,pw_bwd,"pw_bwd 256->768 @16x16",8,24,3,576,1.1796
+148,backward,gelu_bwd,"gelu_bwd n196608",768,1,3,2304,0.1311
+149,backward,pw_bwd,"pw_bwd 768->256 @16x16",8,8,3,192,0.9175
+150,backward,spatial_bwd,"spatial_bwd k7s1 256<-256 g256 @16x16 +=",4,256,3,3072,0.6554
+151,backward,spatial_bwd,"spatial_bwd k3s1 256<-256 g256 @16x16",4,256,3,3072,0.0655
+152,backward,residual_bwd,"residual_bwd n65536",256,1,3,768,0.0000
+153,backward,pw_bwd,"pw_bwd 256->768 @16x16",8,24,3,576,0.1966
+154,backward,gelu_bwd,"gelu_bwd n196608",768,1,3,2304,0.0655
+155,backward,pw_bwd,"pw_bwd 768->256 @16x16",8,8,3,192,0.1966
+156,backward,spatial_bwd,"spatial_bwd k7s1 256<-256 g256 @16x16 +=",4,256,3,3072,0.1311
+157,backward,spatial_bwd,"spatial_bwd k3s1 256<-256 g256 @16x16",4,256,3,3072,0.0655
+158,backward,residual_bwd,"residual_bwd n65536",256,1,3,768,0.0000
+159,backward,pw_bwd,"pw_bwd 256->768 @16x16",8,24,3,576,0.1966
+160,backward,gelu_bwd,"gelu_bwd n196608",768,1,3,2304,0.0655
+161,backward,pw_bwd,"pw_bwd 768->256 @16x16",8,8,3,192,0.2621
+162,backward,spatial_bwd,"spatial_bwd k7s1 256<-256 g256 @16x16 +=",4,256,3,3072,0.1311
+163,backward,spatial_bwd,"spatial_bwd k3s1 256<-256 g256 @16x16",4,256,3,3072,0.0655
+164,backward,residual_bwd,"residual_bwd n65536",256,1,3,768,0.0655
+165,backward,pw_bwd,"pw_bwd 256->768 @16x16",8,24,3,576,0.1966
+166,backward,gelu_bwd,"gelu_bwd n196608",768,1,3,2304,0.0655
+167,backward,pw_bwd,"pw_bwd 768->256 @16x16",8,8,3,192,0.3932
+168,backward,spatial_bwd,"spatial_bwd k7s1 256<-256 g256 @16x16 +=",4,256,3,3072,0.2621
+169,backward,spatial_bwd,"spatial_bwd k3s1 256<-256 g256 @16x16",4,256,3,3072,0.0000
+170,backward,residual_bwd,"residual_bwd n65536",256,1,3,768,0.0000
+171,backward,pw_bwd,"pw_bwd 256->768 @16x16",8,24,3,576,0.1966
+172,backward,gelu_bwd,"gelu_bwd n196608",768,1,3,2304,0.0655
+173,backward,pw_bwd,"pw_bwd 768->256 @16x16",8,8,3,192,0.1966
+174,backward,spatial_bwd,"spatial_bwd k7s1 256<-256 g256 @16x16 +=",4,256,3,3072,0.1311
+175,backward,spatial_bwd,"spatial_bwd k3s1 256<-256 g256 @16x16",4,256,3,3072,0.0655
+176,backward,residual_bwd,"residual_bwd n65536",256,1,3,768,0.0000
+177,backward,pw_bwd,"pw_bwd 256->768 @16x16",8,24,3,576,0.1966
+178,backward,gelu_bwd,"gelu_bwd n196608",768,1,3,2304,0.0655
+179,backward,pw_bwd,"pw_bwd 768->256 @16x16",8,8,3,192,0.1966
+180,backward,spatial_bwd,"spatial_bwd k7s1 256<-256 g256 @16x16 +=",4,256,3,3072,0.1311
+181,backward,spatial_bwd,"spatial_bwd k3s1 256<-256 g256 @16x16",4,256,3,3072,0.0655
+182,backward,residual_bwd,"residual_bwd n65536",256,1,3,768,0.0655
+183,backward,pw_bwd,"pw_bwd 256->768 @16x16",8,24,3,576,0.1966
+184,backward,gelu_bwd,"gelu_bwd n196608",768,1,3,2304,0.1966
+185,backward,pw_bwd,"pw_bwd 768->256 @16x16",8,8,3,192,0.7864
+186,backward,spatial_bwd,"spatial_bwd k7s1 256<-256 g256 @16x16 +=",4,256,3,3072,0.1966
+187,backward,spatial_bwd,"spatial_bwd k3s1 256<-256 g256 @16x16",4,256,3,3072,0.0655
+188,backward,residual_bwd,"residual_bwd n65536",256,1,3,768,0.0000
+189,backward,pw_bwd,"pw_bwd 256->768 @16x16",8,24,3,576,0.2621
+190,backward,gelu_bwd,"gelu_bwd n196608",768,1,3,2304,0.0655
+191,backward,pw_bwd,"pw_bwd 768->256 @16x16",8,8,3,192,0.3277
+192,backward,spatial_bwd,"spatial_bwd k7s1 256<-256 g256 @16x16 +=",4,256,3,3072,0.1966
+193,backward,spatial_bwd,"spatial_bwd k3s1 256<-256 g256 @16x16",4,256,3,3072,0.0655
+194,backward,gelu_bwd,"gelu_bwd n65536",256,1,3,768,0.1311
+195,backward,pw_bwd,"pw_bwd 256->256 @16x16",8,8,3,192,0.0655
+196,backward,gelu_bwd,"gelu_bwd n65536",256,1,3,768,0.0000
+197,backward,se_bwd,"se_bwd c256 mid64 @16x16",1,1,3,3,0.1966
+198,backward,spatial_bwd,"spatial_bwd k7s2 128<-256 g128 @32x32",16,128,3,6144,0.4588
+199,backward,residual_bwd,"residual_bwd n131072",512,1,3,1536,0.0655
+200,backward,pw_bwd,"pw_bwd 128->384 @32x32",32,12,3,1152,0.4588
+201,backward,gelu_bwd,"gelu_bwd n393216",1536,1,3,4608,0.1966
+202,backward,pw_bwd,"pw_bwd 384->128 @32x32",32,4,3,384,0.3932
+203,backward,spatial_bwd,"spatial_bwd k7s1 128<-128 g128 @32x32 +=",16,128,3,6144,0.4588
+204,backward,spatial_bwd,"spatial_bwd k3s1 128<-128 g128 @32x32",16,128,3,6144,0.1311
+205,backward,residual_bwd,"residual_bwd n131072",512,1,3,1536,0.0000
+206,backward,pw_bwd,"pw_bwd 128->384 @32x32",32,12,3,1152,0.3932
+207,backward,gelu_bwd,"gelu_bwd n393216",1536,1,3,4608,0.1966
+208,backward,pw_bwd,"pw_bwd 384->128 @32x32",32,4,3,384,0.3932
+209,backward,spatial_bwd,"spatial_bwd k7s1 128<-128 g128 @32x32 +=",16,128,3,6144,0.3932
+210,backward,spatial_bwd,"spatial_bwd k3s1 128<-128 g128 @32x32",16,128,3,6144,0.0655
+211,backward,residual_bwd,"residual_bwd n131072",512,1,3,1536,0.0000
+212,backward,pw_bwd,"pw_bwd 128->384 @32x32",32,12,3,1152,0.2621
+213,backward,gelu_bwd,"gelu_bwd n393216",1536,1,3,4608,0.1966
+214,backward,pw_bwd,"pw_bwd 384->128 @32x32",32,4,3,384,0.4588
+215,backward,spatial_bwd,"spatial_bwd k7s1 128<-128 g128 @32x32 +=",16,128,3,6144,0.5243
+216,backward,spatial_bwd,"spatial_bwd k3s1 128<-128 g128 @32x32",16,128,3,6144,0.0655
+217,backward,residual_bwd,"residual_bwd n131072",512,1,3,1536,0.0000
+218,backward,pw_bwd,"pw_bwd 128->384 @32x32",32,12,3,1152,0.4588
+219,backward,gelu_bwd,"gelu_bwd n393216",1536,1,3,4608,0.2621
+220,backward,pw_bwd,"pw_bwd 384->128 @32x32",32,4,3,384,0.2621
+221,backward,spatial_bwd,"spatial_bwd k7s1 128<-128 g128 @32x32 +=",16,128,3,6144,0.5243
+222,backward,spatial_bwd,"spatial_bwd k3s1 128<-128 g128 @32x32",16,128,3,6144,0.0655
+223,backward,residual_bwd,"residual_bwd n131072",512,1,3,1536,0.0000
+224,backward,pw_bwd,"pw_bwd 128->384 @32x32",32,12,3,1152,0.3277
+225,backward,gelu_bwd,"gelu_bwd n393216",1536,1,3,4608,0.1966
+226,backward,pw_bwd,"pw_bwd 384->128 @32x32",32,4,3,384,0.3277
+227,backward,spatial_bwd,"spatial_bwd k7s1 128<-128 g128 @32x32 +=",16,128,3,6144,0.4588
+228,backward,spatial_bwd,"spatial_bwd k3s1 128<-128 g128 @32x32",16,128,3,6144,0.1311
+229,backward,residual_bwd,"residual_bwd n131072",512,1,3,1536,0.0655
+230,backward,pw_bwd,"pw_bwd 128->384 @32x32",32,12,3,1152,0.3277
+231,backward,gelu_bwd,"gelu_bwd n393216",1536,1,3,4608,0.1966
+232,backward,pw_bwd,"pw_bwd 384->128 @32x32",32,4,3,384,0.2621
+233,backward,spatial_bwd,"spatial_bwd k7s1 128<-128 g128 @32x32 +=",16,128,3,6144,0.5243
+234,backward,spatial_bwd,"spatial_bwd k3s1 128<-128 g128 @32x32",16,128,3,6144,0.1311
+235,backward,gelu_bwd,"gelu_bwd n131072",512,1,3,1536,0.0655
+236,backward,pw_bwd,"pw_bwd 128->128 @32x32",32,4,3,384,0.1311
+237,backward,gelu_bwd,"gelu_bwd n131072",512,1,3,1536,0.0655
+238,backward,spatial_bwd,"spatial_bwd k7s2 64<-128 g64 @64x64",64,64,3,12288,1.3107
+239,backward,residual_bwd,"residual_bwd n262144",1024,1,3,3072,0.0655
+240,backward,pw_bwd,"pw_bwd 64->192 @64x64",128,6,3,2304,0.5898
+241,backward,gelu_bwd,"gelu_bwd n786432",3072,1,3,9216,0.3277
+242,backward,pw_bwd,"pw_bwd 192->64 @64x64",128,2,3,768,0.3932
+243,backward,spatial_bwd,"spatial_bwd k7s1 64<-64 g64 @64x64 +=",64,64,3,12288,1.3763
+244,backward,spatial_bwd,"spatial_bwd k3s1 64<-64 g64 @64x64",64,64,3,12288,0.1966
+245,backward,residual_bwd,"residual_bwd n262144",1024,1,3,3072,0.0655
+246,backward,pw_bwd,"pw_bwd 64->192 @64x64",128,6,3,2304,0.3932
+247,backward,gelu_bwd,"gelu_bwd n786432",3072,1,3,9216,0.3277
+248,backward,pw_bwd,"pw_bwd 192->64 @64x64",128,2,3,768,0.3277
+249,backward,spatial_bwd,"spatial_bwd k7s1 64<-64 g64 @64x64 +=",64,64,3,12288,1.0486
+250,backward,spatial_bwd,"spatial_bwd k3s1 64<-64 g64 @64x64",64,64,3,12288,0.1966
+251,backward,gelu_bwd,"gelu_bwd n262144",1024,1,3,3072,0.1311
+252,backward,pw_bwd,"pw_bwd 64->64 @64x64",128,2,3,768,0.1966
+253,backward,gelu_bwd,"gelu_bwd n262144",1024,1,3,3072,0.1311
+254,backward,spatial_bwd,"spatial_bwd k3s2 64<-64 g64 @128x128",256,64,3,49152,0.7209
+255,backward,gelu_bwd,"gelu_bwd n1048576",4096,1,3,12288,0.4588
+256,backward,spatial_bwd,"spatial_bwd_stem4 k3s2 3<-64 g1 @256x256",256,3,3,2304,1.1141

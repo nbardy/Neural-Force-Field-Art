@@ -1,0 +1,44 @@
+adapter: apple metal-3
+
+── gate 1: per-kernel float64 references ──
+PASS  pw_bwd 32->64 plain            GPU/analytic 2.55e-7   analytic/FD 8.69e-11
+PASS  pw_bwd 64->32 fused γ          GPU/analytic 1.48e-7   analytic/FD 9.36e-9
+PASS  pw_bwd 32->64 +=               GPU/analytic 2.88e-7   analytic/FD 7.73e-10
+PASS  gelu_bwd n256                  GPU/analytic 1.05e-7   analytic/FD 1.37e-5
+PASS  residual_bwd                   GPU/analytic 4.08e-8   analytic/FD 0.00e+0
+PASS  residual_bwd +=                GPU/analytic 3.93e-8   analytic/FD 0.00e+0
+PASS  spatial dw k3 s1               GPU/analytic 8.11e-8   analytic/FD 9.69e-11
+PASS  spatial dw k3 s1 depthwise4    GPU/analytic 8.11e-8   analytic/FD 0.00e+0
+PASS  spatial dw k7 s1               GPU/analytic 1.81e-7   analytic/FD 1.58e-10
+PASS  spatial dw k7 s1 depthwise4    GPU/analytic 1.81e-7   analytic/FD 0.00e+0
+PASS  spatial dw k3 s2               GPU/analytic 6.14e-8   analytic/FD 2.14e-10
+PASS  spatial dw k3 s2 depthwise4    GPU/analytic 6.14e-8   analytic/FD 0.00e+0
+PASS  spatial dw k7 s2               GPU/analytic 1.34e-7   analytic/FD 2.87e-11
+PASS  spatial dw k7 s2 depthwise4    GPU/analytic 1.34e-7   analytic/FD 0.00e+0
+PASS  spatial grouped cpgOut2        GPU/analytic 1.19e-7   analytic/FD 1.81e-9
+PASS  spatial stem cpg3              GPU/analytic 2.04e-7   analytic/FD 2.28e-11
+PASS  se_bwd c16 mid4                GPU/analytic 1.41e-7   analytic/FD 1.59e-10
+PASS  head_bwd 32->64                GPU/analytic 8.76e-8   analytic/FD 2.35e-11
+PASS  loss_bwd -cos dim16            GPU/analytic 8.04e-8   analytic/FD 7.18e-7
+PASS  attn_core_bwd c32 h2 n16       GPU/analytic 1.71e-7   analytic/FD 2.17e-7
+
+gate 1: ALL PASS
+
+── gate 2: end-to-end directional derivative ──
+pipelines: 129 fwd + 152 bwd compiled in 365 ms (spatialBwdVariant=depthwise4, fuseGeluBwdIntoPw=1, fuseResidualBwdIntoPw=1)
+grad: finite 196608/196608, max|g| 1.085e-3
+dir 0: ⟨grad,v⟩ -5.3468e-5  FD -5.3623e-5  rel 2.89e-3
+dir 1: ⟨grad,v⟩ 3.7745e-5  FD 3.7973e-5  rel 6.02e-3
+dir 2: ⟨grad,v⟩ -6.3674e-5  FD -6.3773e-5  rel 1.54e-3
+dir 3: ⟨grad,v⟩ -7.2785e-5  FD -7.2884e-5  rel 1.36e-3
+dir 4: ⟨grad,v⟩ -8.2768e-6  FD -8.2833e-6  rel 7.91e-4
+dir 5: ⟨grad,v⟩ 1.7600e-5  FD 1.7588e-5  rel 6.91e-4
+dir 6: ⟨grad,v⟩ -1.1663e-5  FD -1.1870e-5  rel 1.74e-2
+dir 7: ⟨grad,v⟩ 5.6926e-5  FD 5.7188e-5  rel 4.58e-3
+
+directional: 8/8 under rel 2e-2  (rels: 2.9e-3, 6.0e-3, 1.5e-3, 1.4e-3, 7.9e-4, 6.9e-4, 1.7e-2, 4.6e-3)
+
+bench (5 runs): forward 7.76 ms · forward+backward 17.58 ms (2.3× forward)
+
+gate 2: PASS
+ALL PASS

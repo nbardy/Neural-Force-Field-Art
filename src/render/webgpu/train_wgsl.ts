@@ -42,8 +42,10 @@
 import { CLASS_SALT, type FieldLayout, type HeadSpec } from "./advect_wgsl";
 
 export const TRAIN_WG = 256;
-/** Pass A is a single workgroup; each thread loops ceil(N/TRAIN_WG) samples. */
-export const MAX_BATCH = 1024;
+/** Pass A is now MULTI-workgroup (ceil(N/TRAIN_WG) workgroups for fwd/bwd),
+ *  so the batch parallelizes across the GPU — batches up to this cap stay
+ *  cheap (measured ~flat 256→1024). */
+export const MAX_BATCH = 4096;
 export const MAX_ROLLOUT = 16;
 
 /** Loss constants — copied from main.ts helmholtzChaosLoss. */
@@ -329,7 +331,7 @@ struct UA {
   kSteps : u32,
   mixCount : u32,      // first mixCount samples use the random source even
                        // when batchSource==2 (coverage floor, optional)
-  pad1 : u32,
+  wgCount : u32,       // number of fwd/bwd workgroups = ceil(n / TRAIN_WG)
   pad2 : u32,
   pad3 : u32,
 };
@@ -337,10 +339,18 @@ struct UA {
 @group(0) @binding(1) var<storage, read> weights : array<f32>;
 @group(0) @binding(2) var<storage, read_write> batch : array<vec2f>;
 @group(0) @binding(3) var<storage, read_write> scratch : array<f32>;
+// lossOut: [0]=loss, [1..3]=C00/C11/C01, [4..6]=dLiso/dC00,dC11,dC01 (written by
+// finalize, read by bwd — the batch-statistic gradient the whole batch shares).
 @group(0) @binding(4) var<storage, read_write> lossOut : array<f32>;
 // live particle state (the advect kernel's buffers) for batchSource==2
 @group(0) @binding(5) var<storage, read> partPos : array<vec2f>;
 @group(0) @binding(6) var<storage, read> partVel : array<vec2f>;
+// per-workgroup partial reduction: vec4(Σ Fs.x², Σ Fs.y², Σ Fs.xy, Σ loss).
+// MULTI-WORKGROUP: fwd runs ceil(n/WG) workgroups (full GPU, not one core),
+// each writes its slice's partial here; finalize combines them. This is the
+// vectorized batch reduction — the old single-workgroup pass A serialized the
+// whole batch on ONE core.
+@group(0) @binding(7) var<storage, read_write> partials : array<vec4f>;
 
 ${COMMON}
 
@@ -348,19 +358,19 @@ ${heads.map((h, i) => emitFwdStore(i, h, sl, maxW)).join("\n\n")}
 
 ${heads.map((h, i) => emitBwdStore(i, h, sl, maxW)).join("\n\n")}
 
-// batch reduction: vec4(Σ Fs.x², Σ Fs.y², Σ Fs.x·Fs.y, Σ per-sample loss)
+// per-workgroup reduction scratch: vec4(Σ Fs.x², Σ Fs.y², Σ Fs.xy, Σ loss)
 // — the Fs sums run over ALL K steps' forces (isotropy batch = N·K).
 var<workgroup> red : array<vec4f, ${WG}>;
-// dL/dC00, dL/dC11, dL/dC01 (isotropy, W_ISO applied later per sample)
-var<workgroup> gStats : vec3f;
 
 fn mod2(p : vec2f, m : vec2f) -> vec2f { return p - floor(p / m) * m; }
 
+// FWD: one sample per thread, ceil(n/WG) workgroups. Forward K-step rollout,
+// store activations to scratch, reduce this workgroup's slice into partials[].
 @compute @workgroup_size(${WG})
-fn main(@builtin(local_invocation_index) tid : u32) {
+fn fwd(@builtin(global_invocation_id) gid : vec3u,
+       @builtin(local_invocation_index) tid : u32,
+       @builtin(workgroup_id) wgid : vec3u) {
   let n = u.n;
-  let nf = f32(n);
-  let nkf = nf * ${K}.0;   // isotropy mean is over N·K force vectors
   let res = u.res;
 
   // spiral-loss constants (main.ts spiralLoss)
@@ -370,8 +380,9 @@ fn main(@builtin(local_invocation_index) tid : u32) {
   let b = maxR / (${LOSS.SPIRAL_TURNS}.0 * ${TWO_PI});
 
   // ---------------- FORWARD: K-step rollout ----------------
+  let s = gid.x;
   var acc = vec4f(0.0);
-  for (var s = tid; s < n; s = s + ${WG}u) {
+  if (s < n) {
     var tp : vec2f;
     var v0 = vec2f(0.0, 0.0);
     // class: for particle samples, the particle's identity hash; for random/
@@ -477,7 +488,27 @@ fn main(@builtin(local_invocation_index) tid : u32) {
     stride = stride >> 1u;
     if (stride == 0u) { break; }
   }
+  if (tid == 0u) { partials[wgid.x] = red[0]; }
+}
 
+// FINALIZE: combine the per-workgroup partials → full-batch covariance → the
+// shared isotropy gradient dLiso/dC (into lossOut[4..6]) + total loss. One
+// workgroup; wgCount = ceil(n/WG) is small.
+@compute @workgroup_size(${WG})
+fn finalize(@builtin(local_invocation_index) tid : u32) {
+  let nf = f32(u.n);
+  let nkf = nf * ${K}.0;
+  var acc = vec4f(0.0);
+  for (var i = tid; i < u.wgCount; i = i + ${WG}u) { acc = acc + partials[i]; }
+  red[tid] = acc;
+  workgroupBarrier();
+  var stride = ${WG / 2}u;
+  loop {
+    if (tid < stride) { red[tid] = red[tid] + red[tid + stride]; }
+    workgroupBarrier();
+    stride = stride >> 1u;
+    if (stride == 0u) { break; }
+  }
   if (tid == 0u) {
     let C00 = red[0].x / nkf;
     let C11 = red[0].y / nkf;
@@ -488,17 +519,28 @@ fn main(@builtin(local_invocation_index) tid : u32) {
     let Liso = (D * D + 4.0 * C01 * C01) / (S * S);
     lossOut[0] = red[0].w / nf + ${LOSS.W_ISO} * Liso;
     lossOut[1] = C00; lossOut[2] = C11; lossOut[3] = C01;
-    gStats = vec3f(
-      2.0 * D / (S * S) - 2.0 * Liso / S,   // dLiso/dC00
-      -2.0 * D / (S * S) - 2.0 * Liso / S,  // dLiso/dC11
-      8.0 * C01 / (S * S)                   // dLiso/dC01
-    );
+    lossOut[4] = 2.0 * D / (S * S) - 2.0 * Liso / S;   // dLiso/dC00
+    lossOut[5] = -2.0 * D / (S * S) - 2.0 * Liso / S;  // dLiso/dC11
+    lossOut[6] = 8.0 * C01 / (S * S);                  // dLiso/dC01
   }
-  workgroupBarrier();
-  let dC = gStats;
+}
 
-  // ---------------- BACKWARD (BPTT) ----------------
-  for (var s = tid; s < n; s = s + ${WG}u) {
+// BWD (BPTT): one sample per thread, ceil(n/WG) workgroups. Reads the shared
+// batch-statistic gradient dC from lossOut, walks the K transitions back.
+@compute @workgroup_size(${WG})
+fn bwd(@builtin(global_invocation_id) gid : vec3u) {
+  let n = u.n;
+  let nf = f32(n);
+  let nkf = nf * ${K}.0;
+  let res = u.res;
+  let cx = res.x * 0.5;
+  let cy = res.y * 0.5;
+  let maxR = min(res.x, res.y) * 0.38;
+  let b = maxR / (${LOSS.SPIRAL_TURNS}.0 * ${TWO_PI});
+  let s = gid.x;
+  if (s >= n) { return; }
+  let dC = vec3f(lossOut[4], lossOut[5], lossOut[6]);
+  {
     let sBase = s * ${STRIDE}u;
     let np = vec2f(scratch[sBase + ${sl.posOff + 2 * K}u], scratch[sBase + ${sl.posOff + 2 * K + 1}u]);
 

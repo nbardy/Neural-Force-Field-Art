@@ -1,0 +1,146 @@
+{
+  "date": "2026-07-08T13:09:29.205Z",
+  "adapter": {
+    "nextInChain": 0,
+    "vendor": "apple",
+    "architecture": "metal-3",
+    "device": "apple-m4",
+    "description": "Metal driver on macOS Version 15.5 (Build 24F74)",
+    "backendType": 5,
+    "adapterType": 2,
+    "vendorID": 4203,
+    "deviceID": 0,
+    "subgroupMinSize": 4,
+    "subgroupMaxSize": 64,
+    "isFallbackAdapter": false
+  },
+  "config": {
+    "G": 4096,
+    "cap": 2048,
+    "seed": 1,
+    "views": 3,
+    "clipBatch": 3,
+    "viewSampler": "epoch",
+    "clipPrecision": "f32",
+    "weightsFile": "weights_train.bin",
+    "budgetMs": 5000,
+    "runSteps": null
+  },
+  "results": [
+    {
+      "label": "base",
+      "clipRefreshInterval": 1,
+      "cachedLrScale": 1,
+      "steps": 87,
+      "trainMs": 5041.265708,
+      "stepsPerSecond": 17.2575708243149,
+      "meanCos": 0.09413236857222014,
+      "minCos": 0.04752305502504916,
+      "maxCos": 0.1464772219446857,
+      "viewCos": [
+        0.09889713884565568,
+        0.08631475565890269,
+        0.04752305502504916,
+        0.09880640822088771,
+        0.07798086682102164,
+        0.09855741432976438,
+        0.1464772219446857,
+        0.07914871417885673,
+        0.11348574212515762
+      ],
+      "sheetPath": "/tmp/nffa_cadence_lr_quality/base_views.png"
+    },
+    {
+      "label": "cache2",
+      "clipRefreshInterval": 2,
+      "cachedLrScale": 1,
+      "steps": 149,
+      "trainMs": 5052.336875,
+      "stepsPerSecond": 29.491303467368258,
+      "meanCos": 0.04558503855373246,
+      "minCos": 0.008960716732957619,
+      "maxCos": 0.09122925568695107,
+      "viewCos": [
+        0.09122925568695107,
+        0.013383249418227262,
+        0.018879787035774278,
+        0.08251485171861804,
+        0.02860820209046175,
+        0.04623129255969714,
+        0.07380101656266878,
+        0.04665697517823618,
+        0.008960716732957619
+      ],
+      "sheetPath": "/tmp/nffa_cadence_lr_quality/cache2_views.png"
+    },
+    {
+      "label": "cache2lr50",
+      "clipRefreshInterval": 2,
+      "cachedLrScale": 0.5,
+      "steps": 142,
+      "trainMs": 5005.8685829999995,
+      "stepsPerSecond": 28.366705526835844,
+      "meanCos": 0.05842164118073355,
+      "minCos": 0.015455306357926739,
+      "maxCos": 0.09792964012384454,
+      "viewCos": [
+        0.09483550155332107,
+        0.015455306357926739,
+        0.019680057755700125,
+        0.09792964012384454,
+        0.03093072085969042,
+        0.03988613144633033,
+        0.06998011210204208,
+        0.0735046124448615,
+        0.08359268798288512
+      ],
+      "sheetPath": "/tmp/nffa_cadence_lr_quality/cache2lr50_views.png"
+    },
+    {
+      "label": "cache4",
+      "clipRefreshInterval": 4,
+      "cachedLrScale": 1,
+      "steps": 213,
+      "trainMs": 5052.094291000001,
+      "stepsPerSecond": 42.160733298158455,
+      "meanCos": 0.024503671247633724,
+      "minCos": -0.01103641080592455,
+      "maxCos": 0.07710344535483264,
+      "viewCos": [
+        0.06462630739170507,
+        0.027479691026778198,
+        0.01984112229565555,
+        0.07710344535483264,
+        0.004556148735006238,
+        -0.0063601877000722925,
+        0.05424473223837257,
+        -0.009921807307649905,
+        -0.01103641080592455
+      ],
+      "sheetPath": "/tmp/nffa_cadence_lr_quality/cache4_views.png"
+    },
+    {
+      "label": "cache4lr25",
+      "clipRefreshInterval": 4,
+      "cachedLrScale": 0.25,
+      "steps": 217,
+      "trainMs": 5008.970417,
+      "stepsPerSecond": 43.32227622337742,
+      "meanCos": 0.039999531508724234,
+      "minCos": 0.0073664257874470505,
+      "maxCos": 0.08517020307440828,
+      "viewCos": [
+        0.07720033311015256,
+        0.017532268711748945,
+        0.01009163139918203,
+        0.08517020307440828,
+        0.024309332501975596,
+        0.03893737798255593,
+        0.07248795762568573,
+        0.0073664257874470505,
+        0.026900253385361936
+      ],
+      "sheetPath": "/tmp/nffa_cadence_lr_quality/cache4lr25_views.png"
+    }
+  ]
+}

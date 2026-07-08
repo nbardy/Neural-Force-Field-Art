@@ -1,0 +1,12 @@
+splat3d step matrix: configs=base=3:3,rect4=3:3:pwrect:pwsteps57-59-62-64 trials=3 runs=5 warmup=3 seed=1
+trial 0 base 3/3: normal=57.22 profile=65.39 clip=45.38 raster=14.23
+trial 0 rect4 3/3 pwrect=1 pwsteps=57,59,62,64: normal=55.76 profile=61.73 clip=42.07 raster=14.39
+trial 1 rect4 3/3 pwrect=1 pwsteps=57,59,62,64: normal=55.37 profile=62.59 clip=42.12 raster=15.56
+trial 1 base 3/3: normal=54.74 profile=60.05 clip=41.00 raster=13.72
+trial 2 base 3/3: normal=54.78 profile=61.88 clip=41.19 raster=15.69
+trial 2 rect4 3/3 pwrect=1 pwsteps=57,59,62,64: normal=55.41 profile=61.28 clip=41.96 raster=14.46
+
+Summary:
+config           views batch  layout sampler spbwd gridd      sw  pwrect  pwsteps cache     lr   cap gbwd rbwd rpass vlane  vbwd  normal med [min,max]     profile med     clip med   raster med
+base                 3     3    view   epoch   gen    no      no      no        -     1   1.00   def   no   no   def   def   def    54.78 [54.74,57.22]    61.88    41.19    14.23
+rect4                3     3    view   epoch   gen    no      no     yes 57,59,62     1   1.00   def   no   no   def   def   def    55.41 [55.37,55.76]    61.73    42.07    14.46
