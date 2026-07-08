@@ -17,10 +17,17 @@ import {
 
 const U = { MAP_READ: 1, COPY_SRC: 4, COPY_DST: 8, UNIFORM: 64, STORAGE: 128 };
 const WG = 256;
+const STORAGE_OFFSET_ALIGN = 256;
 const ceil = (n: number) => Math.ceil(n / WG);
+type BufferBindingInput = GPUBuffer | { buffer: GPUBuffer; offset?: number; size?: number };
 
 export interface Raster3DEngineConfig extends Raster3DConfig {
   cameras: PreparedCamera3D[];
+}
+
+export interface Raster3DIOState {
+  fwdBind: GPUBindGroup;
+  bwdBind: GPUBindGroup;
 }
 
 export interface AdamLRs3D {
@@ -104,6 +111,16 @@ export class Raster3DEngine {
     return this.device.createBuffer({ size: floats * 4, usage: U.STORAGE | extra });
   }
 
+  private bindGroup(pipe: GPUComputePipeline, bindings: BufferBindingInput[]): GPUBindGroup {
+    return this.device.createBindGroup({
+      layout: pipe.getBindGroupLayout(0),
+      entries: bindings.map((resource, binding) => ({
+        binding,
+        resource: "buffer" in resource ? resource : { buffer: resource },
+      })),
+    });
+  }
+
   private async build(cfg: Raster3DEngineConfig): Promise<void> {
     const d = this.dims;
     const GP = d.G * PARAM_STRIDE_3D;
@@ -133,27 +150,14 @@ export class Raster3DEngine {
     this.clearRawPipe = await makeCompute(this.device, clearShader3D(GP), "clearRawGrad");
     this.adamPipe = await makeCompute(this.device, adamShader(), "adam");
 
-    const bg = (pipe: GPUComputePipeline, bufs: GPUBuffer[]): GPUBindGroup =>
-      this.device.createBindGroup({
-        layout: pipe.getBindGroupLayout(0),
-        entries: bufs.map((buffer, binding) => ({ binding, resource: { buffer } })),
-      });
-
-    this.prepBind = this.prepPipe.map((pipe) => bg(pipe, [this.params, this.derived]));
-    this.chainBind = this.chainPipe.map((pipe) => bg(pipe, [this.accGrad, this.derived, this.params, this.gradRaw]));
-    this.emitBind = bg(this.emitPipe, [this.derived, this.tileCounts, this.binnedIds]);
-    this.fwdBind = bg(this.fwdPipe, [this.tileCounts, this.binnedIds, this.derived, this.image, this.tileStop]);
-    this.bwdBind = bg(this.bwdPipe, [
-      this.gradImage,
-      this.tileCounts,
-      this.binnedIds,
-      this.tileStop,
-      this.derived,
-      this.accGrad,
-    ]);
-    this.clearBinsBind = bg(this.clearBinsPipe, [this.tileCounts]);
-    this.clearGradsBind = bg(this.clearGradsPipe, [this.accGrad]);
-    this.clearRawBind = bg(this.clearRawPipe, [this.gradRaw]);
+    this.prepBind = this.prepPipe.map((pipe) => this.bindGroup(pipe, [this.params, this.derived]));
+    this.chainBind = this.chainPipe.map((pipe) => this.bindGroup(pipe, [this.accGrad, this.derived, this.params, this.gradRaw]));
+    this.emitBind = this.bindGroup(this.emitPipe, [this.derived, this.tileCounts, this.binnedIds]);
+    this.fwdBind = this.makeForwardBind(this.image, 0);
+    this.bwdBind = this.makeBackwardBind(this.gradImage, 0);
+    this.clearBinsBind = this.bindGroup(this.clearBinsPipe, [this.tileCounts]);
+    this.clearGradsBind = this.bindGroup(this.clearGradsPipe, [this.accGrad]);
+    this.clearRawBind = this.bindGroup(this.clearRawPipe, [this.gradRaw]);
 
     for (const _ of paramSegments3D(d.G)) {
       const uni = this.device.createBuffer({ size: ADAM_UNIFORM_BYTES, usage: U.UNIFORM | U.COPY_DST });
@@ -204,6 +208,15 @@ export class Raster3DEngine {
     return this.readFloats(this.params, this.dims.G * PARAM_STRIDE_3D);
   }
 
+  createIOState(imageBuffer: GPUBuffer, imageOffset: number, gradBuffer: GPUBuffer, gradOffset: number): Raster3DIOState {
+    this.checkIOBinding("image", imageOffset);
+    this.checkIOBinding("grad", gradOffset);
+    return {
+      fwdBind: this.makeForwardBind(imageBuffer, imageOffset),
+      bwdBind: this.makeBackwardBind(gradBuffer, gradOffset),
+    };
+  }
+
   recordClearRawGrad(enc: GPUCommandEncoder): void {
     const p = enc.beginComputePass();
     p.setPipeline(this.clearRawPipe);
@@ -212,7 +225,7 @@ export class Raster3DEngine {
     p.end();
   }
 
-  recordForward(enc: GPUCommandEncoder, view = 0): void {
+  recordForward(enc: GPUCommandEncoder, view = 0, io?: Raster3DIOState): void {
     const d = this.dims;
     const v = this.viewIndex(view);
     const p = enc.beginComputePass();
@@ -226,12 +239,12 @@ export class Raster3DEngine {
     p.setBindGroup(0, this.emitBind);
     p.dispatchWorkgroups(ceil(d.G));
     p.setPipeline(this.fwdPipe);
-    p.setBindGroup(0, this.fwdBind);
+    p.setBindGroup(0, io?.fwdBind ?? this.fwdBind);
     p.dispatchWorkgroups(d.numTiles);
     p.end();
   }
 
-  recordBackwardAdd(enc: GPUCommandEncoder, view = 0): void {
+  recordBackwardAdd(enc: GPUCommandEncoder, view = 0, io?: Raster3DIOState): void {
     const d = this.dims;
     const v = this.viewIndex(view);
     const p = enc.beginComputePass();
@@ -239,7 +252,7 @@ export class Raster3DEngine {
     p.setBindGroup(0, this.clearGradsBind);
     p.dispatchWorkgroups(ceil(d.G * DERIVED_STRIDE_3D));
     p.setPipeline(this.bwdPipe);
-    p.setBindGroup(0, this.bwdBind);
+    p.setBindGroup(0, io?.bwdBind ?? this.bwdBind);
     p.dispatchWorkgroups(d.numTiles);
     p.setPipeline(this.chainPipe[v]);
     p.setBindGroup(0, this.chainBind[v]);
@@ -315,5 +328,36 @@ export class Raster3DEngine {
 
   private viewIndex(view: number): number {
     return Math.max(0, Math.min(this.cameras.length - 1, view | 0));
+  }
+
+  private imageByteSize(): number {
+    return 3 * this.dims.H * this.dims.W * 4;
+  }
+
+  private makeForwardBind(imageBuffer: GPUBuffer, imageOffset: number): GPUBindGroup {
+    return this.bindGroup(this.fwdPipe, [
+      this.tileCounts,
+      this.binnedIds,
+      this.derived,
+      { buffer: imageBuffer, offset: imageOffset, size: this.imageByteSize() },
+      this.tileStop,
+    ]);
+  }
+
+  private makeBackwardBind(gradBuffer: GPUBuffer, gradOffset: number): GPUBindGroup {
+    return this.bindGroup(this.bwdPipe, [
+      { buffer: gradBuffer, offset: gradOffset, size: this.imageByteSize() },
+      this.tileCounts,
+      this.binnedIds,
+      this.tileStop,
+      this.derived,
+      this.accGrad,
+    ]);
+  }
+
+  private checkIOBinding(name: string, offset: number): void {
+    if (!Number.isInteger(offset) || offset < 0 || offset % STORAGE_OFFSET_ALIGN !== 0) {
+      throw new Error(`raster3d: ${name} offset ${offset} must be ${STORAGE_OFFSET_ALIGN}-byte aligned`);
+    }
   }
 }

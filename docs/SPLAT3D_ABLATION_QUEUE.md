@@ -153,6 +153,8 @@ Interpretation:
 Hypothesis: removing image and gradient copies between raster and CLIP saves
 bandwidth and simplifies the batch path.
 
+Status: landed as an enabling cleanup.
+
 Implementation notes:
 
 - Let raster forward write directly into a CLIP input lane buffer, or let CLIP
@@ -165,6 +167,37 @@ Promotion gate:
 - Old and aliased paths match on one fixed view.
 - Integrated wall time improves or the change is required to make batch CLIP
   profitable.
+
+Attempt 1 result:
+
+- Added `Raster3DIOState`, allowing raster forward/backward shaders to bind
+  external image and image-gradient buffers with storage offsets.
+- `Splat3DOptimizer` now renders directly into `VisionTrainer` /
+  `BatchMajorVisionTrainer` input slots and reads gradients directly from CLIP
+  input-gradient slots.
+- This removes two full-image GPU copies per optimized view.
+
+Commands run:
+
+```bash
+npx parcel build --no-scope-hoist --no-cache src/index.html src/splat.html src/splat3d.html
+CLIP_BATCH=1 VIEWS=3 RUNS=5 WARMUP=3 bun tools/splat3d/step_bench.ts
+CLIP_BATCH=3 VIEWS=3 RUNS=5 WARMUP=3 bun tools/splat3d/step_bench.ts
+```
+
+Observed same-session run after aliasing:
+
+| Views | CLIP batch | Normal step avg | Profile total | Note |
+| --- | ---: | ---: | ---: | --- |
+| 3/9 | 1 | 153.73 ms | 180.79 ms | GPU was running slower than earlier baseline |
+| 3/9 | 3 | 135.49 ms | 140.68 ms | batch still ahead in same session |
+
+Interpretation:
+
+- Do not credit aliasing with a large standalone speedup; the copy cost is small
+  versus CLIP.
+- Keep it because it simplifies the next per-lane raster-state patch and removes
+  avoidable memory traffic from the correct path.
 
 ### 4. Per-Lane Raster State For Batched Views
 

@@ -3,11 +3,10 @@ import { VisionTrainer, type TrainPlan } from "../clip/vision";
 import { BatchMajorVisionTrainer } from "../clip/vision_batch";
 import { type AdamHyper, DEFAULT_HYPER } from "../splat/adam_wgsl";
 import { DEFAULT_3D_CAMERAS, type Camera3D, type PreparedCamera3D, prepareCamera } from "./cameras";
-import { Raster3DEngine, type AdamLRs3D, DEFAULT_3D_LRS } from "./raster";
+import { Raster3DEngine, type AdamLRs3D, DEFAULT_3D_LRS, type Raster3DIOState } from "./raster";
 import { PARAM_STRIDE_3D } from "./raster_wgsl";
 
 const SIDE = 256;
-const IMG_BYTES = 3 * SIDE * SIDE * 4;
 const U = { COPY_SRC: 4, COPY_DST: 8 };
 
 export interface Splat3DInit {
@@ -68,6 +67,8 @@ export class Splat3DOptimizer {
   readonly side = SIDE;
   readonly clipBatchSize: number;
   private readonly textBuffers: GPUBuffer[];
+  private readonly singleIO: Raster3DIOState;
+  private readonly batchIO: Raster3DIOState[];
   private readonly lrs: AdamLRs3D;
   private readonly hyper: AdamHyper;
   private step_ = 0;
@@ -129,6 +130,17 @@ export class Splat3DOptimizer {
         usage: U.COPY_SRC | U.COPY_DST,
       })
     );
+    this.singleIO = raster.createIOState(trainer.inputBuffer, 0, trainer.inputGradBuffer, 0);
+    this.batchIO = batchTrainer
+      ? Array.from({ length: batchTrainer.batch }, (_unused, lane) =>
+          raster.createIOState(
+            batchTrainer.inputBuffer,
+            batchTrainer.slotOffsetBytes(lane, batchTrainer.plan.inputSlot),
+            batchTrainer.inputGradBuffer,
+            batchTrainer.inputGradOffsetBytes(lane)
+          )
+        )
+      : [];
   }
 
   setViewPrompts(embeds: Float32Array[]): void {
@@ -199,10 +211,10 @@ export class Splat3DOptimizer {
         timings.clipBatch += await this.submitTimed((enc) => batch.encode(enc, { backward: true }));
         for (let lane = 0; lane < chunk.length; lane++) {
           const view = chunk[lane];
-          timings.rasterReplay += await this.submitTimed((enc) => this.raster.recordForward(enc, view));
+          const io = this.batchIO[lane];
+          timings.rasterReplay += await this.submitTimed((enc) => this.raster.recordForward(enc, view, io));
           timings.rasterBwd += await this.submitTimed((enc) => {
-            enc.copyBufferToBuffer(batch.inputGradBuffer, batch.inputGradOffsetBytes(lane), this.raster.gradImage, 0, IMG_BYTES);
-            this.raster.recordBackwardAdd(enc, view);
+            this.raster.recordBackwardAdd(enc, view, io);
           });
         }
       }
@@ -243,8 +255,7 @@ export class Splat3DOptimizer {
 
   async currentEmbedding(view = 0): Promise<Float32Array> {
     const enc = this.device.createCommandEncoder();
-    this.raster.recordForward(enc, view);
-    enc.copyBufferToBuffer(this.raster.image, 0, this.trainer.inputBuffer, 0, IMG_BYTES);
+    this.raster.recordForward(enc, view, this.singleIO);
     this.trainer.encode(enc, { backward: false });
     this.device.queue.submit([enc.finish()]);
     return readFloats(this.device, this.trainer.outputBuffer, this.trainer.plan.embedDim);
@@ -281,20 +292,18 @@ export class Splat3DOptimizer {
       batch.encode(enc, { backward: true });
       for (let lane = 0; lane < chunk.length; lane++) {
         const view = chunk[lane];
-        this.raster.recordForward(enc, view);
-        enc.copyBufferToBuffer(batch.inputGradBuffer, batch.inputGradOffsetBytes(lane), this.raster.gradImage, 0, IMG_BYTES);
-        this.raster.recordBackwardAdd(enc, view);
+        const io = this.batchIO[lane];
+        this.raster.recordForward(enc, view, io);
+        this.raster.recordBackwardAdd(enc, view, io);
       }
     }
   }
 
   private recordSingleTrainingView(enc: GPUCommandEncoder, view: number): void {
     enc.copyBufferToBuffer(this.textBuffers[view], 0, this.trainer.textBuffer, 0, this.trainer.plan.textDim * 4);
-    this.raster.recordForward(enc, view);
-    enc.copyBufferToBuffer(this.raster.image, 0, this.trainer.inputBuffer, 0, IMG_BYTES);
+    this.raster.recordForward(enc, view, this.singleIO);
     this.trainer.encode(enc, { backward: true });
-    enc.copyBufferToBuffer(this.trainer.inputGradBuffer, 0, this.raster.gradImage, 0, IMG_BYTES);
-    this.raster.recordBackwardAdd(enc, view);
+    this.raster.recordBackwardAdd(enc, view, this.singleIO);
   }
 
   private recordBatchInputs(enc: GPUCommandEncoder, views: number[]): void {
@@ -302,14 +311,12 @@ export class Splat3DOptimizer {
     for (let lane = 0; lane < views.length; lane++) {
       const view = views[lane];
       enc.copyBufferToBuffer(this.textBuffers[view], 0, batch.textBuffer, batch.textOffsetBytes(lane), batch.plan.textDim * 4);
-      this.raster.recordForward(enc, view);
-      enc.copyBufferToBuffer(this.raster.image, 0, batch.inputBuffer, batch.slotOffsetBytes(lane, batch.plan.inputSlot), IMG_BYTES);
+      this.raster.recordForward(enc, view, this.batchIO[lane]);
     }
   }
 
   private recordSingleForwardToTrainer(enc: GPUCommandEncoder, view: number): void {
-    this.raster.recordForward(enc, view);
-    enc.copyBufferToBuffer(this.raster.image, 0, this.trainer.inputBuffer, 0, IMG_BYTES);
+    this.raster.recordForward(enc, view, this.singleIO);
   }
 
   private recordSingleTextAndBackward(enc: GPUCommandEncoder, view: number): void {
@@ -318,8 +325,7 @@ export class Splat3DOptimizer {
   }
 
   private recordSingleRasterBackward(enc: GPUCommandEncoder, view: number): void {
-    enc.copyBufferToBuffer(this.trainer.inputGradBuffer, 0, this.raster.gradImage, 0, IMG_BYTES);
-    this.raster.recordBackwardAdd(enc, view);
+    this.raster.recordBackwardAdd(enc, view, this.singleIO);
   }
 
   private async submitTimed(record: (enc: GPUCommandEncoder) => void): Promise<number> {

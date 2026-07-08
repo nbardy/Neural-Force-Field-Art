@@ -164,3 +164,13 @@ embeddings.
 
 This does not change optimizer step speed, but it removes duplicate text tower
 work from prompt setup and makes same-text ablations less annoying to run.
+
+## Raster/CLIP Buffer Aliasing
+
+The rasterizer can now bind external image and image-gradient buffers through
+`Raster3DIOState`. The 3D optimizer uses this to render directly into CLIP input
+slots and read gradients directly from CLIP input-gradient slots.
+
+This removes two full-image copies per optimized view. It is not a large
+standalone speedup in current measurements because CLIP dominates, but it is the
+right setup for per-lane raster state and batched raster/CLIP scheduling.
