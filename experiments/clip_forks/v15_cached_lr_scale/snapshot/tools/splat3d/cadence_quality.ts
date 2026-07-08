@@ -7,7 +7,6 @@
  * move toward the full frozen CLIP teacher across all nine views?
  *
  *   BUDGET_MS=5000 CONFIGS=base=1,cache2=2,cache4=4 bun tools/splat3d/cadence_quality.ts
- *   BUDGET_MS=5000 CONFIGS=base=1,cache4=4,cache4lr25=4:0.25 bun tools/splat3d/cadence_quality.ts
  *   RUN_STEPS=80 CONFIGS=base=1,cache4=4 bun tools/splat3d/cadence_quality.ts
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -53,13 +52,11 @@ const VIEW_LANE_RASTER_BWD = process.env.VIEW_LANE_RASTER_BWD === "1";
 interface CadenceConfig {
   label: string;
   clipRefreshInterval: number;
-  cachedLrScale: number;
 }
 
 interface CadenceResult {
   label: string;
   clipRefreshInterval: number;
-  cachedLrScale: number;
   steps: number;
   trainMs: number;
   stepsPerSecond: number;
@@ -77,13 +74,10 @@ function parseConfigs(src: string): CadenceConfig[] {
     .filter(Boolean)
     .map((part) => {
       const [labelRaw, intervalRaw] = part.includes("=") ? part.split("=") : [`refresh${part}`, part];
-      const [refreshRaw, scaleRaw] = intervalRaw.split(":");
-      const parsed = Number(refreshRaw);
+      const parsed = Number(intervalRaw);
       if (!Number.isFinite(parsed)) throw new Error(`cadence_quality: bad config '${part}'`);
       const interval = Math.max(1, parsed | 0);
-      const scaleParsed = scaleRaw === undefined ? 1 : Number(scaleRaw);
-      const cachedLrScale = Number.isFinite(scaleParsed) ? Math.max(0, scaleParsed) : 1;
-      return { label: labelRaw.trim(), clipRefreshInterval: interval, cachedLrScale };
+      return { label: labelRaw.trim(), clipRefreshInterval: interval };
     });
   if (!configs.length) throw new Error("cadence_quality: CONFIGS produced no configs");
   return configs;
@@ -201,7 +195,7 @@ const results: CadenceResult[] = [];
 console.log(
   `cadence_quality: G=${G}, views=${VIEWS}, clipBatch=${CLIP_BATCH}, viewSampler=${VIEW_SAMPLER}, ` +
     `weights=${WEIGHTS_FILE}, cap=${CAP}, budgetMs=${RUN_STEPS > 0 ? "fixedSteps" : BUDGET_MS}, ` +
-    `runSteps=${RUN_STEPS}, configs=${CONFIGS.map((c) => `${c.label}:${c.clipRefreshInterval}:lr${c.cachedLrScale}`).join(",")}`
+    `runSteps=${RUN_STEPS}, configs=${CONFIGS.map((c) => `${c.label}:${c.clipRefreshInterval}`).join(",")}`
 );
 
 for (const cfg of CONFIGS) {
@@ -224,7 +218,6 @@ for (const cfg of CONFIGS) {
     viewLaneBatchRasterForward: VIEW_LANE_RASTER_FWD,
     viewLaneBatchRasterBackward: VIEW_LANE_RASTER_BWD,
     clipRefreshInterval: cfg.clipRefreshInterval,
-    cachedLrScale: cfg.cachedLrScale,
   });
   opt.setViewPrompts(prompts);
   await device.queue.onSubmittedWorkDone();
@@ -250,7 +243,6 @@ for (const cfg of CONFIGS) {
   const result: CadenceResult = {
     label: cfg.label,
     clipRefreshInterval: cfg.clipRefreshInterval,
-    cachedLrScale: cfg.cachedLrScale,
     steps,
     trainMs,
     stepsPerSecond: (steps * 1000) / Math.max(trainMs, 1e-6),
@@ -258,7 +250,7 @@ for (const cfg of CONFIGS) {
   };
   results.push(result);
   console.log(
-    `result ${cfg.label}: refresh=${cfg.clipRefreshInterval} cachedLrScale=${cfg.cachedLrScale} steps=${steps} ` +
+    `result ${cfg.label}: refresh=${cfg.clipRefreshInterval} steps=${steps} ` +
       `train=${trainMs.toFixed(0)}ms compile=${(trainStart - compileStart).toFixed(0)}ms ` +
       `stepRate=${result.stepsPerSecond.toFixed(2)}/s meanCos=${result.meanCos.toFixed(5)} ` +
       `minCos=${result.minCos.toFixed(5)} maxCos=${result.maxCos.toFixed(5)} sheet=${result.sheetPath}`

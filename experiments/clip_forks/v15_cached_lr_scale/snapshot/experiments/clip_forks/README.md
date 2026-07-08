@@ -31,7 +31,6 @@ node experiments/clip_forks/diff_fork.mjs v11_backward_local_fusions
 node experiments/clip_forks/diff_fork.mjs v12_chrome_dawn_trace
 node experiments/clip_forks/diff_fork.mjs v13_cached_clip_gradient
 node experiments/clip_forks/diff_fork.mjs v14_cadence_quality_gate
-node experiments/clip_forks/diff_fork.mjs v15_cached_lr_scale
 ```
 
 ## Standard Gate
@@ -75,8 +74,6 @@ Use the gate-specific env vars in addition to the commands above.
   cached full-resolution `dL/dimage` on skipped steps.
 - `v14_cadence_quality_gate`: fixed-wall-clock full-teacher quality probe for
   cached CLIP gradient cadence.
-- `v15_cached_lr_scale`: cached-gradient cadence variant that scales Adam
-  learning rates only on cached steps.
 
 ## Snapshot Coverage
 
@@ -103,8 +100,6 @@ Use the gate-specific env vars in addition to the commands above.
   perf-note context.
 - `v14_cadence_quality_gate`: cadence quality harness, 3D optimizer context,
   3D step bench/matrix, and perf-note context.
-- `v15_cached_lr_scale`: 3D optimizer schedule hook, 3D step bench/matrix,
-  cadence quality harness, and perf-note context.
 
 ## Related Notes
 
@@ -119,4 +114,3 @@ Use the gate-specific env vars in addition to the commands above.
 - `agent_notes/optimization_session/agent_gpu_profiler_plan.md`
 - `agent_notes/optimization_session/clip_2x_4x_trace_status.md`
 - `agent_notes/optimization_session/current_strategy_reflection_v14_2026_07_08.md`
-- `agent_notes/optimization_session/v15_agent_synthesis_2026_07_08.md`

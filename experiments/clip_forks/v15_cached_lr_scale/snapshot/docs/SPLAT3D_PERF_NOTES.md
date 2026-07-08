@@ -425,44 +425,6 @@ teacher cosine. This path needs a smarter schedule, likely lower cached-step
 learning rates, different cached-step objectives, or periodic full 9-view
 teacher refreshes.
 
-## Cached-Step LR Scale
-
-`CLIP_CACHED_LR_SCALE=N` scales splat Adam learning rates only on cached-gradient
-steps. Refresh steps keep the normal learning rates. This tests whether stale
-`dL/dimage` was being applied too aggressively.
-
-```bash
-BUDGET_MS=5000 CONFIGS=base=1,cache2=2,cache2lr50=2:0.5,cache4=4,cache4lr25=4:0.25 OUT_DIR=/tmp/nffa_cadence_lr_quality bun tools/splat3d/cadence_quality.ts
-```
-
-| Variant | Refresh Interval | Cached LR Scale | Steps / 5s | Steps / Sec | Mean Full-Teacher Cos |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `base` | 1 | 1.00 | 87 | 17.26 | 0.09413 |
-| `cache2` | 2 | 1.00 | 149 | 29.49 | 0.04559 |
-| `cache2lr50` | 2 | 0.50 | 142 | 28.37 | 0.05842 |
-| `cache4` | 4 | 1.00 | 213 | 42.16 | 0.02450 |
-| `cache4lr25` | 4 | 0.25 | 217 | 43.32 | 0.04000 |
-
-Step-speed matrix:
-
-```bash
-TRIALS=3 CONFIGS=base=3:3,cache2=3:3:cache2,cache2lr50=3:3:cache2:lr0.5,cache4=3:3:cache4,cache4lr25=3:3:cache4:lr0.25 RUNS=8 WARMUP=6 bun tools/splat3d/step_matrix.ts
-```
-
-| Variant | Normal Median | Profile Median | CLIP Median | Raster Median |
-| --- | ---: | ---: | ---: | ---: |
-| `base` | 53.64 ms | 57.31 ms | 41.94 ms | 13.31 ms |
-| `cache2` | 32.90 ms | 56.65 ms | 41.81 ms | 12.76 ms |
-| `cache2lr50` | 32.69 ms | 57.28 ms | 41.64 ms | 12.74 ms |
-| `cache4` | 22.61 ms | 15.01 ms | 0.00 ms | 12.51 ms |
-| `cache4lr25` | 22.75 ms | 14.53 ms | 0.00 ms | 12.68 ms |
-
-Decision: keep gated, do not promote. Cached-step LR scaling improves quality
-without hurting speed (`cache2` +28%, `cache4` +63% mean teacher cosine versus
-their naive versions), but both still trail base badly. Stale gradient step size
-is part of the issue; repeated camera batches and stale objective semantics are
-still unresolved.
-
 ## Prompt Encoding Cache
 
 The 3D page now caches text embeddings by exact expanded prompt. In `same text`

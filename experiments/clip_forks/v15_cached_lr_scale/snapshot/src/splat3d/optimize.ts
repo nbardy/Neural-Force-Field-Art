@@ -50,7 +50,6 @@ export interface Splat3DOptimizerConfig {
   gridDirectRaster?: boolean;
   sharedWForwardSteps?: ReadonlySet<number>;
   clipRefreshInterval?: number;
-  cachedLrScale?: number;
 }
 
 export type Splat3DClipMode = "single" | "batch";
@@ -112,7 +111,6 @@ export class Splat3DOptimizer {
   private readonly viewLaneBatchRasterBackward: boolean;
   private readonly gridDirectRaster: boolean;
   private readonly clipRefreshInterval: number;
-  private readonly cachedLrScale: number;
   private step_ = 0;
   private hasPrompts = false;
   private rngState = 1;
@@ -219,7 +217,6 @@ export class Splat3DOptimizer {
     this.viewLaneBatchRasterBackward = cfg.viewLaneBatchRasterBackward ?? false;
     this.gridDirectRaster = cfg.gridDirectRaster ?? false;
     this.clipRefreshInterval = Math.max(1, cfg.clipRefreshInterval ?? 1);
-    this.cachedLrScale = normalizeCachedLrScale(cfg.cachedLrScale);
     this.rngState = ((cfg.seed ?? 1) ^ 0x9e3779b9) >>> 0 || 1;
     this.textBuffers = cameras.map((_, i) =>
       device.createBuffer({
@@ -288,7 +285,7 @@ export class Splat3DOptimizer {
       this.updateCachedBatchViews(views);
     }
     this.step_ += 1;
-    this.raster.recordAdam(enc, this.step_, this.lrsForStep(useCached), this.hyper);
+    this.raster.recordAdam(enc, this.step_, this.lrs, this.hyper);
     this.raster.recordForward(enc, displayView);
     this.device.queue.submit([enc.finish()]);
   }
@@ -386,7 +383,7 @@ export class Splat3DOptimizer {
       if (!useCached) this.updateCachedBatchViews(views);
       this.step_ += 1;
       timings.adam += await this.submitTimed((enc, ts) => {
-        this.raster.recordAdam(enc, this.step_, this.lrsForStep(useCached), this.hyper, ts);
+        this.raster.recordAdam(enc, this.step_, this.lrs, this.hyper, ts);
       }, timer);
       timings.display += await this.submitTimed((enc, ts) => {
         this.raster.recordForward(enc, displayView, undefined, ts);
@@ -781,11 +778,6 @@ export class Splat3DOptimizer {
     return this.normalizedViewCount(viewsPerStep) === this.cachedBatchViews.length;
   }
 
-  private lrsForStep(useCached: boolean): AdamLRs3D {
-    if (!useCached || this.cachedLrScale === 1) return this.lrs;
-    return scaleLrs3D(this.lrs, this.cachedLrScale);
-  }
-
   private updateCachedBatchViews(views: number[]): void {
     if (this.clipRefreshInterval <= 1 || this.clipLayout !== "per_view" || !this.batchTrainer) {
       this.cachedBatchViews = null;
@@ -830,21 +822,6 @@ export class Splat3DOptimizer {
 function normalizeClipBatchSize(value: number | undefined): number {
   const n = Number.isFinite(value) ? value! | 0 : 1;
   return n > 1 ? Math.min(9, n) : 1;
-}
-
-function normalizeCachedLrScale(value: number | undefined): number {
-  if (value === undefined) return 1;
-  if (!Number.isFinite(value)) return 1;
-  return Math.max(0, value);
-}
-
-function scaleLrs3D(lrs: AdamLRs3D, scale: number): AdamLRs3D {
-  return {
-    position: lrs.position * scale,
-    logRadius: lrs.logRadius * scale,
-    color: lrs.color * scale,
-    opacity: lrs.opacity * scale,
-  };
 }
 
 function timedTotal(t: Splat3DStepTimings): number {

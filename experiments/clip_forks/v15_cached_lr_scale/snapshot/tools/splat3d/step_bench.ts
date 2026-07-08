@@ -19,7 +19,6 @@
  *   CLIP_LAYOUT=grid9_close2 CLIP_BATCH=3 VIEWS=9 bun tools/splat3d/step_bench.ts
  *   GRID_DIRECT_RASTER=1 CLIP_LAYOUT=grid9_close2 CLIP_BATCH=3 VIEWS=9 bun tools/splat3d/step_bench.ts
  *   CLIP_REFRESH_INTERVAL=2 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
- *   CLIP_REFRESH_INTERVAL=4 CLIP_CACHED_LR_SCALE=0.25 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   TIMESTAMP=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  */
 import { readFileSync } from "node:fs";
@@ -57,7 +56,6 @@ const VIEW_LANE_RASTER_FWD = process.env.VIEW_LANE_RASTER_FWD === "1";
 const VIEW_LANE_RASTER_BWD = process.env.VIEW_LANE_RASTER_BWD === "1";
 const GRID_DIRECT_RASTER = process.env.GRID_DIRECT_RASTER === "1";
 const CLIP_REFRESH_INTERVAL = Math.max(1, Number(process.env.CLIP_REFRESH_INTERVAL ?? 1) | 0);
-const CLIP_CACHED_LR_SCALE = normalizeCachedLrScale(Number(process.env.CLIP_CACHED_LR_SCALE ?? 1));
 const SHARED_W_FWD_STEPS = parseStepSet(process.env.SHARED_W_FWD_STEPS ?? "");
 const TIMESTAMP = process.env.TIMESTAMP === "1";
 const CLIP_PRECISION: WeightPrecision =
@@ -84,10 +82,6 @@ function parseStepSet(src: string): ReadonlySet<number> {
     .filter((n) => Number.isFinite(n))
     .map((n) => n | 0);
   return new Set(steps);
-}
-
-function normalizeCachedLrScale(value: number): number {
-  return Number.isFinite(value) ? Math.max(0, value) : 1;
 }
 
 function textEmbedding(seed: number, dim: number): Float32Array {
@@ -153,7 +147,6 @@ const opt = await Splat3DOptimizer.create(device, plan, weights, {
   gridDirectRaster: GRID_DIRECT_RASTER,
   sharedWForwardSteps: SHARED_W_FWD_STEPS,
   clipRefreshInterval: CLIP_REFRESH_INTERVAL,
-  cachedLrScale: CLIP_CACHED_LR_SCALE,
 });
 console.log(
   `splat3d step bench: G=${G}, views=${VIEWS}/${opt.cameras.length}, ` +
@@ -170,7 +163,6 @@ console.log(
     `viewLaneBatchRasterBackward=${VIEW_LANE_RASTER_BWD ? 1 : 0}, ` +
     `gridDirectRaster=${GRID_DIRECT_RASTER ? 1 : 0}, ` +
     `clipRefreshInterval=${CLIP_REFRESH_INTERVAL}, ` +
-    `cachedLrScale=${CLIP_CACHED_LR_SCALE}, ` +
     `timing=${useTimestamps ? "gpu-timestamp" : "split-submit-wall"}, ` +
     `compile+allocate=${(performance.now() - compileStart).toFixed(0)} ms`
 );
