@@ -232,6 +232,7 @@ const TF_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0/+es
 const nativeImport = new Function("u", "return import(u)") as (u: string) => Promise<any>;
 let tokenizer: any = null;
 let textModel: any = null;
+const promptEmbedCache = new Map<string, Promise<Float32Array>>();
 
 async function loadTextModel(onProgress?: (msg: string) => void): Promise<void> {
   if (textModel) return;
@@ -267,6 +268,19 @@ async function encodePrompt(text: string): Promise<Float32Array> {
   const vec = new Float32Array(512);
   for (let i = 0; i < 512; i++) vec[i] = d[i];
   return vec;
+}
+
+function encodePromptCached(text: string): Promise<Float32Array> {
+  const key = text.trim();
+  let cached = promptEmbedCache.get(key);
+  if (!cached) {
+    cached = encodePrompt(key).catch((e) => {
+      promptEmbedCache.delete(key);
+      throw e;
+    });
+    promptEmbedCache.set(key, cached);
+  }
+  return cached;
 }
 
 let viewEmbeds: Float32Array[] | null = null;
@@ -363,13 +377,15 @@ async function onOptimize(): Promise<void> {
   renderReadout();
   try {
     const embeds: Float32Array[] = [];
-    for (let i = 0; i < opt.cameras.length; i++) {
-      setNotice(`encoding prompt ${i + 1}/${opt.cameras.length}…`);
-      const prompt =
-        status.promptMode === "camera"
-          ? buildViewPrompt(text, opt.cameras[i], status.blackBgText)
-          : buildBasePrompt(text, status.blackBgText);
-      embeds.push(await encodePrompt(prompt));
+    if (status.promptMode === "same") {
+      setNotice("encoding prompt 1/1...");
+      const embed = await encodePromptCached(buildBasePrompt(text, status.blackBgText));
+      for (let i = 0; i < opt.cameras.length; i++) embeds.push(embed);
+    } else {
+      for (let i = 0; i < opt.cameras.length; i++) {
+        setNotice(`encoding prompt ${i + 1}/${opt.cameras.length}...`);
+        embeds.push(await encodePromptCached(buildViewPrompt(text, opt.cameras[i], status.blackBgText)));
+      }
     }
     viewEmbeds = embeds;
     opt.setViewPrompts(embeds);

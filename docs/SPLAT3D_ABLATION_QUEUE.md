@@ -230,11 +230,26 @@ Promotion gate:
 Hypothesis: same-text mode and repeated camera prompts should avoid repeated
 text encoder work.
 
+Status: first in-memory cache landed for the 3D page.
+
 Promotion gate:
 
 - Same-text mode encodes one prompt.
 - Warm-cache optimize start is below 50 ms for same prompt.
 - Camera-mode warm-cache returns all view embeddings below 100 ms.
+
+Attempt 1 result:
+
+- Added an in-memory promise cache in `src/splat3d_page.ts`.
+- `same text` mode now encodes one expanded prompt and reuses the embedding for
+  all camera views.
+- Camera-text mode also reuses cached embeddings when the exact expanded prompt
+  repeats across runs.
+
+Remaining:
+
+- Add an explicit browser smoke/readout check for same-text prompt count.
+- Consider IndexedDB persistence after the hot-loop work is further along.
 
 ## Already Tried
 

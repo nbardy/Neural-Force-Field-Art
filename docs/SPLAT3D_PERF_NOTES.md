@@ -154,3 +154,13 @@ results:
 The profiler changes the priority slightly: `spatial_bwd` is at least as
 important as pointwise in B=3, while attention backward is too small for the
 first wave.
+
+## Prompt Encoding Cache
+
+The 3D page now caches text embeddings by exact expanded prompt. In `same text`
+mode it encodes one prompt and reuses the embedding for all 9 views. In camera
+text mode, repeated runs of the same prompt reuse the cached camera-specific
+embeddings.
+
+This does not change optimizer step speed, but it removes duplicate text tower
+work from prompt setup and makes same-text ablations less annoying to run.
