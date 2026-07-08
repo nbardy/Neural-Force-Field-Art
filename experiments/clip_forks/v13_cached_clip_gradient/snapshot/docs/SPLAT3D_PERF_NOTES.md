@@ -355,47 +355,6 @@ Top relevant buckets included `DawnCommands`,
 `DeviceMTL::SubmitPendingCommandBuffer`, `CommandEncoder::Finish`, and
 `Queue::Submit`. Use Perfetto or `chrome://tracing` to inspect the JSON.
 
-## Cached CLIP Gradient Cadence
-
-`CLIP_REFRESH_INTERVAL=N` is an env-gated benchmark path for the default
-per-view batch optimizer. It does not update CLIP. CLIP remains a frozen
-teacher; refresh steps compute `dL/dimage`, and cached steps reuse the previous
-full-resolution image gradient while still running raster forward, raster
-backward, Adam, and display.
-
-Scope of the first fork:
-
-- works for `per_view` with one complete `CLIP_BATCH` chunk, e.g.
-  `VIEWS=3 CLIP_BATCH=3`;
-- keeps selected CLIP inputs at full `256x256`;
-- does not apply to `grid9_close2`, single-CLIP paths, or multi-chunk `9/9`;
-- epoch view sampling advances on refresh steps only.
-
-Clean exact-cycle timing:
-
-```bash
-TRIALS=5 CONFIGS=base=3:3,cache2=3:3:cache2,cache4=3:3:cache4 RUNS=8 WARMUP=6 bun tools/splat3d/step_matrix.ts
-```
-
-| Variant | Normal Median | Profile Median | CLIP Median | Raster Median |
-| --- | ---: | ---: | ---: | ---: |
-| `base` | `53.03 ms` | `56.52 ms` | `41.00 ms` | `13.66 ms` |
-| `cache2` | `32.60 ms` | `55.58 ms` | `40.96 ms` | `12.38 ms` |
-| `cache4` | `22.40 ms` | `14.09 ms` | `0.00 ms` | `12.48 ms` |
-
-Normal-step speedup over base:
-
-- `cache2`: `1.63x`
-- `cache4`: `2.37x`
-
-The sampled profile may land on either a refresh step or a cached step, so use
-normal-step averages over exact refresh cycles for cadence comparisons.
-
-Decision: keep this gated. It is the first concrete 2x-class wall-clock lever
-that preserves full-resolution selected CLIP views, but it is a proxy schedule,
-not an equivalent loss. Promotion requires a fixed-wall-clock quality gate
-using full-teacher scores and all nine camera screenshots.
-
 ## Prompt Encoding Cache
 
 The 3D page now caches text embeddings by exact expanded prompt. In `same text`

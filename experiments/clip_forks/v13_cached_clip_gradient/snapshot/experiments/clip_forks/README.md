@@ -29,7 +29,6 @@ node experiments/clip_forks/diff_fork.mjs v09_direct_grid_raster
 node experiments/clip_forks/diff_fork.mjs v10_shared_w_pointwise_forward
 node experiments/clip_forks/diff_fork.mjs v11_backward_local_fusions
 node experiments/clip_forks/diff_fork.mjs v12_chrome_dawn_trace
-node experiments/clip_forks/diff_fork.mjs v13_cached_clip_gradient
 ```
 
 ## Standard Gate
@@ -69,8 +68,6 @@ Use the gate-specific env vars in addition to the commands above.
   pointwise fusion gates on the current grid80+depthwise stack.
 - `v12_chrome_dawn_trace`: reproducible Chrome/Puppeteer trace helper for
   browser Dawn/WebGPU scheduling evidence.
-- `v13_cached_clip_gradient`: benchmark-only CLIP cadence gate that reuses
-  cached full-resolution `dL/dimage` on skipped steps.
 
 ## Snapshot Coverage
 
@@ -92,8 +89,6 @@ Use the gate-specific env vars in addition to the commands above.
 - `v11_backward_local_fusions`: CLIP backward emitters, 3D optimizer wiring,
   backward correctness tests, dispatch profiler, and 3D step matrix.
 - `v12_chrome_dawn_trace`: browser trace helper, Chrome trace plan, and
-  perf-note context.
-- `v13_cached_clip_gradient`: 3D optimizer schedule, 3D step bench/matrix, and
   perf-note context.
 
 ## Related Notes

@@ -16,7 +16,6 @@
  *   TRIALS=3 CONFIGS=base=3:3,cap1024=3:3:cap1024 bun tools/splat3d/step_matrix.ts
  *   TRIALS=3 CONFIGS=k1=1:1,k2=2:2,k2rand=2:2:random,base=3:3 bun tools/splat3d/step_matrix.ts
  *   TRIALS=3 CONFIGS=base=3:3,dw4=3:3:dw4 bun tools/splat3d/step_matrix.ts
- *   TRIALS=3 CONFIGS=base=3:3,cache2=3:3:cache2,cache4=3:3:cache4 bun tools/splat3d/step_matrix.ts
  *   TRIALS=3 CONFIGS=3:1,3:3,9:1,9:3,9:9 bun tools/splat3d/step_matrix.ts
  */
 import { spawnSync } from "node:child_process";
@@ -35,7 +34,6 @@ interface Config {
   viewLaneRasterBackward: boolean | null;
   gridDirectRaster: boolean;
   sharedWForwardSteps: string;
-  clipRefreshInterval: number;
   cap: number | null;
 }
 
@@ -102,8 +100,6 @@ function parseConfigs(src: string): Config[] {
       const gridDirectRaster = tokens.includes("directgrid") || tokens.includes("grid80");
       const sharedWToken = tokens.find((token) => /^sw\d+(?:-\d+)*$/.test(token));
       const sharedWForwardSteps = sharedWToken ? sharedWToken.slice(2).split("-").join(",") : "";
-      const cacheToken = tokens.find((token) => /^cache\d+$/.test(token) || /^refresh\d+$/.test(token));
-      const clipRefreshInterval = cacheToken ? Math.max(1, Number(cacheToken.replace(/^\D+/, "")) | 0) : 1;
       const capToken = tokens.find((token) => /^cap\d+$/.test(token));
       const cap = capToken ? Number(capToken.slice(3)) : null;
       const suffix = tokens.length ? `:${tokens.join(":")}` : "";
@@ -122,7 +118,6 @@ function parseConfigs(src: string): Config[] {
         viewLaneRasterBackward,
         gridDirectRaster,
         sharedWForwardSteps,
-        clipRefreshInterval,
         cap,
       };
     });
@@ -164,7 +159,6 @@ function runTrial(config: Config, trial: number): TrialResult {
     SPATIAL_BWD_VARIANT: config.spatialBwdVariant === "depthwise4" ? "depthwise4" : "generic",
     GRID_DIRECT_RASTER: config.gridDirectRaster ? "1" : "0",
     SHARED_W_FWD_STEPS: config.sharedWForwardSteps,
-    CLIP_REFRESH_INTERVAL: String(config.clipRefreshInterval),
     RUNS: String(RUNS),
     WARMUP: String(WARMUP),
     SEED: String(SEED),
@@ -229,7 +223,7 @@ function fmt(n: number): string {
 const results: TrialResult[] = [];
 if (!JSON_OUT) {
   console.log(
-    `splat3d step matrix: configs=${CONFIGS.map((c) => `${c.label}=${c.views}:${c.clipBatch}${c.clipLayout === "grid9_close2" ? ":grid9" : ""}${c.viewSampler === "random" ? ":random" : ""}${c.spatialBwdVariant === "depthwise4" ? ":dw4" : ""}${c.gridDirectRaster ? ":directgrid" : ""}${c.sharedWForwardSteps ? `:sw${c.sharedWForwardSteps.split(",").join("-")}` : ""}${c.clipRefreshInterval > 1 ? `:cache${c.clipRefreshInterval}` : ""}${c.fuseGeluBwdIntoPw ? ":gelubwd" : ""}${c.fuseResidualBwdIntoPw ? ":resbwd" : ""}${c.singlePassRasterForward === true ? ":rasterpass" : ""}${c.singlePassRasterForward === false ? ":norasterpass" : ""}${c.viewLaneRasterForward === true ? ":viewlane" : ""}${c.viewLaneRasterForward === false ? ":noviewlane" : ""}${c.viewLaneRasterBackward === true ? ":viewbwd" : ""}${c.viewLaneRasterBackward === false ? ":noviewbwd" : ""}${c.cap !== null ? `:cap${c.cap}` : ""}`).join(",")} ` +
+    `splat3d step matrix: configs=${CONFIGS.map((c) => `${c.label}=${c.views}:${c.clipBatch}${c.clipLayout === "grid9_close2" ? ":grid9" : ""}${c.viewSampler === "random" ? ":random" : ""}${c.spatialBwdVariant === "depthwise4" ? ":dw4" : ""}${c.gridDirectRaster ? ":directgrid" : ""}${c.sharedWForwardSteps ? `:sw${c.sharedWForwardSteps.split(",").join("-")}` : ""}${c.fuseGeluBwdIntoPw ? ":gelubwd" : ""}${c.fuseResidualBwdIntoPw ? ":resbwd" : ""}${c.singlePassRasterForward === true ? ":rasterpass" : ""}${c.singlePassRasterForward === false ? ":norasterpass" : ""}${c.viewLaneRasterForward === true ? ":viewlane" : ""}${c.viewLaneRasterForward === false ? ":noviewlane" : ""}${c.viewLaneRasterBackward === true ? ":viewbwd" : ""}${c.viewLaneRasterBackward === false ? ":noviewbwd" : ""}${c.cap !== null ? `:cap${c.cap}` : ""}`).join(",")} ` +
       `trials=${TRIALS} runs=${RUNS} warmup=${WARMUP} seed=${SEED}${G ? ` G=${G}` : ""}`
   );
 }
@@ -247,7 +241,6 @@ for (let trial = 0; trial < TRIALS; trial++) {
         config.spatialBwdVariant === "depthwise4" ? "dw4=1" : "",
         config.gridDirectRaster ? "directgrid=1" : "",
         config.sharedWForwardSteps ? `sw=${config.sharedWForwardSteps}` : "",
-        config.clipRefreshInterval > 1 ? `cache=${config.clipRefreshInterval}` : "",
         config.fuseResidualBwdIntoPw ? "resbwd=1" : "",
         config.singlePassRasterForward === true ? "rasterpass=1" : "",
         config.singlePassRasterForward === false ? "rasterpass=0" : "",
@@ -272,7 +265,7 @@ if (JSON_OUT) {
   console.log(JSON.stringify({ trials: TRIALS, runs: RUNS, warmup: WARMUP, seed: SEED, results }, null, 2));
 } else {
   console.log("\nSummary:");
-  console.log("config           views batch  layout sampler spbwd gridd      sw cache   cap gbwd rbwd rpass vlane  vbwd  normal med [min,max]     profile med     clip med   raster med");
+  console.log("config           views batch  layout sampler spbwd gridd      sw   cap gbwd rbwd rpass vlane  vbwd  normal med [min,max]     profile med     clip med   raster med");
   for (const config of CONFIGS) {
     const rows = results.filter((r) => r.label === config.label);
     const normal = rows.map((r) => r.normal);
@@ -286,7 +279,6 @@ if (JSON_OUT) {
         `${(config.spatialBwdVariant === "depthwise4" ? "dw4" : "gen").padStart(5)} ` +
         `${(config.gridDirectRaster ? "yes" : "no").padStart(5)} ` +
         `${(config.sharedWForwardSteps ? "yes" : "no").padStart(7)} ` +
-        `${String(config.clipRefreshInterval).padStart(5)} ` +
         `${String(config.cap ?? "def").padStart(5)} ` +
         `${(config.fuseGeluBwdIntoPw ? "yes" : "no").padStart(4)} ` +
         `${(config.fuseResidualBwdIntoPw ? "yes" : "no").padStart(4)} ` +

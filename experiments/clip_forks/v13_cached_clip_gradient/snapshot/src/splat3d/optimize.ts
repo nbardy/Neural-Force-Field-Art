@@ -49,7 +49,6 @@ export interface Splat3DOptimizerConfig {
   viewLaneBatchRasterBackward?: boolean;
   gridDirectRaster?: boolean;
   sharedWForwardSteps?: ReadonlySet<number>;
-  clipRefreshInterval?: number;
 }
 
 export type Splat3DClipMode = "single" | "batch";
@@ -110,13 +109,11 @@ export class Splat3DOptimizer {
   private readonly viewLaneBatchRasterForward: boolean;
   private readonly viewLaneBatchRasterBackward: boolean;
   private readonly gridDirectRaster: boolean;
-  private readonly clipRefreshInterval: number;
   private step_ = 0;
   private hasPrompts = false;
   private rngState = 1;
   private viewOrder: number[] = [];
   private viewCursor = 0;
-  private cachedBatchViews: number[] | null = null;
 
   static async create(
     device: GPUDevice,
@@ -216,7 +213,6 @@ export class Splat3DOptimizer {
     this.viewLaneBatchRasterForward = cfg.viewLaneBatchRasterForward ?? false;
     this.viewLaneBatchRasterBackward = cfg.viewLaneBatchRasterBackward ?? false;
     this.gridDirectRaster = cfg.gridDirectRaster ?? false;
-    this.clipRefreshInterval = Math.max(1, cfg.clipRefreshInterval ?? 1);
     this.rngState = ((cfg.seed ?? 1) ^ 0x9e3779b9) >>> 0 || 1;
     this.textBuffers = cameras.map((_, i) =>
       device.createBuffer({
@@ -274,16 +270,10 @@ export class Splat3DOptimizer {
 
   step(displayView = 0, viewsPerStep = this.cameras.length): void {
     if (!this.hasPrompts) throw new Error("splat3d: setViewPrompts() before step()");
-    const useCached = this.shouldUseCachedBatchStep(viewsPerStep);
-    const views = useCached ? this.cachedBatchViews!.slice() : this.sampleViews(viewsPerStep);
+    const views = this.sampleViews(viewsPerStep);
     const enc = this.device.createCommandEncoder();
     this.raster.recordClearRawGrad(enc);
-    if (useCached) {
-      this.recordCachedBatchTrainingViews(enc, views);
-    } else {
-      this.recordTrainingViews(enc, views);
-      this.updateCachedBatchViews(views);
-    }
+    this.recordTrainingViews(enc, views);
     this.step_ += 1;
     this.raster.recordAdam(enc, this.step_, this.lrs, this.hyper);
     this.raster.recordForward(enc, displayView);
@@ -297,8 +287,7 @@ export class Splat3DOptimizer {
   ): Promise<Splat3DStepTimings> {
     if (!this.hasPrompts) throw new Error("splat3d: setViewPrompts() before profileStep()");
     await this.device.queue.onSubmittedWorkDone();
-    const useCached = this.shouldUseCachedBatchStep(viewsPerStep);
-    const views = useCached ? this.cachedBatchViews!.slice() : this.sampleViews(viewsPerStep);
+    const views = this.sampleViews(viewsPerStep);
     const timer = opts.gpuTimestamps ? GpuPassTimer.create(this.device) : null;
     const timings: Splat3DStepTimings = {
       views: views.length,
@@ -324,10 +313,7 @@ export class Splat3DOptimizer {
         this.raster.recordClearRawGrad(enc, ts);
       }, timer);
 
-      if (useCached) {
-        timings.rasterFwd += await this.profileCachedBatchInputs(views, timer);
-        timings.rasterBwd += await this.profileCachedBatchBackward(views, timer);
-      } else if (this.useGridLayoutFor(views)) {
+      if (this.useGridLayoutFor(views)) {
         const batch = this.batchTrainer!;
         const gridViews = views.slice(0, 9);
         const closeups = this.grid9CloseupViews(gridViews);
@@ -380,7 +366,6 @@ export class Splat3DOptimizer {
         }
       }
 
-      if (!useCached) this.updateCachedBatchViews(views);
       this.step_ += 1;
       timings.adam += await this.submitTimed((enc, ts) => {
         this.raster.recordAdam(enc, this.step_, this.lrs, this.hyper, ts);
@@ -483,39 +468,6 @@ export class Splat3DOptimizer {
     }
   }
 
-  private recordCachedBatchTrainingViews(enc: GPUCommandEncoder, views: number[]): void {
-    this.recordCachedBatchInputs(enc, views);
-    this.recordCachedBatchBackward(enc, views);
-  }
-
-  private recordCachedBatchInputs(enc: GPUCommandEncoder, views: number[]): void {
-    if (!this.batchTrainer) throw new Error("splat3d: cached CLIP step needs batch trainer");
-    if (views.length !== this.batchTrainer.batch) {
-      throw new Error(`splat3d: cached CLIP step needs one full batch, got ${views.length}`);
-    }
-    if (this.singlePassBatchRasterForward && views.length > 1) {
-      this.raster.recordForwards(enc, views, this.batchIO.slice(0, views.length));
-      return;
-    }
-    if (this.viewLaneBatchRasterForward && this.batchRasterForward && views.length > 1) {
-      this.raster.recordBatchForward(enc, this.batchRasterForward, views);
-      return;
-    }
-    for (let lane = 0; lane < views.length; lane++) {
-      this.raster.recordForward(enc, views[lane], this.batchIO[lane]);
-    }
-  }
-
-  private recordCachedBatchBackward(enc: GPUCommandEncoder, views: number[]): void {
-    if (this.viewLaneBatchRasterBackward && this.batchRasterForward && views.length > 1) {
-      this.raster.recordBatchBackwardAdd(enc, this.batchRasterForward, views);
-      return;
-    }
-    for (let lane = 0; lane < views.length; lane++) {
-      this.raster.recordBackwardAdd(enc, views[lane], this.batchIO[lane]);
-    }
-  }
-
   private recordGrid9Close2Training(enc: GPUCommandEncoder, gridViews: number[]): void {
     const batch = this.batchTrainer!;
     const closeups = this.grid9CloseupViews(gridViews);
@@ -609,47 +561,6 @@ export class Splat3DOptimizer {
     for (let lane = 0; lane < views.length; lane++) {
       ms += await this.submitTimed((enc, ts) => {
         this.raster.recordForward(enc, views[lane], this.batchIO[lane], ts);
-      }, timer);
-    }
-    return ms;
-  }
-
-  private async profileCachedBatchInputs(views: number[], timer: GpuPassTimer | null): Promise<number> {
-    if (!timer) {
-      return this.submitTimed((enc) => this.recordCachedBatchInputs(enc, views));
-    }
-    if (this.singlePassBatchRasterForward && views.length > 1) {
-      return this.submitTimed((enc, ts) => {
-        this.raster.recordForwards(enc, views, this.batchIO.slice(0, views.length), ts);
-      }, timer);
-    }
-    if (this.viewLaneBatchRasterForward && this.batchRasterForward && views.length > 1) {
-      return this.submitTimed((enc, ts) => {
-        this.raster.recordBatchForward(enc, this.batchRasterForward!, views, ts);
-      }, timer);
-    }
-    let ms = 0;
-    for (let lane = 0; lane < views.length; lane++) {
-      ms += await this.submitTimed((enc, ts) => {
-        this.raster.recordForward(enc, views[lane], this.batchIO[lane], ts);
-      }, timer);
-    }
-    return ms;
-  }
-
-  private async profileCachedBatchBackward(views: number[], timer: GpuPassTimer | null): Promise<number> {
-    if (!timer) {
-      return this.submitTimed((enc) => this.recordCachedBatchBackward(enc, views));
-    }
-    if (this.viewLaneBatchRasterBackward && this.batchRasterForward && views.length > 1) {
-      return this.submitTimed((enc, ts) => {
-        this.raster.recordBatchBackwardAdd(enc, this.batchRasterForward!, views, ts);
-      }, timer);
-    }
-    let ms = 0;
-    for (let lane = 0; lane < views.length; lane++) {
-      ms += await this.submitTimed((enc, ts) => {
-        this.raster.recordBackwardAdd(enc, views[lane], this.batchIO[lane], ts);
       }, timer);
     }
     return ms;
@@ -757,7 +668,7 @@ export class Splat3DOptimizer {
 
   private sampleViews(viewsPerStep: number): number[] {
     const n = this.cameras.length;
-    const k = this.normalizedViewCount(viewsPerStep);
+    const k = Math.max(1, Math.min(n, viewsPerStep | 0));
     if (k >= n) return Array.from({ length: n }, (_unused, i) => i);
     if (this.viewSampler === "random") return this.sampleRandomViews(k);
     const views: number[] = [];
@@ -767,28 +678,6 @@ export class Splat3DOptimizer {
       this.viewCursor += 1;
     }
     return views;
-  }
-
-  private shouldUseCachedBatchStep(viewsPerStep: number): boolean {
-    if (this.clipRefreshInterval <= 1) return false;
-    if (!this.cachedBatchViews) return false;
-    if (this.step_ % this.clipRefreshInterval === 0) return false;
-    if (this.clipLayout !== "per_view") return false;
-    if (!this.batchTrainer) return false;
-    return this.normalizedViewCount(viewsPerStep) === this.cachedBatchViews.length;
-  }
-
-  private updateCachedBatchViews(views: number[]): void {
-    if (this.clipRefreshInterval <= 1 || this.clipLayout !== "per_view" || !this.batchTrainer) {
-      this.cachedBatchViews = null;
-      return;
-    }
-    this.cachedBatchViews = views.length === this.batchTrainer.batch ? views.slice() : null;
-  }
-
-  private normalizedViewCount(viewsPerStep: number): number {
-    const n = this.cameras.length;
-    return Math.max(1, Math.min(n, viewsPerStep | 0));
   }
 
   private sampleRandomViews(k: number): number[] {

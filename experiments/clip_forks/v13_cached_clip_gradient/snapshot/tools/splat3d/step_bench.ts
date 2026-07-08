@@ -18,7 +18,6 @@
  *   CAP=1024 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   CLIP_LAYOUT=grid9_close2 CLIP_BATCH=3 VIEWS=9 bun tools/splat3d/step_bench.ts
  *   GRID_DIRECT_RASTER=1 CLIP_LAYOUT=grid9_close2 CLIP_BATCH=3 VIEWS=9 bun tools/splat3d/step_bench.ts
- *   CLIP_REFRESH_INTERVAL=2 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   TIMESTAMP=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  */
 import { readFileSync } from "node:fs";
@@ -55,7 +54,6 @@ const SINGLE_PASS_RASTER_FWD = process.env.SINGLE_PASS_RASTER_FWD === "1";
 const VIEW_LANE_RASTER_FWD = process.env.VIEW_LANE_RASTER_FWD === "1";
 const VIEW_LANE_RASTER_BWD = process.env.VIEW_LANE_RASTER_BWD === "1";
 const GRID_DIRECT_RASTER = process.env.GRID_DIRECT_RASTER === "1";
-const CLIP_REFRESH_INTERVAL = Math.max(1, Number(process.env.CLIP_REFRESH_INTERVAL ?? 1) | 0);
 const SHARED_W_FWD_STEPS = parseStepSet(process.env.SHARED_W_FWD_STEPS ?? "");
 const TIMESTAMP = process.env.TIMESTAMP === "1";
 const CLIP_PRECISION: WeightPrecision =
@@ -146,7 +144,6 @@ const opt = await Splat3DOptimizer.create(device, plan, weights, {
   viewLaneBatchRasterBackward: VIEW_LANE_RASTER_BWD,
   gridDirectRaster: GRID_DIRECT_RASTER,
   sharedWForwardSteps: SHARED_W_FWD_STEPS,
-  clipRefreshInterval: CLIP_REFRESH_INTERVAL,
 });
 console.log(
   `splat3d step bench: G=${G}, views=${VIEWS}/${opt.cameras.length}, ` +
@@ -162,7 +159,6 @@ console.log(
     `viewLaneBatchRasterForward=${VIEW_LANE_RASTER_FWD ? 1 : 0}, ` +
     `viewLaneBatchRasterBackward=${VIEW_LANE_RASTER_BWD ? 1 : 0}, ` +
     `gridDirectRaster=${GRID_DIRECT_RASTER ? 1 : 0}, ` +
-    `clipRefreshInterval=${CLIP_REFRESH_INTERVAL}, ` +
     `timing=${useTimestamps ? "gpu-timestamp" : "split-submit-wall"}, ` +
     `compile+allocate=${(performance.now() - compileStart).toFixed(0)} ms`
 );
