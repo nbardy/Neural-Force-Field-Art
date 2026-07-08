@@ -132,3 +132,25 @@ Takeaway: keep batch CLIP as an ablation/screenshot toggle, but do not make it
 the default yet. The replayed raster forward eats enough of the CLIP batching win
 that the next promotion step should be per-lane raster state or direct
 raster/CLIP buffer binding.
+
+## Dispatch Profile Snapshot
+
+`tools/clip/dispatch_profile.ts` now provides warmed isolated dispatch timings:
+
+```bash
+MODE=train BATCH=1 RUNS=3 WARMUP=1 bun tools/clip/dispatch_profile.ts
+MODE=train BATCH=3 RUNS=3 WARMUP=1 bun tools/clip/dispatch_profile.ts
+CSV=1 MODE=train BATCH=3 bun tools/clip/dispatch_profile.ts > /tmp/clip_b3.csv
+```
+
+This is a kernel-ranking tool, not exact full-chain attribution. First warmed
+results:
+
+| Batch | Dominant Groups |
+| ---: | --- |
+| 1 | `pw` 19.9%, `pw_bwd` 18.7%, `spatial_bwd` 17.1%, `conv` 14.3% |
+| 3 | `pw` 20.8%, `spatial_bwd` 19.6%, `pw_bwd` 19.5%, `conv` 14.7% |
+
+The profiler changes the priority slightly: `spatial_bwd` is at least as
+important as pointwise in B=3, while attention backward is too small for the
+first wave.

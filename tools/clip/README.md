@@ -253,6 +253,19 @@ BATCH=3 STEP_INDEX=8 RUNS=40 WARMUP=10 bun tools/clip/pointwise_batch_bench.ts
 It verifies exactly, but results are shape-specific rather than universally
 faster. Use it selectively after profiling full CLIP pointwise steps.
 
+The dispatch profiler gives an isolated warmed ranking of generated WGSL
+dispatches:
+
+```bash
+MODE=train BATCH=1 RUNS=3 WARMUP=1 bun tools/clip/dispatch_profile.ts
+MODE=train BATCH=3 RUNS=3 WARMUP=1 bun tools/clip/dispatch_profile.ts
+CSV=1 MODE=train BATCH=3 bun tools/clip/dispatch_profile.ts > /tmp/clip_b3.csv
+```
+
+Treat it as a kernel-priority tool, not exact full-chain GPU timestamp
+attribution. First profiles put `pw`, `pw_bwd`, `spatial_bwd`, and `conv` at
+the top; attention backward is not first-wave work.
+
 ## prompt→splats browser page (Task #7 phase 2)
 
 The end-to-end demo: type a prompt and a field of 2D Gaussian splats

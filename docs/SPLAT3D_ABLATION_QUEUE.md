@@ -103,6 +103,8 @@ Hypothesis: exact dispatch timing will prevent wasted kernel rewrites and show
 whether pointwise, `spatial_bwd`, attention, or elementwise kernels are the real
 next target.
 
+Status: first isolated profiler landed.
+
 Implementation notes:
 
 - Add `tools/clip/dispatch_profile.ts`.
@@ -113,6 +115,38 @@ Promotion gate:
 
 - Top 80% of CLIP time is attributable by dispatch group.
 - Results are stable enough across runs to choose an allowlist.
+
+Attempt 1 result:
+
+- Added `tools/clip/dispatch_profile.ts`.
+- It reports warmed split-submit median time per generated WGSL dispatch plus
+  grouped totals. This is not full-chain timestamp attribution, but it is enough
+  to rank kernel families before rewrites.
+
+Commands run:
+
+```bash
+MODE=train BATCH=1 RUNS=3 WARMUP=1 bun tools/clip/dispatch_profile.ts
+MODE=train BATCH=3 RUNS=3 WARMUP=1 bun tools/clip/dispatch_profile.ts
+```
+
+Observed group totals:
+
+| Batch | Top groups by isolated median sum |
+| ---: | --- |
+| 1 | `pw` 19.9%, `pw_bwd` 18.7%, `spatial_bwd` 17.1%, `conv` 14.3%, `gelu`/`gelu_bwd` 17.9% combined |
+| 3 | `pw` 20.8%, `spatial_bwd` 19.6%, `pw_bwd` 19.5%, `conv` 14.7%, `gelu`/`gelu_bwd` 16.3% combined |
+
+Interpretation:
+
+- Shared-W pointwise and pointwise fusion are plausible, but only as measured
+  shape-gated variants.
+- `spatial_bwd` is a real target, especially the stem
+  `spatial_bwd k3s2 3<-64 @256x256`.
+- Attention backward does not justify first-wave optimization. It was about
+  1.8%-1.9% of the isolated median sum in the warmed profiles.
+- GELU traffic is large enough to keep fusion on the backlog, but after batch
+  integration and the highest pointwise/spatial tests.
 
 ### 3. Raster/CLIP Buffer Aliasing
 
