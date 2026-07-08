@@ -10,6 +10,7 @@
  *   STEM_SPATIAL_BWD=0 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   FUSE_PW_GELU=0 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   FUSE_GELU_BWD_PW=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
+ *   SINGLE_PASS_RASTER_FWD=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -30,6 +31,7 @@ const G = Number(process.env.G ?? LEGIBLE_3D_G);
 const STEM_SPATIAL_BWD = process.env.STEM_SPATIAL_BWD !== "0";
 const FUSE_PW_GELU = process.env.FUSE_PW_GELU !== "0";
 const FUSE_GELU_BWD_PW = process.env.FUSE_GELU_BWD_PW === "1";
+const SINGLE_PASS_RASTER_FWD = process.env.SINGLE_PASS_RASTER_FWD === "1";
 
 function f32File(path: string): Float32Array {
   const b = readFileSync(path);
@@ -73,6 +75,7 @@ const opt = await Splat3DOptimizer.create(device, plan, weights, {
   stemSpatialBwd: STEM_SPATIAL_BWD,
   fusePointwiseGeluForward: FUSE_PW_GELU,
   fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
+  singlePassBatchRasterForward: SINGLE_PASS_RASTER_FWD,
 });
 console.log(
   `splat3d step bench: G=${G}, views=${VIEWS}/${opt.cameras.length}, ` +
@@ -80,6 +83,7 @@ console.log(
     `stemSpatialBwd=${STEM_SPATIAL_BWD ? 1 : 0}, ` +
     `fusePointwiseGeluForward=${FUSE_PW_GELU ? 1 : 0}, ` +
     `fuseGeluBwdIntoPw=${FUSE_GELU_BWD_PW ? 1 : 0}, ` +
+    `singlePassBatchRasterForward=${SINGLE_PASS_RASTER_FWD ? 1 : 0}, ` +
     `compile+allocate=${(performance.now() - compileStart).toFixed(0)} ms`
 );
 

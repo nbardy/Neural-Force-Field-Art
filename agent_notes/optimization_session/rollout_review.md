@@ -66,6 +66,10 @@ commit-and-measure loop:
 - GELU-backward into pointwise-backward fusion was implemented as a gate but not
   promoted, because the CLIP-only win did not produce a clear integrated 3D
   step win.
+- Single-pass batch raster-forward encoding was implemented as a gate but not
+  promoted; reruns favored the existing separate-forward path, so the next
+  raster work should jump to camera-buffer / view-lane dispatch instead of
+  pass-boundary cleanup.
 - STAR UVT/world-tube review clarified that exact multi-view raster batching is
   a scheduler problem first; sublinear camera-bundle rendering needs a different
   primitive.

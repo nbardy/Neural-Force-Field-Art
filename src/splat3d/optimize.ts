@@ -31,6 +31,7 @@ export interface Splat3DOptimizerConfig {
   stemSpatialBwd?: boolean;
   fusePointwiseGeluForward?: boolean;
   fuseGeluBwdIntoPw?: boolean;
+  singlePassBatchRasterForward?: boolean;
 }
 
 export type Splat3DClipMode = "single" | "batch";
@@ -74,6 +75,7 @@ export class Splat3DOptimizer {
   private readonly batchIO: Raster3DIOState[];
   private readonly lrs: AdamLRs3D;
   private readonly hyper: AdamHyper;
+  private readonly singlePassBatchRasterForward: boolean;
   private step_ = 0;
   private hasPrompts = false;
   private rngState = 1;
@@ -131,6 +133,7 @@ export class Splat3DOptimizer {
     this.clipBatchSize = batchTrainer?.batch ?? 1;
     this.lrs = cfg.lrs ?? DEFAULT_3D_LRS;
     this.hyper = cfg.hyper ?? DEFAULT_HYPER;
+    this.singlePassBatchRasterForward = cfg.singlePassBatchRasterForward ?? false;
     this.rngState = ((cfg.seed ?? 1) ^ 0x9e3779b9) >>> 0 || 1;
     this.textBuffers = cameras.map((_, i) =>
       device.createBuffer({
@@ -319,7 +322,13 @@ export class Splat3DOptimizer {
     for (let lane = 0; lane < views.length; lane++) {
       const view = views[lane];
       enc.copyBufferToBuffer(this.textBuffers[view], 0, batch.textBuffer, batch.textOffsetBytes(lane), batch.plan.textDim * 4);
-      this.raster.recordForward(enc, view, this.batchIO[lane]);
+    }
+    if (this.singlePassBatchRasterForward && views.length > 1) {
+      this.raster.recordForwards(enc, views, this.batchIO.slice(0, views.length));
+      return;
+    }
+    for (let lane = 0; lane < views.length; lane++) {
+      this.raster.recordForward(enc, views[lane], this.batchIO[lane]);
     }
   }
 

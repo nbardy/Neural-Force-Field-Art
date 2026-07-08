@@ -305,6 +305,47 @@ Follow-up note:
 
 - `agent_notes/optimization_session/multiview_raster_worldtube_review.md`
 
+Attempt 2 result: single-pass batch raster forward was implemented but not
+promoted.
+
+Hypothesis: recording all selected batch-view raster forwards inside one compute
+pass would reduce pass/pipeline churn before the larger camera-buffer /
+`workgroup_id.z` rewrite.
+
+Implementation:
+
+- `Raster3DEngine.recordForwards()` keeps one compute pass open and encodes
+  `prep -> clear bins -> emit -> forward` for each selected view/lane.
+- `Splat3DOptimizer` can enable it with `singlePassBatchRasterForward`.
+- Bench flags: `SINGLE_PASS_RASTER_FWD=1` and the `rasterpass` matrix token.
+
+Initial matrices were mixed. The rerun that mattered most was after checking
+whether the path should become default:
+
+```bash
+TRIALS=3 CONFIGS=base=3:3,noraster=3:3:norasterpass RUNS=5 WARMUP=3 bun tools/splat3d/step_matrix.ts
+TRIALS=2 CONFIGS=base=9:3,noraster=9:3:norasterpass RUNS=3 WARMUP=2 bun tools/splat3d/step_matrix.ts
+```
+
+In those reruns, the promoted single-pass path was worse than the explicit old
+separate-forward path:
+
+| Views | Path | Normal Step Median | Profile Median | CLIP Median | Raster Median |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 3 | single-pass candidate | `80.13 ms` | `93.50 ms` | `66.33 ms` | `24.31 ms` |
+| 3 | separate-forward control | `71.11 ms` | `90.13 ms` | `64.17 ms` | `23.35 ms` |
+| 9 | single-pass candidate | `316.73 ms` | `394.44 ms` | `294.43 ms` | `95.46 ms` |
+| 9 | separate-forward control | `277.38 ms` | `352.81 ms` | `264.90 ms` | `83.42 ms` |
+
+Decision:
+
+- Keep `recordForwards()` and the `SINGLE_PASS_RASTER_FWD=1` gate as a tool for
+  future raster scheduling experiments.
+- Do not enable it by default. The result is too noisy and the default-promotion
+  reruns favored the existing separate-forward path.
+- The next raster attempt should skip this shallow pass-level optimization and
+  move to the camera-buffer / view-lane-dispatch design.
+
 ### 5. Shape-Gated Shared-W Pointwise
 
 Hypothesis: some pointwise CLIP layers can reuse a staged weight tile across

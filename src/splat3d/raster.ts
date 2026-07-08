@@ -258,9 +258,25 @@ export class Raster3DEngine {
   }
 
   recordForward(enc: GPUCommandEncoder, view = 0, io?: Raster3DIOState): void {
+    const p = enc.beginComputePass();
+    this.encodeForwardPass(p, view, io);
+    p.end();
+  }
+
+  recordForwards(enc: GPUCommandEncoder, views: number[], ios: Raster3DIOState[]): void {
+    if (views.length !== ios.length) {
+      throw new Error(`raster3d: ${views.length} views but ${ios.length} IO states`);
+    }
+    const p = enc.beginComputePass();
+    for (let i = 0; i < views.length; i++) {
+      this.encodeForwardPass(p, views[i], ios[i]);
+    }
+    p.end();
+  }
+
+  private encodeForwardPass(p: GPUComputePassEncoder, view = 0, io?: Raster3DIOState): void {
     const d = this.dims;
     const v = this.viewIndex(view);
-    const p = enc.beginComputePass();
     p.setPipeline(this.prepPipe[v]);
     p.setBindGroup(0, io?.prepBind[v] ?? this.prepBind[v]);
     p.dispatchWorkgroups(ceil(d.G));
@@ -273,7 +289,6 @@ export class Raster3DEngine {
     p.setPipeline(this.fwdPipe);
     p.setBindGroup(0, io?.fwdBind ?? this.fwdBind);
     p.dispatchWorkgroups(d.numTiles);
-    p.end();
   }
 
   recordBackwardAdd(enc: GPUCommandEncoder, view = 0, io?: Raster3DIOState): void {

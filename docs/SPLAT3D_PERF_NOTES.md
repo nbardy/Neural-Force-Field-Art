@@ -317,3 +317,21 @@ The integrated alternating 3D matrix did not clear the promotion bar:
 
 Decision: keep `FUSE_GELU_BWD_PW=1` as a gated ablation, but do not enable it
 by default in the 3D optimizer.
+
+## Single-Pass Batch Raster Forward Gate
+
+A shallow raster scheduler ablation tried recording all selected batch-view
+forwards inside one compute pass:
+
+```bash
+SINGLE_PASS_RASTER_FWD=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
+TRIALS=3 CONFIGS=base=3:3,rasterpass=3:3:rasterpass RUNS=5 WARMUP=3 bun tools/splat3d/step_matrix.ts
+```
+
+The path is exact and remains available behind `SINGLE_PASS_RASTER_FWD=1`, but
+it is not enabled by default. Follow-up reruns after testing default promotion
+favored the existing separate-forward encoding for both `3/9` and `9/9` batch
+x3. This suggests pass-boundary churn is not the useful raster target.
+
+Next raster work should move directly to the camera-buffer / view-lane dispatch
+design with lane-strided raster state and, eventually, lane-strided `accGrad`.
