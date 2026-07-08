@@ -222,6 +222,60 @@ Takeaways:
 - Integration should be selective. A full CLIP profile should identify which
   pointwise steps are bottlenecks before replacing only the shapes that win.
 
+## Iteration 4b - Shared-W Pointwise Matrix Runner
+
+Implemented:
+
+- `tools/clip/pointwise_batch_matrix.ts`
+
+This runs the shared-W microbench sequentially over multiple pointwise steps and
+batch sizes, then reports medians and win/flat/loss verdicts. It is deliberately
+process-based so benchmark rows do not run concurrently and contaminate GPU
+timing.
+
+Commands run:
+
+```bash
+BATCHES=3 STEPS=8,10,57,59,111,113,115,117 TRIALS=3 RUNS=20 WARMUP=5 bun tools/clip/pointwise_batch_matrix.ts
+BATCHES=2 STEPS=8,10,57,59,111,113,115,117 TRIALS=3 RUNS=20 WARMUP=5 bun tools/clip/pointwise_batch_matrix.ts
+```
+
+B=3 median results:
+
+| step | shape | verdict | ratio range |
+| ---: | --- | --- | --- |
+| 8 | `64->192 @64x64` | win, `0.800x` | `0.763-0.998` |
+| 10 | `192->64 @64x64` residual | win, `0.824x` | `0.735-0.868` |
+| 57 | `256->768 @16x16` | win, `0.947x` | `0.718-1.023` |
+| 59 | `768->256 @16x16` residual | flat, `1.010x` | `0.823-1.067` |
+| 111 | `512->1536 @8x8` | win, `0.774x` | `0.707-1.005` |
+| 113 | `512->512 @8x8` residual | loss, `1.108x` | `0.725-1.453` |
+| 115 | `512->1536 @8x8` | win, `0.883x` | `0.792-0.944` |
+| 117 | `1536->512 @8x8` residual | loss, `1.100x` | `1.100-1.205` |
+
+B=2 median results:
+
+| step | shape | verdict | ratio range |
+| ---: | --- | --- | --- |
+| 8 | `64->192 @64x64` | win, `0.838x` | `0.723-0.866` |
+| 10 | `192->64 @64x64` residual | flat, `0.993x` | `0.741-1.136` |
+| 57 | `256->768 @16x16` | win, `0.884x` | `0.802-1.067` |
+| 59 | `768->256 @16x16` residual | loss, `1.225x` | `0.915-1.315` |
+| 111 | `512->1536 @8x8` | flat, `0.977x` | `0.605-1.276` |
+| 113 | `512->512 @8x8` residual | loss, `1.442x` | `1.130-1.886` |
+| 115 | `512->1536 @8x8` | loss, `1.272x` | `0.944-1.274` |
+| 117 | `1536->512 @8x8` residual | loss, `1.102x` | `1.076-1.198` |
+
+Takeaways:
+
+- The exact shared-W kernel still verifies, but timing is shape-specific and
+  noisy enough that single-row microbench results are not a promotion gate.
+- Do not integrate shared-W globally.
+- Candidate full-plan allowlists are B=3 steps `8`, `10`, `115`, and maybe
+  `111`; B=2 steps `8` and `57` are the cleanest if we test a `2 + 1` schedule.
+- Promotion still requires a full `BatchMajorVisionTrainer` wall-time win, not
+  only compact-kernel microbench wins.
+
 ## Next Five Iterations
 
 1. **Production speed win:** add `views/step` N-of-K to the 3D page, default 3

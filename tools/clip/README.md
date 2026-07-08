@@ -248,6 +248,7 @@ reuse one staged W tile inside the same workgroup:
 ```bash
 BATCH=2 STEP_INDEX=57 RUNS=40 WARMUP=10 bun tools/clip/pointwise_batch_bench.ts
 BATCH=3 STEP_INDEX=8 RUNS=40 WARMUP=10 bun tools/clip/pointwise_batch_bench.ts
+BATCHES=2,3 STEPS=8,10,57,59,111,113,115,117 TRIALS=2 bun tools/clip/pointwise_batch_matrix.ts
 ```
 
 It verifies exactly, but results are shape-specific rather than universally

@@ -316,11 +316,39 @@ Implementation notes:
 - Enable only shapes that are hot in the dispatch profile and win in a full
   CLIP chain.
 - Do not apply globally; existing microbench results are mixed.
+- `tools/clip/pointwise_batch_matrix.ts` now runs the isolated shared-W
+  microbench over shape/batch matrices and reports median ratios.
 
 Promotion gate:
 
 - Full B=3 batch-major train wall time improves by at least 5%.
 - Gradient parity still passes.
+
+Attempt 1 result: not promoted.
+
+Commands:
+
+```bash
+BATCHES=3 STEPS=8,10,57,59,111,113,115,117 TRIALS=3 RUNS=20 WARMUP=5 bun tools/clip/pointwise_batch_matrix.ts
+BATCHES=2 STEPS=8,10,57,59,111,113,115,117 TRIALS=3 RUNS=20 WARMUP=5 bun tools/clip/pointwise_batch_matrix.ts
+```
+
+Results:
+
+- B=3 median wins: step `8` (`0.800x`), step `10` (`0.824x`), step `57`
+  (`0.947x`), step `111` (`0.774x`), step `115` (`0.883x`).
+- B=3 flat/loss: step `59` flat (`1.010x`), step `113` loss (`1.108x`),
+  step `117` loss (`1.100x`).
+- B=2 cleanest wins: step `8` (`0.838x`) and step `57` (`0.884x`).
+- Every row preserved exact parity against the z-batch kernel.
+
+Decision:
+
+- Do not integrate a global shared-W pointwise replacement.
+- Keep a later full-plan allowlist ablation for B=3 steps `8`, `10`, `115`,
+  maybe `111`, and a separate `2 + 1` schedule test for B=2 steps `8` and `57`.
+- Promotion still requires full batch-major CLIP train wall time to improve by
+  at least 5%.
 
 ### 6. `spatial_bwd` Staging
 
