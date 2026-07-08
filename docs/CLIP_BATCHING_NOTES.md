@@ -276,6 +276,19 @@ Takeaways:
 - Promotion still requires a full `BatchMajorVisionTrainer` wall-time win, not
   only compact-kernel microbench wins.
 
+Full-profile guard:
+
+```bash
+MODE=train BATCH=3 RUNS=3 WARMUP=1 bun tools/clip/dispatch_profile.ts
+```
+
+Latest isolated B=3 group medians were `spatial_bwd` 23.3%, `pw_bwd` 20.5%,
+`pw` 20.1%, and `conv` 14.6%. The first pointwise candidates are hot enough to
+test selectively: `pw 64->192 @64x64`, `pw_bwd 64->192 @64x64`,
+`pw 192->64 @64x64`, and `pw_bwd 192->64 @64x64` all appear in the top 25
+dispatches. But `spatial_bwd` is still the largest single group, so shared-W is
+not the only remaining CLIP target.
+
 ## Next Five Iterations
 
 1. **Production speed win:** add `views/step` N-of-K to the 3D page, default 3
