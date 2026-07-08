@@ -9,7 +9,6 @@
  *   CLIP_BATCH=3 VIEWS=3 RUNS=10 WARMUP=3 bun tools/splat3d/step_bench.ts
  *   STEM_SPATIAL_BWD=0 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   FUSE_PW_GELU=0 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
- *   SHARED_W_FWD_STEPS=10,15,24,34,49 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   FUSE_GELU_BWD_PW=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   FUSE_RESIDUAL_BWD_PW=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   SINGLE_PASS_RASTER_FWD=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
@@ -54,7 +53,6 @@ const SINGLE_PASS_RASTER_FWD = process.env.SINGLE_PASS_RASTER_FWD === "1";
 const VIEW_LANE_RASTER_FWD = process.env.VIEW_LANE_RASTER_FWD === "1";
 const VIEW_LANE_RASTER_BWD = process.env.VIEW_LANE_RASTER_BWD === "1";
 const GRID_DIRECT_RASTER = process.env.GRID_DIRECT_RASTER === "1";
-const SHARED_W_FWD_STEPS = parseStepSet(process.env.SHARED_W_FWD_STEPS ?? "");
 const TIMESTAMP = process.env.TIMESTAMP === "1";
 const CLIP_PRECISION: WeightPrecision =
   process.env.CLIP_PRECISION === "f16" || process.env.PRECISION === "f16" ? "f16" : "f32";
@@ -69,17 +67,6 @@ function f32File(path: string): Float32Array {
 function f16File(path: string): Uint16Array {
   const b = readFileSync(path);
   return new Uint16Array(b.buffer, b.byteOffset, b.byteLength / 2).slice();
-}
-
-function parseStepSet(src: string): ReadonlySet<number> {
-  const steps = src
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => Number(part))
-    .filter((n) => Number.isFinite(n))
-    .map((n) => n | 0);
-  return new Set(steps);
 }
 
 function textEmbedding(seed: number, dim: number): Float32Array {
@@ -143,7 +130,6 @@ const opt = await Splat3DOptimizer.create(device, plan, weights, {
   viewLaneBatchRasterForward: VIEW_LANE_RASTER_FWD,
   viewLaneBatchRasterBackward: VIEW_LANE_RASTER_BWD,
   gridDirectRaster: GRID_DIRECT_RASTER,
-  sharedWForwardSteps: SHARED_W_FWD_STEPS,
 });
 console.log(
   `splat3d step bench: G=${G}, views=${VIEWS}/${opt.cameras.length}, ` +
@@ -154,7 +140,6 @@ console.log(
     `fusePointwiseGeluForward=${FUSE_PW_GELU ? 1 : 0}, ` +
     `fuseGeluBwdIntoPw=${FUSE_GELU_BWD_PW ? 1 : 0}, ` +
     `fuseResidualBwdIntoPw=${FUSE_RESIDUAL_BWD_PW ? 1 : 0}, ` +
-    (SHARED_W_FWD_STEPS.size ? `sharedWForwardSteps=${[...SHARED_W_FWD_STEPS].join(",")}, ` : "") +
     `singlePassBatchRasterForward=${SINGLE_PASS_RASTER_FWD ? 1 : 0}, ` +
     `viewLaneBatchRasterForward=${VIEW_LANE_RASTER_FWD ? 1 : 0}, ` +
     `viewLaneBatchRasterBackward=${VIEW_LANE_RASTER_BWD ? 1 : 0}, ` +

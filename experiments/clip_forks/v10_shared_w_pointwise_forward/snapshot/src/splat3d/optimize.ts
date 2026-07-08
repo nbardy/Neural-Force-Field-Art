@@ -48,7 +48,6 @@ export interface Splat3DOptimizerConfig {
   viewLaneBatchRasterForward?: boolean;
   viewLaneBatchRasterBackward?: boolean;
   gridDirectRaster?: boolean;
-  sharedWForwardSteps?: ReadonlySet<number>;
 }
 
 export type Splat3DClipMode = "single" | "batch";
@@ -152,7 +151,6 @@ export class Splat3DOptimizer {
             weightPrecision: cfg.clipWeightPrecision,
             stemSpatialBwd: clipDispatchOptions.stemSpatialBwd,
             spatialBwdVariant: clipDispatchOptions.spatialBwdVariant,
-            sharedWForwardSteps: cfg.sharedWForwardSteps,
             fusePointwiseGeluForward: clipDispatchOptions.fusePointwiseGeluForward,
             fuseGeluBwdIntoPw: clipDispatchOptions.fuseGeluBwdIntoPw,
             fuseResidualBwdIntoPw: clipDispatchOptions.fuseResidualBwdIntoPw,

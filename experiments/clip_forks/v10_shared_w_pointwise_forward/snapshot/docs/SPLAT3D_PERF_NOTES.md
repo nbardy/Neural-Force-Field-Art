@@ -264,32 +264,6 @@ Stacked with `SPATIAL_BWD_VARIANT=depthwise4`, all-view grid supervision reached
 while touching all nine cameras every step. This is a real schedule+raster leap,
 but it still needs visual quality testing before becoming default.
 
-## Shared-W Pointwise Forward
-
-`SHARED_W_FWD_STEPS=...` wires the existing shared-weight batch pointwise
-forward experiment into the 3D bench path. The idea is to avoid staging the same
-pointwise weight tile once per batch lane.
-
-The CLIP-only bench showed a tiny residual-step allowlist win:
-
-| Variant | Batch Median |
-| --- | ---: |
-| baseline | `40.86 ms` |
-| `SHARED_W_FWD_STEPS=10,15,24,34,49` | `40.65 ms` |
-
-Integrated 3D timing did not promote it:
-
-| Variant | Normal Median | CLIP Median |
-| --- | ---: | ---: |
-| `3/9 baseline` | `52.88 ms` | `41.30 ms` |
-| `3/9 shared-W residuals` | `53.27 ms` | `40.99 ms` |
-| `grid80 + dw4` | `55.47 ms` | `36.20 ms` |
-| `grid80 + dw4 + shared-W` | `56.41 ms` | `36.02 ms` |
-
-Decision: keep it as a diagnostic env gate, but do not enable it by default.
-The next pointwise attempt should target the base tile shape or backward
-pointwise, not shared-W forward.
-
 ## Prompt Encoding Cache
 
 The 3D page now caches text embeddings by exact expanded prompt. In `same text`

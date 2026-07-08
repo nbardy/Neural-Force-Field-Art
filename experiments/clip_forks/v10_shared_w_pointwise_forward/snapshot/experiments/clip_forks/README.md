@@ -26,7 +26,6 @@ node experiments/clip_forks/diff_fork.mjs v04_pointwise_tile_rewrite
 node experiments/clip_forks/diff_fork.mjs v07_spatial_bwd_depthwise4
 node experiments/clip_forks/diff_fork.mjs v08_grid_contact_sheet_prompt
 node experiments/clip_forks/diff_fork.mjs v09_direct_grid_raster
-node experiments/clip_forks/diff_fork.mjs v10_shared_w_pointwise_forward
 ```
 
 ## Standard Gate
@@ -60,8 +59,6 @@ Use the gate-specific env vars in addition to the commands above.
   lane, with a same-text toggle.
 - `v09_direct_grid_raster`: render grid contact-sheet cells at `80x80` instead
   of full `256x256` scratch, while sharing splat params and gradients.
-- `v10_shared_w_pointwise_forward`: env-gated shared-weight batch pointwise
-  forward allowlist; recorded as no-promote after integrated timing.
 
 ## Snapshot Coverage
 
@@ -78,8 +75,6 @@ Use the gate-specific env vars in addition to the commands above.
   controls, and 3D benchmark context.
 - `v09_direct_grid_raster`: 3D raster engine, grid CLIP layout, optimizer/page
   controls, and grid/step benchmarks.
-- `v10_shared_w_pointwise_forward`: batch pointwise emitters, 3D optimizer
-  wiring, CLIP train matrix, and 3D step matrix.
 
 ## Related Notes
 
