@@ -264,30 +264,6 @@ Stacked with `SPATIAL_BWD_VARIANT=depthwise4`, all-view grid supervision reached
 while touching all nine cameras every step. This is a real schedule+raster leap,
 but it still needs visual quality testing before becoming default.
 
-## Grid Real-Prompt Quality Gate
-
-`tools/splat3d/grid_quality.ts` evaluates grid/contact-sheet schedules against
-the real MobileCLIP text prompts used by the browser page. It trains each config
-from deterministic initial splats, then scores all 9 views with full-resolution
-per-view image embeddings. The grid lane's own contact-sheet prompt score is
-not the primary metric.
-
-First cat prompt repeat gate:
-
-```bash
-TRIALS=3 BUDGET_MS=5000 PROMPT="a photo of a cat" CONFIGS=base3=3:3,grid80=9:3:grid9:directgrid OUT_DIR=/tmp/nffa_grid_quality_cat_trials bun tools/splat3d/grid_quality.ts
-```
-
-| Variant | Trials | Steps / 5s | Steps / Sec | Mean Cos | Mean Delta | Min Cos |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `base3` | 3 | 91 | 18.02 | 0.25410 | 0.12579 | 0.20980 |
-| `grid80` | 3 | 78 | 15.55 | 0.23802 | 0.11083 | 0.19165 |
-
-Read: `grid80` captured `88.1%` of `base3`'s median mean-cosine improvement and
-`93.7%` of its final median mean cosine in the same 5s budget. That is a real
-quality gap, but it is not a blow-up. Keep it gated while testing more prompts,
-close-up lane policies, and periodic full per-view refresh.
-
 ## Shared-W Pointwise Forward
 
 `SHARED_W_FWD_STEPS=...` wires the existing shared-weight batch pointwise
