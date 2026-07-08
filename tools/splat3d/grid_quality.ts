@@ -138,9 +138,11 @@ function parseConfigs(src: string): GridQualityConfig[] {
       const gridDirectRaster = tokens.includes("directgrid") || tokens.includes("grid80") || tokens.includes("direct");
       const gridPromptMode: Grid9PromptMode = tokens.includes("same")
         ? "same"
-        : tokens.includes("literal") || tokens.includes("literalgrid")
-          ? "literal"
-          : "contact_sheet";
+        : tokens.includes("literal2") || tokens.includes("literal_v2") || tokens.includes("objectgrid")
+          ? "literal_v2"
+          : tokens.includes("literal") || tokens.includes("literalgrid")
+            ? "literal"
+            : "contact_sheet";
       return {
         label: labelRaw.trim(),
         views: views | 0,
@@ -271,6 +273,7 @@ function configSummary(config: GridQualityConfig): string {
     config.clipLayout === "grid9_close2" ? "grid9" : "per_view",
     config.gridDirectRaster ? "directgrid" : "",
     config.gridPromptMode === "literal" ? "literal" : "",
+    config.gridPromptMode === "literal_v2" ? "literal2" : "",
     config.gridPromptMode === "same" ? "same" : "",
   ].filter(Boolean);
   return `${config.label}=${tokens.join(":")}`;

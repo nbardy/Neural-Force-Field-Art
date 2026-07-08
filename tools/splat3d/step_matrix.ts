@@ -18,6 +18,7 @@
  *   TRIALS=3 CONFIGS=base=3:3,dw4=3:3:dw4 bun tools/splat3d/step_matrix.ts
  *   TRIALS=3 CONFIGS=base=3:3,cache2=3:3:cache2,cache4=3:3:cache4 bun tools/splat3d/step_matrix.ts
  *   TRIALS=3 CONFIGS=base=3:3,cache4=3:3:cache4,cache4lr25=3:3:cache4:lr0.25 bun tools/splat3d/step_matrix.ts
+ *   TRIALS=3 CONFIGS=base=3:3,bg=3:3:bgdark,conv=3:3:bgdark:alphaweak:boundsweak bun tools/splat3d/step_matrix.ts
  *   TRIALS=3 CONFIGS=3:1,3:3,9:1,9:3,9:9 bun tools/splat3d/step_matrix.ts
  */
 import { spawnSync } from "node:child_process";
@@ -40,6 +41,9 @@ interface Config {
   pointwiseTileSteps: string;
   clipRefreshInterval: number;
   cachedLrScale: number;
+  backgroundMode: "black" | "dark_random" | "curriculum";
+  alphaReg: "off" | "weak" | "medium";
+  boundsReg: "off" | "weak" | "medium";
   cap: number | null;
 }
 
@@ -53,6 +57,7 @@ interface TrialResult extends Config {
   clipFwd: number;
   clipBwd: number;
   clipBatchMs: number;
+  regularizer: number;
   adam: number;
   display: number;
 }
@@ -129,6 +134,21 @@ function parseConfigs(src: string): Config[] {
       const cachedLrScale = cachedLrToken
         ? Math.max(0, Number(cachedLrToken.replace(/^(cached)?lr/, "")))
         : 1;
+      const backgroundMode = tokens.includes("bgdark")
+        ? "dark_random"
+        : tokens.includes("bgcurr") || tokens.includes("bgcurriculum")
+          ? "curriculum"
+          : "black";
+      const alphaReg = tokens.includes("alphamed") || tokens.includes("alphamedium")
+        ? "medium"
+        : tokens.includes("alphaweak")
+          ? "weak"
+          : "off";
+      const boundsReg = tokens.includes("boundsmed") || tokens.includes("boundsmedium")
+        ? "medium"
+        : tokens.includes("boundsweak")
+          ? "weak"
+          : "off";
       const capToken = tokens.find((token) => /^cap\d+$/.test(token));
       const cap = capToken ? Number(capToken.slice(3)) : null;
       const suffix = tokens.length ? `:${tokens.join(":")}` : "";
@@ -151,11 +171,47 @@ function parseConfigs(src: string): Config[] {
         pointwiseTileSteps,
         clipRefreshInterval,
         cachedLrScale: Number.isFinite(cachedLrScale) ? cachedLrScale : 1,
+        backgroundMode,
+        alphaReg,
+        boundsReg,
         cap,
       };
     });
   if (!configs.length) throw new Error("step_matrix: CONFIGS produced no configs");
   return configs;
+}
+
+function configSpec(config: Config): string {
+  const tokens = [
+    config.clipLayout === "grid9_close2" ? "grid9" : "",
+    config.viewSampler === "random" ? "random" : "",
+    config.spatialBwdVariant === "depthwise4" ? "dw4" : "",
+    config.spatialBwdVariant === "generic" ? "generic" : "",
+    config.gridDirectRaster ? "directgrid" : "",
+    config.sharedWForwardSteps ? `sw${config.sharedWForwardSteps.split(",").join("-")}` : "",
+    config.pointwiseTileVariant === "rect8x16" ? "pwrect" : "",
+    config.pointwiseTileSteps ? `pwsteps${config.pointwiseTileSteps.split(",").join("-")}` : "",
+    config.clipRefreshInterval > 1 ? `cache${config.clipRefreshInterval}` : "",
+    config.cachedLrScale !== 1 ? `lr${config.cachedLrScale}` : "",
+    config.fuseGeluBwdIntoPw === true ? "gelubwd" : "",
+    config.fuseGeluBwdIntoPw === false ? "nogelubwd" : "",
+    config.fuseResidualBwdIntoPw === true ? "resbwd" : "",
+    config.fuseResidualBwdIntoPw === false ? "noresbwd" : "",
+    config.singlePassRasterForward === true ? "rasterpass" : "",
+    config.singlePassRasterForward === false ? "norasterpass" : "",
+    config.viewLaneRasterForward === true ? "viewlane" : "",
+    config.viewLaneRasterForward === false ? "noviewlane" : "",
+    config.viewLaneRasterBackward === true ? "viewbwd" : "",
+    config.viewLaneRasterBackward === false ? "noviewbwd" : "",
+    config.backgroundMode === "dark_random" ? "bgdark" : "",
+    config.backgroundMode === "curriculum" ? "bgcurr" : "",
+    config.alphaReg === "weak" ? "alphaweak" : "",
+    config.alphaReg === "medium" ? "alphamed" : "",
+    config.boundsReg === "weak" ? "boundsweak" : "",
+    config.boundsReg === "medium" ? "boundsmed" : "",
+    config.cap !== null ? `cap${config.cap}` : "",
+  ].filter(Boolean);
+  return `${config.label}=${config.views}:${config.clipBatch}${tokens.length ? `:${tokens.join(":")}` : ""}`;
 }
 
 function parseNumber(pattern: RegExp, output: string, name: string): number {
@@ -166,7 +222,7 @@ function parseNumber(pattern: RegExp, output: string, name: string): number {
 
 function parseProfile(output: string): Omit<TrialResult, "trial" | "views" | "clipBatch" | "normal"> {
   const m = output.match(
-    /profile: total=([\d.]+) ms rasterFwd=([\d.]+) rasterReplay=([\d.]+) rasterBwd=([\d.]+) clipFwd=([\d.]+) clipBwd=([\d.]+) clipBatch=([\d.]+) adam=([\d.]+) display=([\d.]+)/
+    /profile: total=([\d.]+) ms rasterFwd=([\d.]+) rasterReplay=([\d.]+) rasterBwd=([\d.]+) clipFwd=([\d.]+) clipBwd=([\d.]+) clipBatch=([\d.]+)(?: regularizer=([\d.]+))? adam=([\d.]+) display=([\d.]+)/
   );
   if (!m) throw new Error(`step_matrix: could not parse profile\n${output}`);
   return {
@@ -177,8 +233,9 @@ function parseProfile(output: string): Omit<TrialResult, "trial" | "views" | "cl
     clipFwd: Number(m[5]),
     clipBwd: Number(m[6]),
     clipBatchMs: Number(m[7]),
-    adam: Number(m[8]),
-    display: Number(m[9]),
+    regularizer: Number(m[8] ?? 0),
+    adam: Number(m[9]),
+    display: Number(m[10]),
   };
 }
 
@@ -196,6 +253,9 @@ function runTrial(config: Config, trial: number): TrialResult {
     PW_TILE_STEPS: config.pointwiseTileSteps,
     CLIP_REFRESH_INTERVAL: String(config.clipRefreshInterval),
     CLIP_CACHED_LR_SCALE: String(config.cachedLrScale),
+    BACKGROUND_MODE: config.backgroundMode,
+    ALPHA_REG: config.alphaReg,
+    BOUNDS_REG: config.boundsReg,
     RUNS: String(RUNS),
     WARMUP: String(WARMUP),
     SEED: String(SEED),
@@ -261,7 +321,7 @@ function fmt(n: number): string {
 const results: TrialResult[] = [];
 if (!JSON_OUT) {
   console.log(
-    `splat3d step matrix: configs=${CONFIGS.map((c) => `${c.label}=${c.views}:${c.clipBatch}${c.clipLayout === "grid9_close2" ? ":grid9" : ""}${c.viewSampler === "random" ? ":random" : ""}${c.spatialBwdVariant === "depthwise4" ? ":dw4" : ""}${c.spatialBwdVariant === "generic" ? ":generic" : ""}${c.gridDirectRaster ? ":directgrid" : ""}${c.sharedWForwardSteps ? `:sw${c.sharedWForwardSteps.split(",").join("-")}` : ""}${c.pointwiseTileVariant === "rect8x16" ? ":pwrect" : ""}${c.pointwiseTileSteps ? `:pwsteps${c.pointwiseTileSteps.split(",").join("-")}` : ""}${c.clipRefreshInterval > 1 ? `:cache${c.clipRefreshInterval}` : ""}${c.cachedLrScale !== 1 ? `:lr${c.cachedLrScale}` : ""}${c.fuseGeluBwdIntoPw === true ? ":gelubwd" : ""}${c.fuseGeluBwdIntoPw === false ? ":nogelubwd" : ""}${c.fuseResidualBwdIntoPw === true ? ":resbwd" : ""}${c.fuseResidualBwdIntoPw === false ? ":noresbwd" : ""}${c.singlePassRasterForward === true ? ":rasterpass" : ""}${c.singlePassRasterForward === false ? ":norasterpass" : ""}${c.viewLaneRasterForward === true ? ":viewlane" : ""}${c.viewLaneRasterForward === false ? ":noviewlane" : ""}${c.viewLaneRasterBackward === true ? ":viewbwd" : ""}${c.viewLaneRasterBackward === false ? ":noviewbwd" : ""}${c.cap !== null ? `:cap${c.cap}` : ""}`).join(",")} ` +
+    `splat3d step matrix: configs=${CONFIGS.map(configSpec).join(",")} ` +
       `trials=${TRIALS} runs=${RUNS} warmup=${WARMUP} seed=${SEED}${G ? ` G=${G}` : ""}`
   );
 }
@@ -293,6 +353,9 @@ for (let trial = 0; trial < TRIALS; trial++) {
         config.viewLaneRasterForward === false ? "viewlane=0" : "",
         config.viewLaneRasterBackward === true ? "viewbwd=1" : "",
         config.viewLaneRasterBackward === false ? "viewbwd=0" : "",
+        config.backgroundMode !== "black" ? `bg=${config.backgroundMode}` : "",
+        config.alphaReg !== "off" ? `alpha=${config.alphaReg}` : "",
+        config.boundsReg !== "off" ? `bounds=${config.boundsReg}` : "",
         config.cap !== null ? `cap=${config.cap}` : "",
       ].filter(Boolean);
       console.log(
@@ -300,7 +363,8 @@ for (let trial = 0; trial < TRIALS; trial++) {
           `${flags.length ? ` ${flags.join(" ")}` : ""}: ` +
           `normal=${result.normal.toFixed(2)} profile=${result.profileTotal.toFixed(2)} ` +
           `clip=${(result.clipBatchMs || result.clipFwd + result.clipBwd).toFixed(2)} ` +
-          `raster=${(result.rasterFwd + result.rasterReplay + result.rasterBwd).toFixed(2)}`
+          `raster=${(result.rasterFwd + result.rasterReplay + result.rasterBwd).toFixed(2)} ` +
+          `reg=${result.regularizer.toFixed(2)}`
       );
     }
   }
@@ -310,13 +374,14 @@ if (JSON_OUT) {
   console.log(JSON.stringify({ trials: TRIALS, runs: RUNS, warmup: WARMUP, seed: SEED, results }, null, 2));
 } else {
   console.log("\nSummary:");
-  console.log("config           views batch  layout sampler spbwd gridd      sw  pwrect  pwsteps cache     lr   cap gbwd rbwd rpass vlane  vbwd  normal med [min,max]     profile med     clip med   raster med");
+  console.log("config           views batch  layout sampler spbwd gridd      sw  pwrect  pwsteps cache     lr   cap gbwd rbwd rpass vlane  vbwd        bg  alpha bounds  normal med [min,max]     profile med     clip med   raster med      reg med");
   for (const config of CONFIGS) {
     const rows = results.filter((r) => r.label === config.label);
     const normal = rows.map((r) => r.normal);
     const profile = rows.map((r) => r.profileTotal);
     const clip = rows.map((r) => r.clipBatchMs || r.clipFwd + r.clipBwd);
     const raster = rows.map((r) => r.rasterFwd + r.rasterReplay + r.rasterBwd);
+    const regularizer = rows.map((r) => r.regularizer);
     console.log(
       `${config.label.padEnd(16).slice(0, 16)} ${String(config.views).padStart(5)} ${String(config.clipBatch).padStart(5)} ` +
         `${(config.clipLayout === "grid9_close2" ? "grid9" : "view").padStart(7)} ` +
@@ -334,8 +399,11 @@ if (JSON_OUT) {
         `${(config.singlePassRasterForward === null ? "def" : config.singlePassRasterForward ? "yes" : "no").padStart(5)} ` +
         `${(config.viewLaneRasterForward === null ? "def" : config.viewLaneRasterForward ? "yes" : "no").padStart(5)} ` +
         `${(config.viewLaneRasterBackward === null ? "def" : config.viewLaneRasterBackward ? "yes" : "no").padStart(5)} ` +
+        `${(config.backgroundMode === "dark_random" ? "dark" : config.backgroundMode === "curriculum" ? "curr" : "black").padStart(9)} ` +
+        `${config.alphaReg.padStart(6)} ` +
+        `${config.boundsReg.padStart(6)} ` +
         `${fmt(median(normal))} [${min(normal).toFixed(2)},${max(normal).toFixed(2)}] ` +
-        `${fmt(median(profile))} ${fmt(median(clip))} ${fmt(median(raster))}`
+        `${fmt(median(profile))} ${fmt(median(clip))} ${fmt(median(raster))} ${fmt(median(regularizer))}`
     );
   }
 }

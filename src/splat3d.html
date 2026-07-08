@@ -37,9 +37,12 @@
         background: rgba(11, 13, 18, 0.72); color: #cdd6f4;
         font-size: 11px; pointer-events: none;
       }
-      #controls { display: flex; gap: 8px; align-items: center; width: min(768px, calc(100vw - 48px)); }
+      #controls {
+        display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+        width: min(768px, calc(100vw - 48px));
+      }
       #prompt {
-        flex: 1; min-width: 0; padding: 8px 10px;
+        flex: 1 1 260px; min-width: 180px; padding: 8px 10px;
         background: #181825; color: #cdd6f4;
         border: 1px solid #45475a; border-radius: 6px;
         font: inherit; font-size: 14px;
@@ -55,6 +58,10 @@
 	      #gridPromptMode { max-width: 156px; }
 	      #gridRasterMode { max-width: 166px; }
 	      #viewSampler { max-width: 148px; }
+	      #backgroundMode { max-width: 142px; }
+	      #alphaReg { max-width: 132px; }
+	      #boundsReg { max-width: 132px; }
+	      #framingMode { max-width: 126px; }
       button:hover, select:hover { border-color: #89b4fa; }
       button:disabled, select:disabled { opacity: 0.5; cursor: default; }
       #readout {
@@ -88,11 +95,32 @@
         <select id="view"></select>
         <select id="promptMode">
           <option value="camera">camera text</option>
+          <option value="coarse">coarse text</option>
           <option value="same">same text</option>
         </select>
         <select id="bgTextMode">
           <option value="black">black bg</option>
+          <option value="centered">centered bg</option>
           <option value="none">no bg text</option>
+        </select>
+        <select id="backgroundMode">
+          <option value="black" selected>black render</option>
+          <option value="dark_random">dark random</option>
+          <option value="curriculum">bg curriculum</option>
+        </select>
+        <select id="alphaReg">
+          <option value="off" selected>alpha off</option>
+          <option value="weak">alpha weak</option>
+          <option value="medium">alpha med</option>
+        </select>
+        <select id="boundsReg">
+          <option value="off" selected>bounds off</option>
+          <option value="weak">bounds weak</option>
+          <option value="medium">bounds med</option>
+        </select>
+        <select id="framingMode">
+          <option value="normal" selected>normal cam</option>
+          <option value="zoom_out">zoom out</option>
         </select>
         <select id="viewBatch">
           <option value="1">1/9 view</option>
@@ -118,6 +146,7 @@
 	        <select id="gridPromptMode">
 	          <option value="contact_sheet" selected>grid prompt</option>
 	          <option value="literal">literal grid</option>
+	          <option value="literal_v2">object grid</option>
 	          <option value="same">same grid text</option>
 	        </select>
 	        <select id="gridRasterMode">

@@ -11,6 +11,7 @@ import {
   DEFAULT_3D_LRS,
   type Raster3DBatchForwardState,
   type Raster3DIOState,
+  type Raster3DRegularizerOptions,
 } from "./raster";
 import { PARAM_STRIDE_3D } from "./raster_wgsl";
 
@@ -53,12 +54,22 @@ export interface Splat3DOptimizerConfig {
   sharedWForwardSteps?: ReadonlySet<number>;
   clipRefreshInterval?: number;
   cachedLrScale?: number;
+  convergence?: Splat3DConvergenceConfig;
 }
 
 export type Splat3DClipMode = "single" | "batch";
 export type Splat3DClipLayout = "per_view" | "grid9_close2";
 export type Splat3DViewSampler = "epoch" | "random";
 export type Splat3DStepTimingMode = "split-submit-wall" | "gpu-timestamp";
+export type Splat3DBackgroundMode = "black" | "dark_random" | "curriculum";
+
+export interface Splat3DConvergenceConfig {
+  backgroundMode?: Splat3DBackgroundMode;
+  centerWeight?: number;
+  radiusWeight?: number;
+  targetRadius?: number;
+  opacitySparsity?: number;
+}
 
 export interface Splat3DProfileOptions {
   gpuTimestamps?: boolean;
@@ -78,6 +89,7 @@ export interface Splat3DStepTimings {
   clipBwd: number;
   clipBatch: number;
   rasterBwd: number;
+  regularizer: number;
   adam: number;
   display: number;
 }
@@ -115,6 +127,7 @@ export class Splat3DOptimizer {
   private readonly gridDirectRaster: boolean;
   private readonly clipRefreshInterval: number;
   private readonly cachedLrScale: number;
+  private readonly convergence: Required<Splat3DConvergenceConfig>;
   private step_ = 0;
   private hasPrompts = false;
   private rngState = 1;
@@ -134,14 +147,16 @@ export class Splat3DOptimizer {
     }
     const cameras = (cfg.cameras ?? DEFAULT_3D_CAMERAS).map((c) => prepareCamera(c, SIDE));
     const G = cfg.G ?? LEGIBLE_3D_G;
+    const convergence = normalizeConvergenceConfig(cfg.convergence);
     const raster = await Raster3DEngine.create(device, {
       H: SIDE,
       W: SIDE,
       G,
       cap: cfg.cap ?? 2048,
       bg: cfg.bg ?? [0, 0, 0],
+      dynamicBg: convergence.backgroundMode !== "black",
       cameras,
-	    });
+    });
     const clipBatchSize = normalizeClipBatchSize(cfg.clipBatchSize);
     const clipLayout = cfg.clipLayout ?? "per_view";
     const promoteGrid80BackwardStack =
@@ -233,6 +248,7 @@ export class Splat3DOptimizer {
     this.gridDirectRaster = cfg.gridDirectRaster ?? false;
     this.clipRefreshInterval = Math.max(1, cfg.clipRefreshInterval ?? 1);
     this.cachedLrScale = normalizeCachedLrScale(cfg.cachedLrScale);
+    this.convergence = normalizeConvergenceConfig(cfg.convergence);
     this.rngState = ((cfg.seed ?? 1) ^ 0x9e3779b9) >>> 0 || 1;
     this.textBuffers = cameras.map((_, i) =>
       device.createBuffer({
@@ -290,6 +306,7 @@ export class Splat3DOptimizer {
 
   step(displayView = 0, viewsPerStep = this.cameras.length): void {
     if (!this.hasPrompts) throw new Error("splat3d: setViewPrompts() before step()");
+    this.applyTrainingBackground();
     const useCached = this.shouldUseCachedBatchStep(viewsPerStep);
     const views = useCached ? this.cachedBatchViews!.slice() : this.sampleViews(viewsPerStep);
     const enc = this.device.createCommandEncoder();
@@ -300,6 +317,7 @@ export class Splat3DOptimizer {
       this.recordTrainingViews(enc, views);
       this.updateCachedBatchViews(views);
     }
+    this.recordConvergenceRegularizer(enc);
     this.step_ += 1;
     this.raster.recordAdam(enc, this.step_, this.lrsForStep(useCached), this.hyper);
     this.raster.recordForward(enc, displayView);
@@ -313,6 +331,7 @@ export class Splat3DOptimizer {
   ): Promise<Splat3DStepTimings> {
     if (!this.hasPrompts) throw new Error("splat3d: setViewPrompts() before profileStep()");
     await this.device.queue.onSubmittedWorkDone();
+    this.applyTrainingBackground();
     const useCached = this.shouldUseCachedBatchStep(viewsPerStep);
     const views = useCached ? this.cachedBatchViews!.slice() : this.sampleViews(viewsPerStep);
     const timer = opts.gpuTimestamps ? GpuPassTimer.create(this.device) : null;
@@ -330,6 +349,7 @@ export class Splat3DOptimizer {
       clipBwd: 0,
       clipBatch: 0,
       rasterBwd: 0,
+      regularizer: 0,
       adam: 0,
       display: 0,
     };
@@ -397,10 +417,16 @@ export class Splat3DOptimizer {
       }
 
       if (!useCached) this.updateCachedBatchViews(views);
+      if (this.convergenceRegularizerEnabled()) {
+        timings.regularizer += await this.submitTimed((enc, ts) => {
+          this.recordConvergenceRegularizer(enc, ts);
+        }, timer);
+      }
       this.step_ += 1;
       timings.adam += await this.submitTimed((enc, ts) => {
         this.raster.recordAdam(enc, this.step_, this.lrsForStep(useCached), this.hyper, ts);
       }, timer);
+      this.applyDisplayBackground();
       timings.display += await this.submitTimed((enc, ts) => {
         this.raster.recordForward(enc, displayView, undefined, ts);
       }, timer);
@@ -416,15 +442,18 @@ export class Splat3DOptimizer {
   }
 
   async renderView(view = 0): Promise<Float32Array> {
+    this.applyDisplayBackground();
     this.raster.runForward(view);
     return this.raster.readImage();
   }
 
   renderViewToImage(view = 0): void {
+    this.applyDisplayBackground();
     this.raster.runForward(view);
   }
 
   async currentEmbedding(view = 0): Promise<Float32Array> {
+    this.applyDisplayBackground();
     const enc = this.device.createCommandEncoder();
     this.raster.recordForward(enc, view, this.singleIO);
     this.trainer.encode(enc, { backward: false });
@@ -443,6 +472,10 @@ export class Splat3DOptimizer {
         b.destroy();
       } catch (_) {}
     }
+  }
+
+  prepareDisplayFrame(): void {
+    this.applyDisplayBackground();
   }
 
   private useBatchFor(views: number[]): boolean {
@@ -758,6 +791,56 @@ export class Splat3DOptimizer {
     this.raster.recordBackwardAdd(enc, view, this.singleIO, timestampWrites);
   }
 
+  private recordConvergenceRegularizer(enc: GPUCommandEncoder, timestampWrites?: PassTimestampWrites): void {
+    if (!this.convergenceRegularizerEnabled()) return;
+    this.raster.recordRegularizerAdd(enc, this.regularizerOptions(), timestampWrites);
+  }
+
+  private convergenceRegularizerEnabled(): boolean {
+    return (
+      this.convergence.centerWeight !== 0 ||
+      this.convergence.radiusWeight !== 0 ||
+      this.convergence.opacitySparsity !== 0
+    );
+  }
+
+  private regularizerOptions(): Raster3DRegularizerOptions {
+    return {
+      centerWeight: this.convergence.centerWeight,
+      radiusWeight: this.convergence.radiusWeight,
+      targetRadius: this.convergence.targetRadius,
+      opacitySparsity: this.convergence.opacitySparsity,
+    };
+  }
+
+  private applyTrainingBackground(): void {
+    this.applyBackground(this.trainingBackground());
+  }
+
+  private applyDisplayBackground(): void {
+    this.applyBackground([0, 0, 0]);
+  }
+
+  private applyBackground(rgb: [number, number, number]): void {
+    this.raster.setBackground(rgb);
+    if (this.gridClip && this.gridClip.raster !== this.raster) {
+      this.gridClip.raster.setBackground(rgb);
+    }
+  }
+
+  private trainingBackground(): [number, number, number] {
+    const mode = this.convergence.backgroundMode;
+    if (mode === "black") return [0, 0, 0];
+    const moderate = mode === "curriculum" && this.step_ >= 120 && this.step_ % 8 === 0;
+    const max = moderate ? 0.28 : 0.09;
+    const floor = moderate ? 0.02 : 0;
+    return [
+      floor + max * hash01(this.step_, 11),
+      floor + max * hash01(this.step_, 29),
+      floor + max * hash01(this.step_, 47),
+    ];
+  }
+
   private async submitTimed(
     record: (enc: GPUCommandEncoder, timestampWrites?: PassTimestampWrites) => void,
     timer: GpuPassTimer | null = null
@@ -851,6 +934,26 @@ function normalizeCachedLrScale(value: number | undefined): number {
   return Math.max(0, value);
 }
 
+function normalizeConvergenceConfig(cfg: Splat3DConvergenceConfig | undefined): Required<Splat3DConvergenceConfig> {
+  const backgroundMode =
+    cfg?.backgroundMode === "dark_random" || cfg?.backgroundMode === "curriculum" ? cfg.backgroundMode : "black";
+  return {
+    backgroundMode,
+    centerWeight: finiteNonNegative(cfg?.centerWeight, 0),
+    radiusWeight: finiteNonNegative(cfg?.radiusWeight, 0),
+    targetRadius: finitePositive(cfg?.targetRadius, 1.15),
+    opacitySparsity: finiteNonNegative(cfg?.opacitySparsity, 0),
+  };
+}
+
+function finiteNonNegative(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isFinite(value) ? Math.max(0, value) : fallback;
+}
+
+function finitePositive(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isFinite(value) ? Math.max(1e-4, value) : fallback;
+}
+
 function scaleLrs3D(lrs: AdamLRs3D, scale: number): AdamLRs3D {
   return {
     position: lrs.position * scale,
@@ -869,9 +972,17 @@ function timedTotal(t: Splat3DStepTimings): number {
     t.clipBwd +
     t.clipBatch +
     t.rasterBwd +
+    t.regularizer +
     t.adam +
     t.display
   );
+}
+
+function hash01(step: number, salt: number): number {
+  let x = (Math.imul((step + 1) >>> 0, 747796405) + Math.imul(salt >>> 0, 2891336453)) >>> 0;
+  x = Math.imul((x >>> ((x >>> 28) + 4)) ^ x, 277803737) >>> 0;
+  x = ((x >>> 22) ^ x) >>> 0;
+  return x / 4294967296;
 }
 
 type PassTimestampWrites = {

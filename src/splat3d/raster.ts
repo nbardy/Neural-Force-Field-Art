@@ -14,10 +14,12 @@ import {
   backwardBatchShader3D,
   chainAddShader3D,
   clearShader3D,
+  regularizerShader3D,
   paramSegments3D,
   PARAM_STRIDE_3D,
   DERIVED_STRIDE_3D,
   CAMERA_STRIDE_3D,
+  REGULARIZER_UNIFORM_BYTES_3D,
 } from "./raster_wgsl";
 
 const U = { MAP_READ: 1, COPY_SRC: 4, COPY_DST: 8, UNIFORM: 64, STORAGE: 128 };
@@ -104,6 +106,13 @@ export interface AdamLRs3D {
   opacity: number;
 }
 
+export interface Raster3DRegularizerOptions {
+  centerWeight: number;
+  radiusWeight: number;
+  targetRadius: number;
+  opacitySparsity: number;
+}
+
 export const DEFAULT_3D_LRS: AdamLRs3D = {
   position: 0.025,
   logRadius: 0.01,
@@ -145,6 +154,7 @@ export class Raster3DEngine {
   private clearGradsPipe!: GPUComputePipeline;
   private clearRawPipe!: GPUComputePipeline;
   private adamPipe!: GPUComputePipeline;
+  private regularizerPipe!: GPUComputePipeline;
 
   params!: GPUBuffer;
   derived!: GPUBuffer;
@@ -158,6 +168,7 @@ export class Raster3DEngine {
   image!: GPUBuffer;
   gradImage!: GPUBuffer;
   private cameraBuffer!: GPUBuffer;
+  private bgUni: GPUBuffer | null = null;
 
   private prepBind: GPUBindGroup[] = [];
   private chainBind: GPUBindGroup[] = [];
@@ -169,6 +180,8 @@ export class Raster3DEngine {
   private clearRawBind!: GPUBindGroup;
   private adamUni: GPUBuffer[] = [];
   private adamBind: GPUBindGroup[] = [];
+  private regularizerUni!: GPUBuffer;
+  private regularizerBind!: GPUBindGroup;
   private extraBuffers: GPUBuffer[] = [];
 
   private constructor(device: GPUDevice, cfg: Raster3DEngineConfig) {
@@ -222,6 +235,14 @@ export class Raster3DEngine {
       usage: U.STORAGE | U.COPY_DST,
     });
     this.device.queue.writeBuffer(this.cameraBuffer, 0, serializeCameras3D(this.cameras) as unknown as BufferSource);
+    if (d.dynamicBg) {
+      this.bgUni = this.device.createBuffer({
+        label: "splat3d-background",
+        size: 16,
+        usage: U.UNIFORM | U.COPY_DST,
+      });
+      this.setBackground(d.bg);
+    }
 
     this.prepPipe = await Promise.all(this.cameras.map((cam, i) => makeCompute(this.device, prepShader3D(cfg, cam), `prep-${i}`)));
     this.chainPipe = await Promise.all(
@@ -234,6 +255,7 @@ export class Raster3DEngine {
     this.clearGradsPipe = await makeCompute(this.device, clearShader3D(GD), "clearGrads");
     this.clearRawPipe = await makeCompute(this.device, clearShader3D(GP), "clearRawGrad");
     this.adamPipe = await makeCompute(this.device, adamShader(), "adam");
+    this.regularizerPipe = await makeCompute(this.device, regularizerShader3D(cfg), "regularizer");
 
     this.prepBind = this.prepPipe.map((pipe) => this.bindGroup(pipe, [this.params, this.derived]));
     this.chainBind = this.chainPipe.map((pipe) => this.bindGroup(pipe, [this.accGrad, this.derived, this.params, this.gradRaw]));
@@ -241,6 +263,12 @@ export class Raster3DEngine {
     this.clearBinsBind = this.bindGroup(this.clearBinsPipe, [this.tileCounts]);
     this.clearGradsBind = this.bindGroup(this.clearGradsPipe, [this.accGrad]);
     this.clearRawBind = this.bindGroup(this.clearRawPipe, [this.gradRaw]);
+    this.regularizerUni = this.device.createBuffer({
+      label: "splat3d-regularizer-uniform",
+      size: REGULARIZER_UNIFORM_BYTES_3D,
+      usage: U.UNIFORM | U.COPY_DST,
+    });
+    this.regularizerBind = this.bindGroup(this.regularizerPipe, [this.regularizerUni, this.params, this.gradRaw]);
     const shared = this.sharedScratchState();
     this.fwdBind = this.makeForwardBind(shared, this.image, 0);
     this.bwdBind = this.makeBackwardBind(shared, this.gradImage, 0);
@@ -272,6 +300,12 @@ export class Raster3DEngine {
     const z = new Float32Array(this.dims.G * PARAM_STRIDE_3D);
     this.device.queue.writeBuffer(this.mBuf, 0, z);
     this.device.queue.writeBuffer(this.vBuf, 0, z);
+  }
+
+  setBackground(rgb: [number, number, number]): void {
+    if (!this.bgUni) return;
+    const data = new Float32Array([rgb[0], rgb[1], rgb[2], 0]);
+    this.device.queue.writeBuffer(this.bgUni, 0, data as unknown as BufferSource);
   }
 
   private async readFloats(buf: GPUBuffer, floats: number): Promise<Float32Array> {
@@ -339,22 +373,26 @@ export class Raster3DEngine {
     const prepBind = this.bindGroup(prepPipe, [this.params, this.cameraBuffer, activeViews, raw.derived]);
     const clearBinsBind = this.bindGroup(clearBinsPipe, [raw.tileCounts]);
     const emitBind = this.bindGroup(emitPipe, [raw.derived, raw.tileCounts, raw.binnedIds]);
-    const fwdBind = this.bindGroup(fwdPipe, [
+    const fwdBindings: BufferBindingInput[] = [
       raw.tileCounts,
       raw.binnedIds,
       raw.derived,
       { buffer: opts.imageBuffer, offset: imageOffset, size: this.imageByteSize() * lanes },
       raw.tileStop,
-    ]);
+    ];
+    if (this.bgUni) fwdBindings.push(this.bgUni);
+    const fwdBind = this.bindGroup(fwdPipe, fwdBindings);
     const clearGradsBind = this.bindGroup(clearGradsPipe, [batchAccGrad]);
-    const bwdBind = this.bindGroup(bwdPipe, [
+    const bwdBindings: BufferBindingInput[] = [
       { buffer: opts.gradBuffer, offset: gradOffset, size: this.imageByteSize() * lanes },
       raw.tileCounts,
       raw.binnedIds,
       raw.tileStop,
       raw.derived,
       batchAccGrad,
-    ]);
+    ];
+    if (this.bgUni) bwdBindings.push(this.bgUni);
+    const bwdBind = this.bindGroup(bwdPipe, bwdBindings);
     const ios = Array.from({ length: lanes }, (_unused, lane) =>
       this.createIOStateForScratch(
         this.laneScratchState(raw, lane, batchAccGrad),
@@ -388,6 +426,25 @@ export class Raster3DEngine {
     p.setPipeline(this.clearRawPipe);
     p.setBindGroup(0, this.clearRawBind);
     p.dispatchWorkgroups(ceil(this.dims.G * PARAM_STRIDE_3D));
+    p.end();
+  }
+
+  recordRegularizerAdd(
+    enc: GPUCommandEncoder,
+    opts: Raster3DRegularizerOptions,
+    timestampWrites?: PassTimestampWrites
+  ): void {
+    if (!regularizerEnabled(opts)) return;
+    const data = new Float32Array(8);
+    data[0] = opts.centerWeight;
+    data[1] = opts.radiusWeight;
+    data[2] = opts.targetRadius;
+    data[3] = opts.opacitySparsity;
+    this.device.queue.writeBuffer(this.regularizerUni, 0, data as unknown as BufferSource);
+    const p = beginComputePass(enc, timestampWrites);
+    p.setPipeline(this.regularizerPipe);
+    p.setBindGroup(0, this.regularizerBind);
+    p.dispatchWorkgroups(ceil(this.dims.G));
     p.end();
   }
 
@@ -561,7 +618,9 @@ export class Raster3DEngine {
       this.cameraBuffer,
       ...this.extraBuffers,
       ...this.adamUni,
+      this.regularizerUni,
     ];
+    if (this.bgUni) buffers.push(this.bgUni);
     if (this.ownsParams) buffers.push(this.params);
     if (this.ownsGradRaw) buffers.push(this.gradRaw);
     for (const b of buffers) {
@@ -664,24 +723,28 @@ export class Raster3DEngine {
   }
 
   private makeForwardBind(scratch: Raster3DScratchState, imageBuffer: GPUBuffer, imageOffset: number): GPUBindGroup {
-    return this.bindGroup(this.fwdPipe, [
+    const bindings: BufferBindingInput[] = [
       scratch.tileCounts,
       scratch.binnedIds,
       scratch.derived,
       { buffer: imageBuffer, offset: imageOffset, size: this.imageByteSize() },
       scratch.tileStop,
-    ]);
+    ];
+    if (this.bgUni) bindings.push(this.bgUni);
+    return this.bindGroup(this.fwdPipe, bindings);
   }
 
   private makeBackwardBind(scratch: Raster3DScratchState, gradBuffer: GPUBuffer, gradOffset: number): GPUBindGroup {
-    return this.bindGroup(this.bwdPipe, [
+    const bindings: BufferBindingInput[] = [
       { buffer: gradBuffer, offset: gradOffset, size: this.imageByteSize() },
       scratch.tileCounts,
       scratch.binnedIds,
       scratch.tileStop,
       scratch.derived,
       scratch.accGrad,
-    ]);
+    ];
+    if (this.bgUni) bindings.push(this.bgUni);
+    return this.bindGroup(this.bwdPipe, bindings);
   }
 
   private checkIOBinding(name: string, offset: number): void {
@@ -705,6 +768,10 @@ export class Raster3DEngine {
     this.checkIOBinding("scratch", offset);
     return { buffer, offset, size };
   }
+}
+
+function regularizerEnabled(opts: Raster3DRegularizerOptions): boolean {
+  return opts.centerWeight !== 0 || opts.radiusWeight !== 0 || opts.opacitySparsity !== 0;
 }
 
 function serializeCameras3D(cameras: PreparedCamera3D[]): Float32Array {

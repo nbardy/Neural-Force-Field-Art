@@ -287,3 +287,47 @@ dark-background curriculum + weak alpha/transmittance loss + weak center/radius 
 
 That is the most direct translation of the paper evidence into this app. It is
 also screenshot-friendly and easier to ablate than anisotropic/surfel geometry.
+
+## Implementation Checkpoint
+
+Landed first browser-toggleable convergence pack:
+
+- `backgroundMode`: `black`, `dark_random`, `curriculum`.
+- `alphaReg`: `off`, `weak`, `medium`.
+- `boundsReg`: `off`, `weak`, `medium`.
+- `framingMode`: `normal`, `zoom_out`.
+- `promptMode`: `camera`, `coarse`, `same`.
+- `gridPromptMode`: added `literal_v2` / `object grid` wording:
+
+```text
+a grid of 9 different camera angles of the same object, the object is centered, and the object is {prompt}
+```
+
+Implementation notes:
+
+- Static black render mode keeps the old raster shader bind layout.
+- Random/curriculum background compiles a dynamic-background raster variant.
+- Alpha and bounds regularizers run as a separate GPU pass after CLIP/raster
+  gradients and before Adam.
+- When regularizer toggles are off, no regularizer pass is recorded.
+- Browser convergence-toggle changes stop the current run, clear prompt embeds,
+  and rebuild the optimizer so stale flags cannot keep running.
+
+First tiny-G validation command:
+
+```bash
+G=256 TRIALS=1 RUNS=1 WARMUP=0 CONFIGS='base=1:1,conv=1:1:bgdark:alphaweak:boundsweak' bun tools/splat3d/step_matrix.ts
+```
+
+Observed on the first smoke run:
+
+| Config | Normal | Profile | Raster | Regularizer |
+| --- | ---: | ---: | ---: | ---: |
+| `base` | `64.91 ms` | `32.61 ms` | `2.07 ms` | `0.00 ms` |
+| `conv` | `65.95 ms` | `29.67 ms` | `1.88 ms` | `0.38 ms` |
+
+This was a shader/binding smoke, not a quality or final speed conclusion. The
+numbers are noisy at `G=256`, but the important result is that the dynamic
+background and regularizer paths execute, and the regularizer overhead is visible
+as its own measured timing row instead of being hidden in the hot raster/CLIP
+paths.

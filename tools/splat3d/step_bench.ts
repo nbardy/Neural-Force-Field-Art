@@ -20,6 +20,7 @@
  *   GRID_DIRECT_RASTER=1 CLIP_LAYOUT=grid9_close2 CLIP_BATCH=3 VIEWS=9 bun tools/splat3d/step_bench.ts
  *   CLIP_REFRESH_INTERVAL=2 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   CLIP_REFRESH_INTERVAL=4 CLIP_CACHED_LR_SCALE=0.25 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
+ *   BACKGROUND_MODE=dark_random ALPHA_REG=weak BOUNDS_REG=weak CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   TIMESTAMP=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  */
 import { readFileSync } from "node:fs";
@@ -32,6 +33,8 @@ import {
   LEGIBLE_3D_G,
   Splat3DOptimizer,
   randomSplats3D,
+  type Splat3DBackgroundMode,
+  type Splat3DConvergenceConfig,
   type Splat3DViewSampler,
 } from "../../src/splat3d/optimize";
 
@@ -65,6 +68,19 @@ const VIEW_LANE_RASTER_BWD = process.env.VIEW_LANE_RASTER_BWD === "1";
 const GRID_DIRECT_RASTER = process.env.GRID_DIRECT_RASTER === "1";
 const CLIP_REFRESH_INTERVAL = Math.max(1, Number(process.env.CLIP_REFRESH_INTERVAL ?? 1) | 0);
 const CLIP_CACHED_LR_SCALE = normalizeCachedLrScale(Number(process.env.CLIP_CACHED_LR_SCALE ?? 1));
+const BACKGROUND_MODE: Splat3DBackgroundMode =
+  process.env.BACKGROUND_MODE === "dark_random" || process.env.BACKGROUND_MODE === "curriculum"
+    ? process.env.BACKGROUND_MODE
+    : "black";
+const ALPHA_REG = process.env.ALPHA_REG === "medium" ? "medium" : process.env.ALPHA_REG === "weak" ? "weak" : "off";
+const BOUNDS_REG = process.env.BOUNDS_REG === "medium" ? "medium" : process.env.BOUNDS_REG === "weak" ? "weak" : "off";
+const CONVERGENCE: Splat3DConvergenceConfig = {
+  backgroundMode: BACKGROUND_MODE,
+  opacitySparsity: ALPHA_REG === "medium" ? 0.03 : ALPHA_REG === "weak" ? 0.01 : 0,
+  centerWeight: BOUNDS_REG === "medium" ? 0.006 : BOUNDS_REG === "weak" ? 0.002 : 0,
+  radiusWeight: BOUNDS_REG === "medium" ? 0.012 : BOUNDS_REG === "weak" ? 0.004 : 0,
+  targetRadius: 1.15,
+};
 const SHARED_W_FWD_STEPS = parseStepSet(process.env.SHARED_W_FWD_STEPS ?? "");
 const POINTWISE_TILE_VARIANT: PointwiseTileVariant =
   process.env.PW_TILE_VARIANT === "rect8x16" || process.env.POINTWISE_TILE_VARIANT === "rect8x16"
@@ -168,6 +184,7 @@ const opt = await Splat3DOptimizer.create(device, plan, weights, {
   sharedWForwardSteps: SHARED_W_FWD_STEPS,
   clipRefreshInterval: CLIP_REFRESH_INTERVAL,
   cachedLrScale: CLIP_CACHED_LR_SCALE,
+  convergence: CONVERGENCE,
 });
 console.log(
   `splat3d step bench: G=${G}, views=${VIEWS}/${opt.cameras.length}, ` +
@@ -187,6 +204,7 @@ console.log(
     `gridDirectRaster=${GRID_DIRECT_RASTER ? 1 : 0}, ` +
     `clipRefreshInterval=${CLIP_REFRESH_INTERVAL}, ` +
     `cachedLrScale=${CLIP_CACHED_LR_SCALE}, ` +
+    `backgroundMode=${BACKGROUND_MODE}, alphaReg=${ALPHA_REG}, boundsReg=${BOUNDS_REG}, ` +
     `timing=${useTimestamps ? "gpu-timestamp" : "split-submit-wall"}, ` +
     `compile+allocate=${(performance.now() - compileStart).toFixed(0)} ms`
 );
@@ -218,6 +236,7 @@ console.log(
     `clipFwd=${profile.clipFwd.toFixed(2)} ` +
     `clipBwd=${profile.clipBwd.toFixed(2)} ` +
     `clipBatch=${profile.clipBatch.toFixed(2)} ` +
+    `regularizer=${profile.regularizer.toFixed(2)} ` +
     `adam=${profile.adam.toFixed(2)} display=${profile.display.toFixed(2)} ` +
     `timing=${profile.timing}`
 );

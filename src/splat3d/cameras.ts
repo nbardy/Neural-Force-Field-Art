@@ -77,32 +77,54 @@ export const DEFAULT_3D_CAMERAS: Camera3D[] = [
 ];
 
 export const BLACK_BACKGROUND_PROMPT = "on a black background";
-export type Grid9PromptMode = "contact_sheet" | "literal" | "same";
+export const CENTERED_BLACK_BACKGROUND_PROMPT = "centered on a black background";
+export type BackgroundPromptMode = "none" | "black" | "centered";
+export type ViewPromptMode = "camera" | "same" | "coarse";
+export type CameraFramingMode = "normal" | "zoom_out";
+export type Grid9PromptMode = "contact_sheet" | "literal" | "literal_v2" | "same";
 
-export function buildBasePrompt(base: string, includeBlackBackground = true): string {
-  const text = base.trim() || "a photo of a cat";
-  if (!includeBlackBackground || /\bblack background\b/i.test(text)) return text;
-  return `${text}, ${BLACK_BACKGROUND_PROMPT}`;
+export function normalizeBackgroundPromptMode(mode: boolean | BackgroundPromptMode = true): BackgroundPromptMode {
+  if (mode === true) return "black";
+  if (mode === false) return "none";
+  return mode;
 }
 
-export function buildViewPrompt(base: string, camera: Camera3D, includeBlackBackground = true): string {
-  return buildBasePrompt(`${base.trim() || "a photo of a cat"}, ${camera.promptSuffix}`, includeBlackBackground);
+export function buildBasePrompt(base: string, backgroundMode: boolean | BackgroundPromptMode = true): string {
+  const text = base.trim() || "a photo of a cat";
+  const mode = normalizeBackgroundPromptMode(backgroundMode);
+  if (mode === "none" || /\bblack background\b/i.test(text)) return text;
+  const phrase = mode === "centered" ? CENTERED_BLACK_BACKGROUND_PROMPT : BLACK_BACKGROUND_PROMPT;
+  return `${text}, ${phrase}`;
+}
+
+export function buildViewPrompt(base: string, camera: Camera3D, backgroundMode: boolean | BackgroundPromptMode = true): string {
+  return buildBasePrompt(`${base.trim() || "a photo of a cat"}, ${camera.promptSuffix}`, backgroundMode);
+}
+
+export function buildCoarseViewPrompt(
+  base: string,
+  camera: Camera3D,
+  backgroundMode: boolean | BackgroundPromptMode = true
+): string {
+  return buildBasePrompt(`${base.trim() || "a photo of a cat"}, ${coarsePromptSuffix(camera)}`, backgroundMode);
 }
 
 export function buildGrid9Prompt(
   base: string,
-  includeBlackBackground = true,
+  backgroundMode: boolean | BackgroundPromptMode = true,
   mode: Grid9PromptMode = "contact_sheet"
 ): string {
-  if (mode === "same") return buildBasePrompt(base, includeBlackBackground);
+  if (mode === "same") return buildBasePrompt(base, backgroundMode);
   const text = base.trim() || "a photo of a cat";
-  const bg = includeBlackBackground && !/\bblack background\b/i.test(text)
-    ? ", centered on a black background"
-    : "";
+  const bgMode = normalizeBackgroundPromptMode(backgroundMode);
+  const bg = bgMode !== "none" && !/\bblack background\b/i.test(text) ? ", centered on a black background" : "";
   const viewList =
     "top-down view, front-facing view, right side view, rear view, left side view, " +
     "elevated front-left view looking down, elevated front-right view looking down, " +
     "low rear-right view looking up, and low rear-left view looking up";
+  if (mode === "literal_v2") {
+    return `a grid of 9 different camera angles of the same object, the object is centered, and the object is ${text}${bg}`;
+  }
   if (mode === "literal") {
     return (
       `a 3x3 grid showing ${text} from 9 different camera angles${bg}. ` +
@@ -113,6 +135,15 @@ export function buildGrid9Prompt(
     `a 3x3 image grid showing the same subject, ${text}, from nine different camera angles${bg}: ` +
     viewList
   );
+}
+
+export function camerasForFraming(mode: CameraFramingMode): Camera3D[] {
+  if (mode !== "zoom_out") return DEFAULT_3D_CAMERAS;
+  return DEFAULT_3D_CAMERAS.map((camera) => ({
+    ...camera,
+    eye: [camera.eye[0] * 1.25, camera.eye[1] * 1.25, camera.eye[2] * 1.25],
+    fovYDeg: Math.max(camera.fovYDeg ?? 50, 56),
+  }));
 }
 
 export function prepareCamera(camera: Camera3D, side: number): PreparedCamera3D {
@@ -145,4 +176,20 @@ function length(v: [number, number, number]): number {
 function normalize(v: [number, number, number]): [number, number, number] {
   const inv = 1 / Math.max(length(v), 1e-9);
   return [v[0] * inv, v[1] * inv, v[2] * inv];
+}
+
+function coarsePromptSuffix(camera: Camera3D): string {
+  switch (camera.name) {
+    case "top":
+      return "a top-down view";
+    case "front":
+      return "a front view";
+    case "back":
+      return "a back view";
+    case "left":
+    case "right":
+      return "a side view";
+    default:
+      return camera.eye[1] >= 0 ? "an elevated side view looking down" : "a low side view looking up";
+  }
 }

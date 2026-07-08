@@ -1,9 +1,21 @@
 /// <reference types="@webgpu/types" />
-import { buildBasePrompt, buildGrid9Prompt, buildViewPrompt, type Grid9PromptMode } from "./splat3d/cameras";
+import {
+  buildBasePrompt,
+  buildCoarseViewPrompt,
+  buildGrid9Prompt,
+  buildViewPrompt,
+  camerasForFraming,
+  type BackgroundPromptMode,
+  type CameraFramingMode,
+  type Grid9PromptMode,
+  type ViewPromptMode,
+} from "./splat3d/cameras";
 import {
   Splat3DOptimizer,
   cosine,
+  type Splat3DBackgroundMode,
   type Splat3DClipLayout,
+  type Splat3DConvergenceConfig,
   type Splat3DStepTimings,
   type Splat3DViewSampler,
 } from "./splat3d/optimize";
@@ -23,9 +35,13 @@ interface Status {
   initialCos: number | null;
   error: string | null;
   phase: string;
-  promptMode: "camera" | "same";
+  promptMode: ViewPromptMode;
   gridPromptMode: Grid9PromptMode;
-  blackBgText: boolean;
+  bgPromptMode: BackgroundPromptMode;
+  backgroundMode: Splat3DBackgroundMode;
+  alphaReg: "off" | "weak" | "medium";
+  boundsReg: "off" | "weak" | "medium";
+  framingMode: CameraFramingMode;
   profiling: boolean;
   viewsPerStep: number;
   viewSampler: Splat3DViewSampler;
@@ -46,7 +62,11 @@ const status: Status = {
   phase: "boot",
   promptMode: "camera",
   gridPromptMode: "contact_sheet",
-  blackBgText: true,
+  bgPromptMode: "black",
+  backgroundMode: "black",
+  alphaReg: "off",
+  boundsReg: "off",
+  framingMode: "normal",
   profiling: false,
   viewsPerStep: 3,
   viewSampler: "epoch",
@@ -61,6 +81,10 @@ const promptInput = document.getElementById("prompt") as HTMLInputElement;
 const viewSelect = document.getElementById("view") as HTMLSelectElement;
 const promptModeSelect = document.getElementById("promptMode") as HTMLSelectElement;
 const bgTextModeSelect = document.getElementById("bgTextMode") as HTMLSelectElement;
+const backgroundModeSelect = document.getElementById("backgroundMode") as HTMLSelectElement;
+const alphaRegSelect = document.getElementById("alphaReg") as HTMLSelectElement;
+const boundsRegSelect = document.getElementById("boundsReg") as HTMLSelectElement;
+const framingModeSelect = document.getElementById("framingMode") as HTMLSelectElement;
 const viewBatchSelect = document.getElementById("viewBatch") as HTMLSelectElement;
 const viewSamplerSelect = document.getElementById("viewSampler") as HTMLSelectElement;
 const clipModeSelect = document.getElementById("clipMode") as HTMLSelectElement;
@@ -97,14 +121,21 @@ function renderReadout(): void {
     const gridText =
       status.gridPromptMode === "same"
         ? "grid=same text"
+        : status.gridPromptMode === "literal_v2"
+          ? "object grid text"
         : status.gridPromptMode === "literal"
           ? "literal grid text"
           : "grid text";
     parts.push(gridText);
     if (status.gridDirectRaster) parts.push("80px grid raster");
   }
-  parts.push(status.promptMode === "camera" ? "camera text" : "same text");
-  if (status.blackBgText) parts.push("black bg");
+  parts.push(status.promptMode === "camera" ? "camera text" : status.promptMode === "coarse" ? "coarse text" : "same text");
+  if (status.bgPromptMode === "black") parts.push("black bg");
+  if (status.bgPromptMode === "centered") parts.push("centered bg");
+  if (status.backgroundMode !== "black") parts.push(status.backgroundMode === "curriculum" ? "bg curriculum" : "dark random bg");
+  if (status.alphaReg !== "off") parts.push(`alpha ${status.alphaReg}`);
+  if (status.boundsReg !== "off") parts.push(`bounds ${status.boundsReg}`);
+  if (status.framingMode === "zoom_out") parts.push("zoom out");
   if (status.cos !== null) {
     const init = status.initialCos ?? status.cos;
     const d = status.cos - init;
@@ -141,6 +172,7 @@ function renderTimings(): void {
   } else {
     lines.push(line("clip", t.clipFwd + t.clipBwd), line("  fwd", t.clipFwd), line("  bwd", t.clipBwd));
   }
+  if (t.regularizer > 0) lines.push(line("reg", t.regularizer));
   lines.push(line("adam", t.adam), line("display", t.display), line("clear", t.clear), `sample every ${PROFILE_PERIOD} steps`);
   timingsEl.textContent = lines.join("\n");
 }
@@ -185,12 +217,62 @@ function selectedViewSampler(): Splat3DViewSampler {
 
 function selectedGridPromptMode(): Grid9PromptMode {
   if (gridPromptModeSelect.value === "same") return "same";
+  if (gridPromptModeSelect.value === "literal_v2") return "literal_v2";
   if (gridPromptModeSelect.value === "literal") return "literal";
   return "contact_sheet";
 }
 
 function selectedGridDirectRaster(): boolean {
   return gridRasterModeSelect.value === "direct80";
+}
+
+function selectedPromptMode(): ViewPromptMode {
+  if (promptModeSelect.value === "same") return "same";
+  if (promptModeSelect.value === "coarse") return "coarse";
+  return "camera";
+}
+
+function selectedBgPromptMode(): BackgroundPromptMode {
+  if (bgTextModeSelect.value === "none") return "none";
+  if (bgTextModeSelect.value === "centered") return "centered";
+  return "black";
+}
+
+function selectedBackgroundMode(): Splat3DBackgroundMode {
+  if (backgroundModeSelect.value === "dark_random") return "dark_random";
+  if (backgroundModeSelect.value === "curriculum") return "curriculum";
+  return "black";
+}
+
+function selectedAlphaReg(): Status["alphaReg"] {
+  return alphaRegSelect.value === "medium" ? "medium" : alphaRegSelect.value === "weak" ? "weak" : "off";
+}
+
+function selectedBoundsReg(): Status["boundsReg"] {
+  return boundsRegSelect.value === "medium" ? "medium" : boundsRegSelect.value === "weak" ? "weak" : "off";
+}
+
+function selectedFramingMode(): CameraFramingMode {
+  return framingModeSelect.value === "zoom_out" ? "zoom_out" : "normal";
+}
+
+function selectedConvergenceConfig(): Splat3DConvergenceConfig {
+  const alphaReg = selectedAlphaReg();
+  const boundsReg = selectedBoundsReg();
+  return {
+    backgroundMode: selectedBackgroundMode(),
+    opacitySparsity: alphaReg === "medium" ? 0.03 : alphaReg === "weak" ? 0.01 : 0,
+    centerWeight: boundsReg === "medium" ? 0.006 : boundsReg === "weak" ? 0.002 : 0,
+    radiusWeight: boundsReg === "medium" ? 0.012 : boundsReg === "weak" ? 0.004 : 0,
+    targetRadius: 1.15,
+  };
+}
+
+function syncConvergenceStatus(): void {
+  status.backgroundMode = selectedBackgroundMode();
+  status.alphaReg = selectedAlphaReg();
+  status.boundsReg = selectedBoundsReg();
+  status.framingMode = selectedFramingMode();
 }
 
 function syncClipLayoutControls(): void {
@@ -208,6 +290,10 @@ function setControlsDisabled(disabled: boolean): void {
   viewSelect.disabled = disabled;
   promptModeSelect.disabled = disabled;
   bgTextModeSelect.disabled = disabled;
+  backgroundModeSelect.disabled = disabled;
+  alphaRegSelect.disabled = disabled;
+  boundsRegSelect.disabled = disabled;
+  framingModeSelect.disabled = disabled;
   clipLayoutSelect.disabled = disabled;
   gridPromptModeSelect.disabled = disabled || !grid;
   gridRasterModeSelect.disabled = disabled || !grid;
@@ -224,6 +310,7 @@ async function rebuildOptimizer(nextSeed: number, phase: string): Promise<void> 
   status.viewsPerStep = selectedViewsPerStep();
   status.viewSampler = selectedViewSampler();
   status.clipBatchSize = selectedClipBatchSize();
+  syncConvergenceStatus();
   renderReadout();
   const old = opt;
   opt = await Splat3DOptimizer.create(device, plan, weights, {
@@ -232,6 +319,8 @@ async function rebuildOptimizer(nextSeed: number, phase: string): Promise<void> 
     clipLayout: status.clipLayout,
     viewSampler: status.viewSampler,
     gridDirectRaster: status.gridDirectRaster,
+    convergence: selectedConvergenceConfig(),
+    cameras: camerasForFraming(status.framingMode),
   });
   status.clipLayout = opt.clipLayout;
   status.clipBatchSize = opt.clipBatchSize;
@@ -309,6 +398,7 @@ function recordBlit(enc: GPUCommandEncoder, target: GPUCanvasContext): void {
 
 function renderGrid(): void {
   if (!blitBind || !viewCtxs.length) return;
+  opt.prepareDisplayFrame();
   const enc = device.createCommandEncoder();
   for (let view = 0; view < viewCtxs.length; view++) {
     opt.raster.recordForward(enc, view);
@@ -461,27 +551,32 @@ async function onOptimize(): Promise<void> {
   status.viewsPerStep = selectedViewsPerStep();
   status.viewSampler = selectedViewSampler();
   status.clipBatchSize = selectedClipBatchSize();
-  status.promptMode = promptModeSelect.value === "same" ? "same" : "camera";
-  status.blackBgText = bgTextModeSelect.value !== "none";
+  status.promptMode = selectedPromptMode();
+  status.bgPromptMode = selectedBgPromptMode();
+  syncConvergenceStatus();
   renderTimings();
   renderReadout();
   try {
     const embeds: Float32Array[] = [];
     if (status.promptMode === "same") {
       setNotice("encoding prompt 1/1...");
-      const embed = await encodePromptCached(buildBasePrompt(text, status.blackBgText));
+      const embed = await encodePromptCached(buildBasePrompt(text, status.bgPromptMode));
       for (let i = 0; i < opt.cameras.length; i++) embeds.push(embed);
     } else {
       for (let i = 0; i < opt.cameras.length; i++) {
         setNotice(`encoding prompt ${i + 1}/${opt.cameras.length}...`);
-        embeds.push(await encodePromptCached(buildViewPrompt(text, opt.cameras[i], status.blackBgText)));
+        const promptText =
+          status.promptMode === "coarse"
+            ? buildCoarseViewPrompt(text, opt.cameras[i], status.bgPromptMode)
+            : buildViewPrompt(text, opt.cameras[i], status.bgPromptMode);
+        embeds.push(await encodePromptCached(promptText));
       }
 	    }
 	    viewEmbeds = embeds;
 	    opt.setViewPrompts(embeds);
     if (status.clipLayout === "grid9_close2") {
       setNotice("encoding grid prompt...");
-      opt.setGridPrompt(await encodePromptCached(buildGrid9Prompt(text, status.blackBgText, status.gridPromptMode)));
+      opt.setGridPrompt(await encodePromptCached(buildGrid9Prompt(text, status.bgPromptMode, status.gridPromptMode)));
     }
 	    const e0 = await opt.currentEmbedding(displayView);
     status.initialCos = cosine(e0, embeds[displayView]);
@@ -537,10 +632,10 @@ function setDisplayView(view: number): void {
 }
 
 function onPromptModeChange(): void {
-  status.promptMode = promptModeSelect.value === "same" ? "same" : "camera";
+  status.promptMode = selectedPromptMode();
   status.gridPromptMode = selectedGridPromptMode();
   status.gridDirectRaster = selectedGridDirectRaster();
-  status.blackBgText = bgTextModeSelect.value !== "none";
+  status.bgPromptMode = selectedBgPromptMode();
   latestTimings = null;
   if (viewEmbeds) {
     status.running = false;
@@ -552,6 +647,35 @@ function onPromptModeChange(): void {
   }
   renderTimings();
   renderReadout();
+}
+
+async function onConvergenceSettingsChange(): Promise<void> {
+  if (!status.ready) return;
+  if (profileBusy) {
+    setNotice("wait for profiling sample to finish before changing convergence settings");
+    backgroundModeSelect.value = status.backgroundMode;
+    alphaRegSelect.value = status.alphaReg;
+    boundsRegSelect.value = status.boundsReg;
+    framingModeSelect.value = status.framingMode;
+    return;
+  }
+  syncConvergenceStatus();
+  status.running = false;
+  viewEmbeds = null;
+  status.cos = null;
+  status.initialCos = null;
+  latestTimings = null;
+  setControlsDisabled(true);
+  try {
+    await rebuildOptimizer(seed, "convergence");
+    setNotice("");
+    status.phase = "idle";
+  } catch (e: any) {
+    fail(`convergence settings change failed: ${e?.message ?? e}`);
+  } finally {
+    setControlsDisabled(false);
+    renderReadout();
+  }
 }
 
 function onViewBatchChange(): void {
@@ -675,16 +799,22 @@ async function boot(): Promise<void> {
   readoutEl.textContent = "building 3D optimizer…";
   await buildBlitPipeline();
   syncClipLayoutControls();
+  syncConvergenceStatus();
   opt = await Splat3DOptimizer.create(device, plan, weights, {
     seed,
     clipBatchSize: selectedClipBatchSize(),
     clipLayout: selectedClipLayout(),
     viewSampler: selectedViewSampler(),
+    gridDirectRaster: selectedGridDirectRaster(),
+    convergence: selectedConvergenceConfig(),
+    cameras: camerasForFraming(status.framingMode),
   });
   status.clipLayout = opt.clipLayout;
   status.viewsPerStep = selectedViewsPerStep();
   status.viewSampler = opt.viewSampler;
   status.clipBatchSize = opt.clipBatchSize;
+  status.gridPromptMode = selectedGridPromptMode();
+  status.gridDirectRaster = selectedGridDirectRaster();
   populateViews();
   rebuildBlitBind();
   gridDirty = true;
@@ -707,6 +837,10 @@ resetBtn.addEventListener("click", () => void onReset());
 viewSelect.addEventListener("change", () => void onViewChange());
 promptModeSelect.addEventListener("change", onPromptModeChange);
 bgTextModeSelect.addEventListener("change", onPromptModeChange);
+backgroundModeSelect.addEventListener("change", () => void onConvergenceSettingsChange());
+alphaRegSelect.addEventListener("change", () => void onConvergenceSettingsChange());
+boundsRegSelect.addEventListener("change", () => void onConvergenceSettingsChange());
+framingModeSelect.addEventListener("change", () => void onConvergenceSettingsChange());
 viewBatchSelect.addEventListener("change", onViewBatchChange);
 viewSamplerSelect.addEventListener("change", () => void onClipSettingsChange());
 clipModeSelect.addEventListener("change", () => void onClipSettingsChange());

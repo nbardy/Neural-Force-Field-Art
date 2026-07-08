@@ -273,6 +273,53 @@ uses:
 CONFIGS='base3=3:3,grid80=9:3:grid9:directgrid,grid80literal=9:3:grid9:directgrid:literal' bun tools/splat3d/grid_quality.ts
 ```
 
+## Convergence Toggle Overhead Gate
+
+The first paper-derived convergence toggles are now browser-visible:
+
+- render background: `black`, `dark_random`, `curriculum`;
+- alpha regularizer: `off`, `weak`, `medium`;
+- bounds regularizer: `off`, `weak`, `medium`;
+- framing: `normal`, `zoom_out`;
+- prompt mode: `camera`, `coarse`, `same`;
+- grid prompt: `contact_sheet`, `literal`, `literal_v2`, `same`.
+
+Runtime structure:
+
+- static black mode keeps the old raster shader bind layout;
+- random/curriculum background uses a dynamic-background raster variant;
+- alpha/bounds regularizers are a separate compute pass after CLIP/raster
+  backward and before Adam;
+- if regularizers are off, the pass is not recorded.
+
+Smoke command:
+
+```bash
+G=256 TRIALS=1 RUNS=1 WARMUP=0 CONFIGS='base=1:1,conv=1:1:bgdark:alphaweak:boundsweak' bun tools/splat3d/step_matrix.ts
+```
+
+First smoke result:
+
+| Config | Normal | Profile | Raster | Regularizer |
+| --- | ---: | ---: | ---: | ---: |
+| `base` | `64.91 ms` | `32.61 ms` | `2.07 ms` | `0.00 ms` |
+| `conv` | `65.95 ms` | `29.67 ms` | `1.88 ms` | `0.38 ms` |
+
+Read: this is only a shader/binding smoke at tiny `G=256`, not a promotion
+quality gate. It proves disabled regularizers skip the pass, enabled
+regularizers appear as a measured row, and no hot raster/CLIP branch was needed
+for the off path.
+
+Grid/direct-raster smoke also passed:
+
+```bash
+G=128 RUNS=1 WARMUP=0 CLIP_BATCH=3 VIEWS=9 CLIP_LAYOUT=grid9_close2 GRID_DIRECT_RASTER=1 BACKGROUND_MODE=dark_random ALPHA_REG=weak BOUNDS_REG=weak bun tools/splat3d/step_bench.ts
+```
+
+Result: `normal step avg 148.76 ms`, `profile 53.66 ms`, `clipBatch 46.15 ms`,
+`raster 4.06 ms`, `regularizer 0.29 ms`. This validates that dynamic background
+and the regularizer pass also work through the `grid80 + 2 full` path.
+
 ## Default Grid80 Backward Stack
 
 The grid80 path now defaults to the measured exact backward stack when the
