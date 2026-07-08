@@ -48,17 +48,10 @@ const SEED = Number(process.env.SEED ?? 1);
 const G = Number(process.env.G ?? LEGIBLE_3D_G);
 const CAP = Number(process.env.CAP ?? 2048);
 const STEM_SPATIAL_BWD = process.env.STEM_SPATIAL_BWD !== "0";
-const SPATIAL_BWD_VARIANT =
-  process.env.SPATIAL_BWD_VARIANT === "generic"
-    ? "generic"
-    : process.env.SPATIAL_BWD_VARIANT === "depthwise4"
-      ? "depthwise4"
-      : undefined;
+const SPATIAL_BWD_VARIANT = process.env.SPATIAL_BWD_VARIANT === "depthwise4" ? "depthwise4" : undefined;
 const FUSE_PW_GELU = process.env.FUSE_PW_GELU !== "0";
-const FUSE_GELU_BWD_PW =
-  process.env.FUSE_GELU_BWD_PW === "1" ? true : process.env.FUSE_GELU_BWD_PW === "0" ? false : undefined;
-const FUSE_RESIDUAL_BWD_PW =
-  process.env.FUSE_RESIDUAL_BWD_PW === "1" ? true : process.env.FUSE_RESIDUAL_BWD_PW === "0" ? false : undefined;
+const FUSE_GELU_BWD_PW = process.env.FUSE_GELU_BWD_PW === "1";
+const FUSE_RESIDUAL_BWD_PW = process.env.FUSE_RESIDUAL_BWD_PW === "1";
 const SINGLE_PASS_RASTER_FWD = process.env.SINGLE_PASS_RASTER_FWD === "1";
 const VIEW_LANE_RASTER_FWD = process.env.VIEW_LANE_RASTER_FWD === "1";
 const VIEW_LANE_RASTER_BWD = process.env.VIEW_LANE_RASTER_BWD === "1";
@@ -174,12 +167,12 @@ console.log(
     `clipBatch=${opt.clipBatchSize}, clipLayout=${opt.clipLayout}, clipPrecision=${CLIP_PRECISION}, ` +
     `viewSampler=${opt.viewSampler}, weights=${WEIGHTS_FILE}, cap=${CAP}, runs=${RUNS}, warmup=${WARMUP}, ` +
     `stemSpatialBwd=${STEM_SPATIAL_BWD ? 1 : 0}, ` +
-    `spatialBwdVariant=${SPATIAL_BWD_VARIANT ?? "default"}, ` +
+    `spatialBwdVariant=${SPATIAL_BWD_VARIANT ?? "generic"}, ` +
     `pointwiseTileVariant=${POINTWISE_TILE_VARIANT}, ` +
     (POINTWISE_TILE_STEPS.size ? `pointwiseTileSteps=${[...POINTWISE_TILE_STEPS].join(",")}, ` : "") +
     `fusePointwiseGeluForward=${FUSE_PW_GELU ? 1 : 0}, ` +
-    `fuseGeluBwdIntoPw=${FUSE_GELU_BWD_PW === undefined ? "default" : FUSE_GELU_BWD_PW ? 1 : 0}, ` +
-    `fuseResidualBwdIntoPw=${FUSE_RESIDUAL_BWD_PW === undefined ? "default" : FUSE_RESIDUAL_BWD_PW ? 1 : 0}, ` +
+    `fuseGeluBwdIntoPw=${FUSE_GELU_BWD_PW ? 1 : 0}, ` +
+    `fuseResidualBwdIntoPw=${FUSE_RESIDUAL_BWD_PW ? 1 : 0}, ` +
     (SHARED_W_FWD_STEPS.size ? `sharedWForwardSteps=${[...SHARED_W_FWD_STEPS].join(",")}, ` : "") +
     `singlePassBatchRasterForward=${SINGLE_PASS_RASTER_FWD ? 1 : 0}, ` +
     `viewLaneBatchRasterForward=${VIEW_LANE_RASTER_FWD ? 1 : 0}, ` +

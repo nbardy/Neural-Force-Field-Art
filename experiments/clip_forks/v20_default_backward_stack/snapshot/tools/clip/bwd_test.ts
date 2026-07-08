@@ -21,7 +21,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { setupGlobals } from "bun-webgpu";
-import { bwdStepDispatch, type BwdDispatchOptions, type BwdStep } from "../../src/clip/vision_bwd_wgsl";
+import { bwdStepDispatch, type BwdStep } from "../../src/clip/vision_bwd_wgsl";
 import type { DispatchSpec } from "../../src/clip/vision_wgsl";
 import { VisionTrainer, type TrainPlan } from "../../src/clip/vision";
 
@@ -80,25 +80,6 @@ if (!adapter) {
 const device: any = await adapter.requestDevice();
 const info = adapter.info ?? {};
 console.log(`adapter: ${info.vendor ?? "?"} ${info.architecture ?? "?"}\n`);
-
-const STEM_SPATIAL_BWD =
-  process.env.STEM_SPATIAL_BWD === "1" ? true : process.env.STEM_SPATIAL_BWD === "0" ? false : undefined;
-const SPATIAL_BWD_VARIANT =
-  process.env.SPATIAL_BWD_VARIANT === "depthwise4"
-    ? "depthwise4"
-    : process.env.SPATIAL_BWD_VARIANT === "generic"
-      ? "generic"
-      : undefined;
-const FUSE_GELU_BWD_PW =
-  process.env.FUSE_GELU_BWD_PW === "1" ? true : process.env.FUSE_GELU_BWD_PW === "0" ? false : undefined;
-const FUSE_RESIDUAL_BWD_PW =
-  process.env.FUSE_RESIDUAL_BWD_PW === "1" ? true : process.env.FUSE_RESIDUAL_BWD_PW === "0" ? false : undefined;
-
-const TRAINER_OPTS: BwdDispatchOptions = {};
-if (STEM_SPATIAL_BWD !== undefined) TRAINER_OPTS.stemSpatialBwd = STEM_SPATIAL_BWD;
-if (SPATIAL_BWD_VARIANT !== undefined) TRAINER_OPTS.spatialBwdVariant = SPATIAL_BWD_VARIANT;
-if (FUSE_GELU_BWD_PW !== undefined) TRAINER_OPTS.fuseGeluBwdIntoPw = FUSE_GELU_BWD_PW;
-if (FUSE_RESIDUAL_BWD_PW !== undefined) TRAINER_OPTS.fuseResidualBwdIntoPw = FUSE_RESIDUAL_BWD_PW;
 
 const USAGE = { MAP_READ: 1, COPY_SRC: 4, COPY_DST: 8, STORAGE: 128 };
 
@@ -609,17 +590,8 @@ const text = new Float32Array(plan.textDim);
 { let nrm = 0; for (let i = 0; i < text.length; i++) { text[i] = randn(tr); nrm += text[i] * text[i]; } nrm = Math.sqrt(nrm); for (let i = 0; i < text.length; i++) text[i] /= nrm; }
 
 const t0 = performance.now();
-const tr2 = await VisionTrainer.create(device, plan, weights, TRAINER_OPTS);
-const trainerOptText = [
-  TRAINER_OPTS.stemSpatialBwd !== undefined ? `stemSpatialBwd=${TRAINER_OPTS.stemSpatialBwd ? 1 : 0}` : "",
-  TRAINER_OPTS.spatialBwdVariant ? `spatialBwdVariant=${TRAINER_OPTS.spatialBwdVariant}` : "",
-  TRAINER_OPTS.fuseGeluBwdIntoPw !== undefined ? `fuseGeluBwdIntoPw=${TRAINER_OPTS.fuseGeluBwdIntoPw ? 1 : 0}` : "",
-  TRAINER_OPTS.fuseResidualBwdIntoPw !== undefined ? `fuseResidualBwdIntoPw=${TRAINER_OPTS.fuseResidualBwdIntoPw ? 1 : 0}` : "",
-].filter(Boolean).join(", ");
-console.log(
-  `pipelines: ${plan.steps.length} fwd + ${plan.backward.length} bwd compiled in ${(performance.now() - t0).toFixed(0)} ms` +
-    (trainerOptText ? ` (${trainerOptText})` : "")
-);
+const tr2 = await VisionTrainer.create(device, plan, weights);
+console.log(`pipelines: ${plan.steps.length} fwd + ${plan.backward.length} bwd compiled in ${(performance.now() - t0).toFixed(0)} ms`);
 tr2.writeText(text);
 
 const negCos = (embed: Float32Array): number => {

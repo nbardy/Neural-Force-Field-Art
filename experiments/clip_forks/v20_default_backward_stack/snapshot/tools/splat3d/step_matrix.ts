@@ -28,9 +28,9 @@ interface Config {
   clipBatch: number;
   clipLayout: "per_view" | "grid9_close2";
   viewSampler: "epoch" | "random";
-  spatialBwdVariant: "default" | "generic" | "depthwise4";
-  fuseGeluBwdIntoPw: boolean | null;
-  fuseResidualBwdIntoPw: boolean | null;
+  spatialBwdVariant: "generic" | "depthwise4";
+  fuseGeluBwdIntoPw: boolean;
+  fuseResidualBwdIntoPw: boolean;
   singlePassRasterForward: boolean | null;
   viewLaneRasterForward: boolean | null;
   viewLaneRasterBackward: boolean | null;
@@ -85,23 +85,9 @@ function parseConfigs(src: string): Config[] {
       }
       const clipLayout = tokens.includes("grid9") || tokens.includes("grid9_close2") ? "grid9_close2" : "per_view";
       const viewSampler = tokens.includes("random") ? "random" : "epoch";
-      const spatialBwdVariant =
-        tokens.includes("dw4") || tokens.includes("depthwise4")
-          ? "depthwise4"
-          : tokens.includes("generic") || tokens.includes("gen")
-            ? "generic"
-            : "default";
-      const noFusions = tokens.includes("nofusions");
-      const fuseGeluBwdIntoPw = tokens.includes("gelubwd")
-        ? true
-        : noFusions || tokens.includes("nogelubwd")
-          ? false
-          : null;
-      const fuseResidualBwdIntoPw = tokens.includes("resbwd")
-        ? true
-        : noFusions || tokens.includes("noresbwd")
-          ? false
-          : null;
+      const spatialBwdVariant = tokens.includes("dw4") || tokens.includes("depthwise4") ? "depthwise4" : "generic";
+      const fuseGeluBwdIntoPw = tokens.includes("gelubwd");
+      const fuseResidualBwdIntoPw = tokens.includes("resbwd");
       const singlePassRasterForward = tokens.includes("rasterpass")
         ? true
         : tokens.includes("norasterpass")
@@ -189,7 +175,7 @@ function runTrial(config: Config, trial: number): TrialResult {
     CLIP_BATCH: String(config.clipBatch),
     CLIP_LAYOUT: config.clipLayout,
     VIEW_SAMPLER: config.viewSampler,
-    SPATIAL_BWD_VARIANT: config.spatialBwdVariant === "default" ? "" : config.spatialBwdVariant,
+    SPATIAL_BWD_VARIANT: config.spatialBwdVariant === "depthwise4" ? "depthwise4" : "generic",
     GRID_DIRECT_RASTER: config.gridDirectRaster ? "1" : "0",
     SHARED_W_FWD_STEPS: config.sharedWForwardSteps,
     PW_TILE_VARIANT: config.pointwiseTileVariant === "rect8x16" ? "rect8x16" : "",
@@ -199,9 +185,8 @@ function runTrial(config: Config, trial: number): TrialResult {
     RUNS: String(RUNS),
     WARMUP: String(WARMUP),
     SEED: String(SEED),
-    FUSE_GELU_BWD_PW: config.fuseGeluBwdIntoPw === null ? "" : config.fuseGeluBwdIntoPw ? "1" : "0",
-    FUSE_RESIDUAL_BWD_PW:
-      config.fuseResidualBwdIntoPw === null ? "" : config.fuseResidualBwdIntoPw ? "1" : "0",
+    FUSE_GELU_BWD_PW: config.fuseGeluBwdIntoPw ? "1" : "0",
+    FUSE_RESIDUAL_BWD_PW: config.fuseResidualBwdIntoPw ? "1" : "0",
   };
   if (config.singlePassRasterForward !== null) {
     env.SINGLE_PASS_RASTER_FWD = config.singlePassRasterForward ? "1" : "0";
@@ -261,7 +246,7 @@ function fmt(n: number): string {
 const results: TrialResult[] = [];
 if (!JSON_OUT) {
   console.log(
-    `splat3d step matrix: configs=${CONFIGS.map((c) => `${c.label}=${c.views}:${c.clipBatch}${c.clipLayout === "grid9_close2" ? ":grid9" : ""}${c.viewSampler === "random" ? ":random" : ""}${c.spatialBwdVariant === "depthwise4" ? ":dw4" : ""}${c.spatialBwdVariant === "generic" ? ":generic" : ""}${c.gridDirectRaster ? ":directgrid" : ""}${c.sharedWForwardSteps ? `:sw${c.sharedWForwardSteps.split(",").join("-")}` : ""}${c.pointwiseTileVariant === "rect8x16" ? ":pwrect" : ""}${c.pointwiseTileSteps ? `:pwsteps${c.pointwiseTileSteps.split(",").join("-")}` : ""}${c.clipRefreshInterval > 1 ? `:cache${c.clipRefreshInterval}` : ""}${c.cachedLrScale !== 1 ? `:lr${c.cachedLrScale}` : ""}${c.fuseGeluBwdIntoPw === true ? ":gelubwd" : ""}${c.fuseGeluBwdIntoPw === false ? ":nogelubwd" : ""}${c.fuseResidualBwdIntoPw === true ? ":resbwd" : ""}${c.fuseResidualBwdIntoPw === false ? ":noresbwd" : ""}${c.singlePassRasterForward === true ? ":rasterpass" : ""}${c.singlePassRasterForward === false ? ":norasterpass" : ""}${c.viewLaneRasterForward === true ? ":viewlane" : ""}${c.viewLaneRasterForward === false ? ":noviewlane" : ""}${c.viewLaneRasterBackward === true ? ":viewbwd" : ""}${c.viewLaneRasterBackward === false ? ":noviewbwd" : ""}${c.cap !== null ? `:cap${c.cap}` : ""}`).join(",")} ` +
+    `splat3d step matrix: configs=${CONFIGS.map((c) => `${c.label}=${c.views}:${c.clipBatch}${c.clipLayout === "grid9_close2" ? ":grid9" : ""}${c.viewSampler === "random" ? ":random" : ""}${c.spatialBwdVariant === "depthwise4" ? ":dw4" : ""}${c.gridDirectRaster ? ":directgrid" : ""}${c.sharedWForwardSteps ? `:sw${c.sharedWForwardSteps.split(",").join("-")}` : ""}${c.pointwiseTileVariant === "rect8x16" ? ":pwrect" : ""}${c.pointwiseTileSteps ? `:pwsteps${c.pointwiseTileSteps.split(",").join("-")}` : ""}${c.clipRefreshInterval > 1 ? `:cache${c.clipRefreshInterval}` : ""}${c.cachedLrScale !== 1 ? `:lr${c.cachedLrScale}` : ""}${c.fuseGeluBwdIntoPw ? ":gelubwd" : ""}${c.fuseResidualBwdIntoPw ? ":resbwd" : ""}${c.singlePassRasterForward === true ? ":rasterpass" : ""}${c.singlePassRasterForward === false ? ":norasterpass" : ""}${c.viewLaneRasterForward === true ? ":viewlane" : ""}${c.viewLaneRasterForward === false ? ":noviewlane" : ""}${c.viewLaneRasterBackward === true ? ":viewbwd" : ""}${c.viewLaneRasterBackward === false ? ":noviewbwd" : ""}${c.cap !== null ? `:cap${c.cap}` : ""}`).join(",")} ` +
       `trials=${TRIALS} runs=${RUNS} warmup=${WARMUP} seed=${SEED}${G ? ` G=${G}` : ""}`
   );
 }
@@ -273,20 +258,17 @@ for (let trial = 0; trial < TRIALS; trial++) {
     results.push(result);
     if (!JSON_OUT) {
       const flags = [
-        config.fuseGeluBwdIntoPw === true ? "gelubwd=1" : "",
-        config.fuseGeluBwdIntoPw === false ? "gelubwd=0" : "",
+        config.fuseGeluBwdIntoPw ? "gelubwd=1" : "",
         config.clipLayout === "grid9_close2" ? "grid9=1" : "",
         config.viewSampler === "random" ? "random=1" : "",
         config.spatialBwdVariant === "depthwise4" ? "dw4=1" : "",
-        config.spatialBwdVariant === "generic" ? "generic=1" : "",
         config.gridDirectRaster ? "directgrid=1" : "",
         config.sharedWForwardSteps ? `sw=${config.sharedWForwardSteps}` : "",
         config.pointwiseTileVariant === "rect8x16" ? "pwrect=1" : "",
         config.pointwiseTileSteps ? `pwsteps=${config.pointwiseTileSteps}` : "",
         config.clipRefreshInterval > 1 ? `cache=${config.clipRefreshInterval}` : "",
         config.cachedLrScale !== 1 ? `cachedlr=${config.cachedLrScale}` : "",
-        config.fuseResidualBwdIntoPw === true ? "resbwd=1" : "",
-        config.fuseResidualBwdIntoPw === false ? "resbwd=0" : "",
+        config.fuseResidualBwdIntoPw ? "resbwd=1" : "",
         config.singlePassRasterForward === true ? "rasterpass=1" : "",
         config.singlePassRasterForward === false ? "rasterpass=0" : "",
         config.viewLaneRasterForward === true ? "viewlane=1" : "",
@@ -321,7 +303,7 @@ if (JSON_OUT) {
       `${config.label.padEnd(16).slice(0, 16)} ${String(config.views).padStart(5)} ${String(config.clipBatch).padStart(5)} ` +
         `${(config.clipLayout === "grid9_close2" ? "grid9" : "view").padStart(7)} ` +
         `${config.viewSampler.padStart(7)} ` +
-        `${(config.spatialBwdVariant === "depthwise4" ? "dw4" : config.spatialBwdVariant === "generic" ? "gen" : "def").padStart(5)} ` +
+        `${(config.spatialBwdVariant === "depthwise4" ? "dw4" : "gen").padStart(5)} ` +
         `${(config.gridDirectRaster ? "yes" : "no").padStart(5)} ` +
         `${(config.sharedWForwardSteps ? "yes" : "no").padStart(7)} ` +
         `${(config.pointwiseTileVariant === "rect8x16" ? "yes" : "no").padStart(7)} ` +
@@ -329,8 +311,8 @@ if (JSON_OUT) {
         `${String(config.clipRefreshInterval).padStart(5)} ` +
         `${config.cachedLrScale.toFixed(2).padStart(6)} ` +
         `${String(config.cap ?? "def").padStart(5)} ` +
-        `${(config.fuseGeluBwdIntoPw === null ? "def" : config.fuseGeluBwdIntoPw ? "yes" : "no").padStart(4)} ` +
-        `${(config.fuseResidualBwdIntoPw === null ? "def" : config.fuseResidualBwdIntoPw ? "yes" : "no").padStart(4)} ` +
+        `${(config.fuseGeluBwdIntoPw ? "yes" : "no").padStart(4)} ` +
+        `${(config.fuseResidualBwdIntoPw ? "yes" : "no").padStart(4)} ` +
         `${(config.singlePassRasterForward === null ? "def" : config.singlePassRasterForward ? "yes" : "no").padStart(5)} ` +
         `${(config.viewLaneRasterForward === null ? "def" : config.viewLaneRasterForward ? "yes" : "no").padStart(5)} ` +
         `${(config.viewLaneRasterBackward === null ? "def" : config.viewLaneRasterBackward ? "yes" : "no").padStart(5)} ` +

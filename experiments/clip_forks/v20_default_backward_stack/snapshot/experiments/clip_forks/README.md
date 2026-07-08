@@ -36,7 +36,6 @@ node experiments/clip_forks/diff_fork.mjs v16_grid_real_prompt_quality
 node experiments/clip_forks/diff_fork.mjs v17_pointwise_roofline
 node experiments/clip_forks/diff_fork.mjs v18_pointwise_rect8x16
 node experiments/clip_forks/diff_fork.mjs v19_grid_literal_prompt
-node experiments/clip_forks/diff_fork.mjs v20_default_backward_stack
 ```
 
 ## Standard Gate
@@ -90,8 +89,6 @@ Use the gate-specific env vars in addition to the commands above.
   and step allowlist plumbing; recorded as no-promote after timing gates.
 - `v19_grid_literal_prompt`: adds a literal "3x3 grid ... from 9 angles" prompt
   mode for the existing `grid9_close2` contact-sheet lane.
-- `v20_default_backward_stack`: conditionally promotes the measured
-  `depthwise4 + GELU/residual backward fusion` stack for the grid80 path only.
 
 ## Snapshot Coverage
 
@@ -130,9 +127,6 @@ Use the gate-specific env vars in addition to the commands above.
   notes, and fork-index context.
 - `v19_grid_literal_prompt`: 3D camera prompt builders, 3D page controls, grid
   quality harness, perf notes, and fork-index context.
-- `v20_default_backward_stack`: 3D optimizer default wiring, 3D benchmark
-  controls, grid/cadence quality controls, backward correctness gate, perf
-  notes, and fork-index context.
 
 ## Related Notes
 
@@ -159,8 +153,3 @@ Use the gate-specific env vars in addition to the commands above.
 - `agent_notes/optimization_session/v19_agent_pointwise_math_layout.md`
 - `agent_notes/optimization_session/v19_agent_grid_prompt_strategy.md`
 - `agent_notes/optimization_session/v19_agent_real_gpu_profiling.md`
-- `agent_notes/optimization_session/v20_agent_backward_fusion_promotion.md`
-- `agent_notes/optimization_session/v20_agent_measurement_protocol.md`
-- `agent_notes/optimization_session/v20_agent_remaining_local_fusions.md`
-- `agent_notes/optimization_session/v20_agent_shared_w_pw_bwd.md`
-- `agent_notes/optimization_session/v20_agent_splitk_pw_bwd_design.md`

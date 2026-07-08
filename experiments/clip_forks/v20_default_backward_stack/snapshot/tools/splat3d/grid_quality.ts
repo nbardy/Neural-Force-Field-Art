@@ -56,18 +56,6 @@ const POINTWISE_TILE_VARIANT: PointwiseTileVariant =
     ? "rect8x16"
     : "default";
 const POINTWISE_TILE_STEPS = parseStepSet(process.env.PW_TILE_STEPS ?? process.env.POINTWISE_TILE_STEPS ?? "");
-const STEM_SPATIAL_BWD = process.env.STEM_SPATIAL_BWD !== "0";
-const SPATIAL_BWD_VARIANT =
-  process.env.SPATIAL_BWD_VARIANT === "generic"
-    ? "generic"
-    : process.env.SPATIAL_BWD_VARIANT === "depthwise4"
-      ? "depthwise4"
-      : undefined;
-const FUSE_PW_GELU = process.env.FUSE_PW_GELU !== "0";
-const FUSE_GELU_BWD_PW =
-  process.env.FUSE_GELU_BWD_PW === "1" ? true : process.env.FUSE_GELU_BWD_PW === "0" ? false : undefined;
-const FUSE_RESIDUAL_BWD_PW =
-  process.env.FUSE_RESIDUAL_BWD_PW === "1" ? true : process.env.FUSE_RESIDUAL_BWD_PW === "0" ? false : undefined;
 
 interface GridQualityConfig {
   label: string;
@@ -377,11 +365,6 @@ for (let trial = 0; trial < TRIALS; trial++) {
       clipWeightPrecision: CLIP_PRECISION,
       pointwiseTileVariant: POINTWISE_TILE_VARIANT,
       pointwiseTileSteps: POINTWISE_TILE_STEPS,
-      stemSpatialBwd: STEM_SPATIAL_BWD,
-      spatialBwdVariant: SPATIAL_BWD_VARIANT,
-      fusePointwiseGeluForward: FUSE_PW_GELU,
-      fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
-      fuseResidualBwdIntoPw: FUSE_RESIDUAL_BWD_PW,
       gridDirectRaster: cfg.gridDirectRaster,
     });
     opt.setViewPrompts(viewEmbeds);
@@ -473,11 +456,6 @@ writeFileSync(
         clipPrecision: CLIP_PRECISION,
         pointwiseTileVariant: POINTWISE_TILE_VARIANT,
         pointwiseTileSteps: [...POINTWISE_TILE_STEPS],
-        stemSpatialBwd: STEM_SPATIAL_BWD,
-        spatialBwdVariant: SPATIAL_BWD_VARIANT ?? "default",
-        fusePointwiseGeluForward: FUSE_PW_GELU,
-        fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW ?? "default",
-        fuseResidualBwdIntoPw: FUSE_RESIDUAL_BWD_PW ?? "default",
         weightsFile: WEIGHTS_FILE,
         budgetMs: RUN_STEPS > 0 ? null : BUDGET_MS,
         runSteps: RUN_STEPS > 0 ? RUN_STEPS : null,

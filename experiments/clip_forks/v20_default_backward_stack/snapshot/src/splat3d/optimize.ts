@@ -142,28 +142,19 @@ export class Splat3DOptimizer {
       bg: cfg.bg ?? [0, 0, 0],
       cameras,
 	    });
-    const clipBatchSize = normalizeClipBatchSize(cfg.clipBatchSize);
-    const clipLayout = cfg.clipLayout ?? "per_view";
-    const promoteGrid80BackwardStack =
-      clipLayout === "grid9_close2" &&
-      clipBatchSize === 3 &&
-      (cfg.gridDirectRaster ?? false) === true &&
-      (cfg.stemSpatialBwd ?? true) === true &&
-      (cfg.fusePointwiseGeluForward ?? true) === true &&
-      (cfg.clipWeightPrecision ?? "f32") === "f32";
-    const effectiveSpatialBwdVariant = cfg.spatialBwdVariant ?? (promoteGrid80BackwardStack ? "depthwise4" : undefined);
-    const promoteBackwardLocalFusion = promoteGrid80BackwardStack && effectiveSpatialBwdVariant === "depthwise4";
     const clipDispatchOptions = {
       weightPrecision: cfg.clipWeightPrecision,
       pointwiseTileVariant: cfg.pointwiseTileVariant,
       pointwiseTileSteps: cfg.pointwiseTileSteps,
       stemSpatialBwd: cfg.stemSpatialBwd ?? true,
-      spatialBwdVariant: effectiveSpatialBwdVariant,
+      spatialBwdVariant: cfg.spatialBwdVariant,
       fusePointwiseGeluForward: cfg.fusePointwiseGeluForward ?? true,
-      fuseGeluBwdIntoPw: cfg.fuseGeluBwdIntoPw ?? promoteBackwardLocalFusion,
-      fuseResidualBwdIntoPw: cfg.fuseResidualBwdIntoPw ?? promoteBackwardLocalFusion,
+      fuseGeluBwdIntoPw: cfg.fuseGeluBwdIntoPw ?? false,
+      fuseResidualBwdIntoPw: cfg.fuseResidualBwdIntoPw ?? false,
     };
     const trainer = await VisionTrainer.create(device, trainPlan, weights, clipDispatchOptions);
+    const clipBatchSize = normalizeClipBatchSize(cfg.clipBatchSize);
+    const clipLayout = cfg.clipLayout ?? "per_view";
     const batchTrainer =
       clipBatchSize > 1
         ? await BatchMajorVisionTrainer.create(device, trainPlan, weights, clipBatchSize, {

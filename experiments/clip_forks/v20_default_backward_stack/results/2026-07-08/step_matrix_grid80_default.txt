@@ -1,0 +1,34 @@
+splat3d step matrix: configs=perview=3:3,grid80default=9:3:grid9:directgrid,grid80old=9:3:grid9:generic:directgrid:nogelubwd:noresbwd,grid80dw4old=9:3:grid9:dw4:directgrid:nogelubwd:noresbwd,grid80explicit=9:3:grid9:dw4:directgrid:gelubwd:resbwd trials=5 runs=5 warmup=3 seed=1
+trial 0 perview 3/3: normal=52.33 profile=56.10 clip=40.94 raster=12.53
+trial 0 grid80default 9/3 grid9=1 directgrid=1: normal=63.29 profile=63.14 clip=38.46 raster=20.56
+trial 0 grid80old 9/3 gelubwd=0 grid9=1 generic=1 directgrid=1 resbwd=0: normal=59.02 profile=61.07 clip=39.69 raster=18.64
+trial 0 grid80dw4old 9/3 gelubwd=0 grid9=1 dw4=1 directgrid=1 resbwd=0: normal=55.81 profile=58.24 clip=36.26 raster=19.19
+trial 0 grid80explicit 9/3 gelubwd=1 grid9=1 dw4=1 directgrid=1 resbwd=1: normal=55.13 profile=57.55 clip=36.49 raster=18.71
+trial 1 grid80explicit 9/3 gelubwd=1 grid9=1 dw4=1 directgrid=1 resbwd=1: normal=56.26 profile=59.03 clip=36.41 raster=19.76
+trial 1 grid80dw4old 9/3 gelubwd=0 grid9=1 dw4=1 directgrid=1 resbwd=0: normal=62.35 profile=65.64 clip=40.88 raster=21.34
+trial 1 grid80old 9/3 gelubwd=0 grid9=1 generic=1 directgrid=1 resbwd=0: normal=62.31 profile=61.73 clip=40.54 raster=17.99
+trial 1 grid80default 9/3 grid9=1 directgrid=1: normal=57.05 profile=57.05 clip=36.18 raster=18.14
+trial 1 perview 3/3: normal=52.57 profile=56.86 clip=41.30 raster=12.72
+trial 2 perview 3/3: normal=51.78 profile=55.26 clip=40.33 raster=12.50
+trial 2 grid80default 9/3 grid9=1 directgrid=1: normal=55.24 profile=59.33 clip=36.71 raster=19.67
+trial 2 grid80old 9/3 gelubwd=0 grid9=1 generic=1 directgrid=1 resbwd=0: normal=58.16 profile=61.94 clip=39.77 raster=19.09
+trial 2 grid80dw4old 9/3 gelubwd=0 grid9=1 dw4=1 directgrid=1 resbwd=0: normal=55.22 profile=60.67 clip=38.34 raster=19.18
+trial 2 grid80explicit 9/3 gelubwd=1 grid9=1 dw4=1 directgrid=1 resbwd=1: normal=54.57 profile=55.14 clip=34.23 raster=18.41
+trial 3 grid80explicit 9/3 gelubwd=1 grid9=1 dw4=1 directgrid=1 resbwd=1: normal=55.06 profile=58.04 clip=35.70 raster=19.81
+trial 3 grid80dw4old 9/3 gelubwd=0 grid9=1 dw4=1 directgrid=1 resbwd=0: normal=56.42 profile=58.46 clip=36.30 raster=19.37
+trial 3 grid80old 9/3 gelubwd=0 grid9=1 generic=1 directgrid=1 resbwd=0: normal=58.63 profile=61.78 clip=39.98 raster=18.78
+trial 3 grid80default 9/3 grid9=1 directgrid=1: normal=54.59 profile=56.55 clip=34.48 raster=19.79
+trial 3 perview 3/3: normal=52.51 profile=58.87 clip=42.18 raster=13.64
+trial 4 perview 3/3: normal=58.06 profile=61.69 clip=43.87 raster=13.37
+trial 4 grid80default 9/3 grid9=1 directgrid=1: normal=59.26 profile=61.23 clip=38.49 raster=20.26
+trial 4 grid80old 9/3 gelubwd=0 grid9=1 generic=1 directgrid=1 resbwd=0: normal=58.71 profile=62.17 clip=40.22 raster=19.02
+trial 4 grid80dw4old 9/3 gelubwd=0 grid9=1 dw4=1 directgrid=1 resbwd=0: normal=56.77 profile=60.11 clip=37.94 raster=19.36
+trial 4 grid80explicit 9/3 gelubwd=1 grid9=1 dw4=1 directgrid=1 resbwd=1: normal=60.73 profile=63.91 clip=39.22 raster=21.16
+
+Summary:
+config           views batch  layout sampler spbwd gridd      sw  pwrect  pwsteps cache     lr   cap gbwd rbwd rpass vlane  vbwd  normal med [min,max]     profile med     clip med   raster med
+perview              3     3    view   epoch   def    no      no      no        -     1   1.00   def  def  def   def   def   def    52.51 [51.78,58.06]    56.86    41.30    12.72
+grid80default        9     3   grid9   epoch   def   yes      no      no        -     1   1.00   def  def  def   def   def   def    57.05 [54.59,63.29]    59.33    36.71    19.79
+grid80old            9     3   grid9   epoch   gen   yes      no      no        -     1   1.00   def   no   no   def   def   def    58.71 [58.16,62.31]    61.78    39.98    18.78
+grid80dw4old         9     3   grid9   epoch   dw4   yes      no      no        -     1   1.00   def   no   no   def   def   def    56.42 [55.22,62.35]    60.11    37.94    19.36
+grid80explicit       9     3   grid9   epoch   dw4   yes      no      no        -     1   1.00   def  yes  yes   def   def   def    55.13 [54.57,60.73]    58.04    36.41    19.76

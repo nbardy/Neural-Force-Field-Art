@@ -273,61 +273,6 @@ uses:
 CONFIGS='base3=3:3,grid80=9:3:grid9:directgrid,grid80literal=9:3:grid9:directgrid:literal' bun tools/splat3d/grid_quality.ts
 ```
 
-## Default Grid80 Backward Stack
-
-The grid80 path now defaults to the measured exact backward stack when the
-optimizer is in the same envelope as the v11/v20 tests:
-
-```text
-clipLayout=grid9_close2
-clipBatchSize=3
-gridDirectRaster=true
-f32 CLIP weights
-stem spatial backward enabled
-forward pointwise+GELU fusion enabled
-```
-
-Within that envelope, unset options behave like:
-
-```text
-SPATIAL_BWD_VARIANT=depthwise4
-FUSE_GELU_BWD_PW=1
-FUSE_RESIDUAL_BWD_PW=1
-```
-
-Explicit env/config controls still override this. Use
-`SPATIAL_BWD_VARIANT=generic FUSE_GELU_BWD_PW=0 FUSE_RESIDUAL_BWD_PW=0` for the
-old negative-control path.
-
-Correctness gate after fixing `bwd_test.ts` to pass the fusion flags into the
-real `VisionTrainer` path:
-
-```bash
-SPATIAL_BWD_VARIANT=depthwise4 FUSE_GELU_BWD_PW=1 FUSE_RESIDUAL_BWD_PW=1 BENCH_RUNS=5 bun tools/clip/bwd_test.ts
-```
-
-Result: gate 1 all pass, directional derivative `8/8` under `2e-2`, all pass.
-
-Current integrated matrix:
-
-```bash
-TRIALS=5 RUNS=5 WARMUP=3 CONFIGS='perview=3:3,grid80default=9:3:grid9:directgrid,grid80old=9:3:grid9:directgrid:generic:nofusions,grid80dw4old=9:3:grid9:directgrid:dw4:nofusions,grid80explicit=9:3:grid9:directgrid:dw4:gelubwd:resbwd' bun tools/splat3d/step_matrix.ts
-```
-
-| Variant | Normal Median | Profile Median | CLIP Median | Raster Median |
-| --- | ---: | ---: | ---: | ---: |
-| `perview` | `52.51 ms` | `56.86 ms` | `41.30 ms` | `12.72 ms` |
-| `grid80default` | `57.05 ms` | `59.33 ms` | `36.71 ms` | `19.79 ms` |
-| `grid80old` | `58.71 ms` | `61.78 ms` | `39.98 ms` | `18.78 ms` |
-| `grid80dw4old` | `56.42 ms` | `60.11 ms` | `37.94 ms` | `19.36 ms` |
-| `grid80explicit` | `55.13 ms` | `58.04 ms` | `36.41 ms` | `19.76 ms` |
-
-Read: the hidden default improves the old generic/no-fusion grid80 CLIP median
-by about `3.27 ms` in this run. `grid80default` and `grid80explicit` should use
-the same backward stack; the small median difference between those rows is
-treated as run-order/GPU noise. Keep this as a small stack promotion with
-controls, not a broad claim.
-
 ## Integrated Timestamp Step Profile
 
 `tools/splat3d/step_bench.ts` now also accepts `TIMESTAMP=1` for integrated step
