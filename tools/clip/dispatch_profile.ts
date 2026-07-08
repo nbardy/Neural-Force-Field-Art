@@ -37,6 +37,7 @@ const CSV = process.env.CSV === "1";
 const STEM_SPATIAL_BWD = process.env.STEM_SPATIAL_BWD === "1";
 const FUSE_PW_GELU = process.env.FUSE_PW_GELU === "1";
 const FUSE_GELU_BWD_PW = process.env.FUSE_GELU_BWD_PW === "1";
+const FUSE_RESIDUAL_BWD_PW = process.env.FUSE_RESIDUAL_BWD_PW === "1";
 const TIMESTAMP = process.env.TIMESTAMP === "1";
 const PLAN_FILE =
   process.env.PLAN ?? (MODE === "forward" ? "plan.json" : "plan_train.json");
@@ -73,6 +74,7 @@ async function makePipeline(device: GPUDevice, spec: DispatchSpec): Promise<GPUC
 
 function groupLabel(label: string): string {
   if (label.startsWith("pw_bwd+gelu")) return "pw_bwd+gelu";
+  if (label.startsWith("pw_bwd+residual")) return "pw_bwd+residual";
   if (label.startsWith("pw_bwd")) return "pw_bwd";
   if (label.startsWith("pw+gelu")) return "pw+gelu";
   if (label.startsWith("pw ")) return "pw";
@@ -177,6 +179,7 @@ if (BATCH > 1) {
       stemSpatialBwd: STEM_SPATIAL_BWD,
       fusePointwiseGeluForward: FUSE_PW_GELU,
       fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
+      fuseResidualBwdIntoPw: FUSE_RESIDUAL_BWD_PW,
     });
     specs = out.specs;
     fwdCount = out.fwdCount;
@@ -186,7 +189,11 @@ if (BATCH > 1) {
   fwdCount = specs.length;
 } else {
   const fwd = planDispatches(plan);
-  const bwd = planBwdDispatches(plan, { stemSpatialBwd: STEM_SPATIAL_BWD });
+  const bwd = planBwdDispatches(plan, {
+    stemSpatialBwd: STEM_SPATIAL_BWD,
+    fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
+    fuseResidualBwdIntoPw: FUSE_RESIDUAL_BWD_PW,
+  });
   specs = [...fwd, ...bwd];
   fwdCount = fwd.length;
 }
@@ -232,7 +239,8 @@ if (!CSV) {
       `timing=${useTimestamps ? "gpu-timestamp" : "split-submit-wall"}` +
       (STEM_SPATIAL_BWD ? `, stemSpatialBwd=1` : "") +
       (FUSE_PW_GELU ? `, fusePointwiseGeluForward=1` : "") +
-      (FUSE_GELU_BWD_PW ? `, fuseGeluBwdIntoPw=1` : "")
+      (FUSE_GELU_BWD_PW ? `, fuseGeluBwdIntoPw=1` : "") +
+      (FUSE_RESIDUAL_BWD_PW ? `, fuseResidualBwdIntoPw=1` : "")
   );
 }
 

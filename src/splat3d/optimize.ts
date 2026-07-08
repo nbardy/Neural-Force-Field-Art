@@ -37,6 +37,7 @@ export interface Splat3DOptimizerConfig {
   stemSpatialBwd?: boolean;
   fusePointwiseGeluForward?: boolean;
   fuseGeluBwdIntoPw?: boolean;
+  fuseResidualBwdIntoPw?: boolean;
   singlePassBatchRasterForward?: boolean;
   viewLaneBatchRasterForward?: boolean;
   viewLaneBatchRasterBackward?: boolean;
@@ -127,6 +128,7 @@ export class Splat3DOptimizer {
             stemSpatialBwd: cfg.stemSpatialBwd ?? true,
             fusePointwiseGeluForward: cfg.fusePointwiseGeluForward ?? true,
             fuseGeluBwdIntoPw: cfg.fuseGeluBwdIntoPw ?? false,
+            fuseResidualBwdIntoPw: cfg.fuseResidualBwdIntoPw ?? false,
           })
         : null;
     raster.setParams(cfg.initParams ?? randomSplats3D(G, cfg.seed ?? 1, cfg.init));

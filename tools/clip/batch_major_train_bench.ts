@@ -6,6 +6,7 @@
  *
  *   BATCH=3 RUNS=3 WARMUP=3 bun tools/clip/batch_major_train_bench.ts
  *   BATCH=9 RUNS=2 WARMUP=2 bun tools/clip/batch_major_train_bench.ts
+ *   FUSE_RESIDUAL_BWD_PW=1 BATCH=3 RUNS=3 WARMUP=3 bun tools/clip/batch_major_train_bench.ts
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -24,6 +25,7 @@ const SHARED_W_FWD_STEPS = parseStepSet(process.env.SHARED_W_FWD_STEPS ?? "");
 const STEM_SPATIAL_BWD = process.env.STEM_SPATIAL_BWD === "1";
 const FUSE_PW_GELU = process.env.FUSE_PW_GELU === "1";
 const FUSE_GELU_BWD_PW = process.env.FUSE_GELU_BWD_PW === "1";
+const FUSE_RESIDUAL_BWD_PW = process.env.FUSE_RESIDUAL_BWD_PW === "1";
 
 function f32File(path: string): Float32Array {
   const b = readFileSync(path);
@@ -133,7 +135,8 @@ console.log(
     (SHARED_W_FWD_STEPS.size ? `, sharedWForwardSteps=${[...SHARED_W_FWD_STEPS].join(",")}` : "") +
     (STEM_SPATIAL_BWD ? `, stemSpatialBwd=1` : "") +
     (FUSE_PW_GELU ? `, fusePointwiseGeluForward=1` : "") +
-    (FUSE_GELU_BWD_PW ? `, fuseGeluBwdIntoPw=1` : "")
+    (FUSE_GELU_BWD_PW ? `, fuseGeluBwdIntoPw=1` : "") +
+    (FUSE_RESIDUAL_BWD_PW ? `, fuseResidualBwdIntoPw=1` : "")
 );
 
 let t0 = performance.now();
@@ -166,6 +169,7 @@ const batch = await BatchMajorVisionTrainer.create(device, plan, weights, BATCH,
   stemSpatialBwd: STEM_SPATIAL_BWD,
   fusePointwiseGeluForward: FUSE_PW_GELU,
   fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
+  fuseResidualBwdIntoPw: FUSE_RESIDUAL_BWD_PW,
 });
 console.log(`batch compile+allocate : ${(performance.now() - t0).toFixed(0)} ms`);
 

@@ -121,6 +121,7 @@ export interface TrainPlan extends VisionPlan {
 export interface BwdDispatchOptions {
   stemSpatialBwd?: boolean;
   fuseGeluBwdIntoPw?: boolean;
+  fuseResidualBwdIntoPw?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -200,6 +201,52 @@ ${pointwiseTiledMain({
     code,
     workgroups: [P4 / 8, pw.cout / 32, 1],
     buffers: [{ kind: "weights" }, gradSlot(gelu.dY), { kind: "slot", slot: gelu.pre }, gradSlot(pw.dX)],
+  };
+}
+
+function canFuseResidualBwdIntoPw(residual: ResidualBwdStep, pw: BwdStep | undefined): pw is PwBwdStep {
+  return !!pw &&
+    pw.kind === "pw_bwd" &&
+    residual.dY === pw.dY &&
+    residual.n === pw.cin * pw.outH * pw.outW &&
+    pw.cout >= pw.cin;
+}
+
+function pwBwdWithResidualCopy(residual: ResidualBwdStep, pw: PwBwdStep): DispatchSpec {
+  assertStep(
+    canFuseResidualBwdIntoPw(residual, pw),
+    `${residual.name}: cannot fuse residual copy into ${pw.name}`
+  );
+  const P = pw.outH * pw.outW;
+  assertPointwiseTiles(pw.name, pw.cin, pw.cout, P, pw.wOffT);
+  const P4 = P / 4;
+  const store = (j: number): string =>
+    pw.accumulate ? `dst[(co + ${j}u) * ${P4}u + p4] + acc${j}` : `acc${j}`;
+  const resStore = (j: number): string => {
+    const ch = `co + ${j}u`;
+    const ix = `(${ch}) * ${P4}u + p4`;
+    const val = residual.accumulate ? `resDst[${ix}] + src[${ix}]` : `src[${ix}]`;
+    return `if (${ch} < ${pw.cin}u) { resDst[${ix}] = ${val}; }`;
+  };
+  const code = /* wgsl */ `
+${weightsDecl(0)}
+@group(0) @binding(1) var<storage, read> src : array<vec4f>;            // dY [Cin][P4]
+@group(0) @binding(2) var<storage, read_write> dst : array<vec4f>;      // dX [Cout][P4]
+@group(0) @binding(3) var<storage, read_write> resDst : array<vec4f>;   // residual grad [Cin][P4]
+${PW_TILE_DECLS}
+${pointwiseTiledMain({
+    cin: pw.cin, cout: pw.cout, P4, wOff: pw.wOffT,
+    init: () => `vec4f(0.0)`,
+    store,
+    extraStore: resStore,
+  })}`;
+  return {
+    label:
+      `pw_bwd+residual ${pw.cin}->${pw.cout} @${pw.outH}x${pw.outW}` +
+      `${pw.accumulate ? " +=" : ""}${residual.accumulate ? " res+=" : ""}`,
+    code,
+    workgroups: [P4 / 8, pw.cout / 32, 1],
+    buffers: [{ kind: "weights" }, gradSlot(pw.dY), gradSlot(pw.dX), gradSlot(residual.dX)],
   };
 }
 
@@ -707,12 +754,19 @@ export function bwdStepDispatch(step: BwdStep, opts: BwdDispatchOptions = {}): D
 
 /** All backward dispatches (loss head + reverse step list), in execution order. */
 export function planBwdDispatches(plan: TrainPlan, opts: BwdDispatchOptions = {}): DispatchSpec[] {
-  if (!opts.fuseGeluBwdIntoPw) return plan.backward.map((step) => bwdStepDispatch(step, opts));
+  if (!opts.fuseGeluBwdIntoPw && !opts.fuseResidualBwdIntoPw) {
+    return plan.backward.map((step) => bwdStepDispatch(step, opts));
+  }
   const out: DispatchSpec[] = [];
   for (let i = 0; i < plan.backward.length; i++) {
     const step = plan.backward[i];
     const next = plan.backward[i + 1];
-    if (step.kind === "gelu_bwd" && canFuseGeluBwdIntoPw(step, next)) {
+    if (opts.fuseResidualBwdIntoPw && step.kind === "residual_bwd" && canFuseResidualBwdIntoPw(step, next)) {
+      out.push(pwBwdWithResidualCopy(step, next));
+      i += 1;
+      continue;
+    }
+    if (opts.fuseGeluBwdIntoPw && step.kind === "gelu_bwd" && canFuseGeluBwdIntoPw(step, next)) {
       out.push(pwBwdAfterGelu(step, next));
       i += 1;
       continue;

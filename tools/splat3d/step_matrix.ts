@@ -9,6 +9,7 @@
  *   TRIALS=3 CONFIGS=base=3:3,rasterpass=3:3:rasterpass bun tools/splat3d/step_matrix.ts
  *   TRIALS=3 CONFIGS=base=3:3,viewlane=3:3:viewlane bun tools/splat3d/step_matrix.ts
  *   TRIALS=3 CONFIGS=base=3:3,viewbwd=3:3:viewbwd bun tools/splat3d/step_matrix.ts
+ *   TRIALS=3 CONFIGS=base=3:3,resbwd=3:3:resbwd bun tools/splat3d/step_matrix.ts
  *   TRIALS=3 CONFIGS=base=3:3,cap1024=3:3:cap1024 bun tools/splat3d/step_matrix.ts
  *   TRIALS=3 CONFIGS=3:1,3:3,9:1,9:3,9:9 bun tools/splat3d/step_matrix.ts
  */
@@ -19,6 +20,7 @@ interface Config {
   views: number;
   clipBatch: number;
   fuseGeluBwdIntoPw: boolean;
+  fuseResidualBwdIntoPw: boolean;
   singlePassRasterForward: boolean | null;
   viewLaneRasterForward: boolean | null;
   viewLaneRasterBackward: boolean | null;
@@ -66,6 +68,7 @@ function parseConfigs(src: string): Config[] {
         throw new Error(`step_matrix: bad config '${part}', expected views:clipBatch`);
       }
       const fuseGeluBwdIntoPw = tokens.includes("gelubwd");
+      const fuseResidualBwdIntoPw = tokens.includes("resbwd");
       const singlePassRasterForward = tokens.includes("rasterpass")
         ? true
         : tokens.includes("norasterpass")
@@ -90,6 +93,7 @@ function parseConfigs(src: string): Config[] {
         views: views | 0,
         clipBatch: clipBatch | 0,
         fuseGeluBwdIntoPw,
+        fuseResidualBwdIntoPw,
         singlePassRasterForward,
         viewLaneRasterForward,
         viewLaneRasterBackward,
@@ -133,6 +137,7 @@ function runTrial(config: Config, trial: number): TrialResult {
     WARMUP: String(WARMUP),
     SEED: String(SEED),
     FUSE_GELU_BWD_PW: config.fuseGeluBwdIntoPw ? "1" : "0",
+    FUSE_RESIDUAL_BWD_PW: config.fuseResidualBwdIntoPw ? "1" : "0",
   };
   if (config.singlePassRasterForward !== null) {
     env.SINGLE_PASS_RASTER_FWD = config.singlePassRasterForward ? "1" : "0";
@@ -192,7 +197,7 @@ function fmt(n: number): string {
 const results: TrialResult[] = [];
 if (!JSON_OUT) {
   console.log(
-    `splat3d step matrix: configs=${CONFIGS.map((c) => `${c.label}=${c.views}:${c.clipBatch}${c.fuseGeluBwdIntoPw ? ":gelubwd" : ""}${c.singlePassRasterForward === true ? ":rasterpass" : ""}${c.singlePassRasterForward === false ? ":norasterpass" : ""}${c.viewLaneRasterForward === true ? ":viewlane" : ""}${c.viewLaneRasterForward === false ? ":noviewlane" : ""}${c.viewLaneRasterBackward === true ? ":viewbwd" : ""}${c.viewLaneRasterBackward === false ? ":noviewbwd" : ""}${c.cap !== null ? `:cap${c.cap}` : ""}`).join(",")} ` +
+    `splat3d step matrix: configs=${CONFIGS.map((c) => `${c.label}=${c.views}:${c.clipBatch}${c.fuseGeluBwdIntoPw ? ":gelubwd" : ""}${c.fuseResidualBwdIntoPw ? ":resbwd" : ""}${c.singlePassRasterForward === true ? ":rasterpass" : ""}${c.singlePassRasterForward === false ? ":norasterpass" : ""}${c.viewLaneRasterForward === true ? ":viewlane" : ""}${c.viewLaneRasterForward === false ? ":noviewlane" : ""}${c.viewLaneRasterBackward === true ? ":viewbwd" : ""}${c.viewLaneRasterBackward === false ? ":noviewbwd" : ""}${c.cap !== null ? `:cap${c.cap}` : ""}`).join(",")} ` +
       `trials=${TRIALS} runs=${RUNS} warmup=${WARMUP} seed=${SEED}${G ? ` G=${G}` : ""}`
   );
 }
@@ -205,6 +210,7 @@ for (let trial = 0; trial < TRIALS; trial++) {
     if (!JSON_OUT) {
       const flags = [
         config.fuseGeluBwdIntoPw ? "gelubwd=1" : "",
+        config.fuseResidualBwdIntoPw ? "resbwd=1" : "",
         config.singlePassRasterForward === true ? "rasterpass=1" : "",
         config.singlePassRasterForward === false ? "rasterpass=0" : "",
         config.viewLaneRasterForward === true ? "viewlane=1" : "",
@@ -228,7 +234,7 @@ if (JSON_OUT) {
   console.log(JSON.stringify({ trials: TRIALS, runs: RUNS, warmup: WARMUP, seed: SEED, results }, null, 2));
 } else {
   console.log("\nSummary:");
-  console.log("config           views batch   cap gbwd rpass vlane  vbwd  normal med [min,max]     profile med     clip med   raster med");
+  console.log("config           views batch   cap gbwd rbwd rpass vlane  vbwd  normal med [min,max]     profile med     clip med   raster med");
   for (const config of CONFIGS) {
     const rows = results.filter((r) => r.label === config.label);
     const normal = rows.map((r) => r.normal);
@@ -239,6 +245,7 @@ if (JSON_OUT) {
       `${config.label.padEnd(16).slice(0, 16)} ${String(config.views).padStart(5)} ${String(config.clipBatch).padStart(5)} ` +
         `${String(config.cap ?? "def").padStart(5)} ` +
         `${(config.fuseGeluBwdIntoPw ? "yes" : "no").padStart(4)} ` +
+        `${(config.fuseResidualBwdIntoPw ? "yes" : "no").padStart(4)} ` +
         `${(config.singlePassRasterForward === null ? "def" : config.singlePassRasterForward ? "yes" : "no").padStart(5)} ` +
         `${(config.viewLaneRasterForward === null ? "def" : config.viewLaneRasterForward ? "yes" : "no").padStart(5)} ` +
         `${(config.viewLaneRasterBackward === null ? "def" : config.viewLaneRasterBackward ? "yes" : "no").padStart(5)} ` +

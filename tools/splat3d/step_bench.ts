@@ -10,6 +10,7 @@
  *   STEM_SPATIAL_BWD=0 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   FUSE_PW_GELU=0 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   FUSE_GELU_BWD_PW=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
+ *   FUSE_RESIDUAL_BWD_PW=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   SINGLE_PASS_RASTER_FWD=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   VIEW_LANE_RASTER_FWD=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   VIEW_LANE_RASTER_BWD=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
@@ -36,6 +37,7 @@ const CAP = Number(process.env.CAP ?? 2048);
 const STEM_SPATIAL_BWD = process.env.STEM_SPATIAL_BWD !== "0";
 const FUSE_PW_GELU = process.env.FUSE_PW_GELU !== "0";
 const FUSE_GELU_BWD_PW = process.env.FUSE_GELU_BWD_PW === "1";
+const FUSE_RESIDUAL_BWD_PW = process.env.FUSE_RESIDUAL_BWD_PW === "1";
 const SINGLE_PASS_RASTER_FWD = process.env.SINGLE_PASS_RASTER_FWD === "1";
 const VIEW_LANE_RASTER_FWD = process.env.VIEW_LANE_RASTER_FWD === "1";
 const VIEW_LANE_RASTER_BWD = process.env.VIEW_LANE_RASTER_BWD === "1";
@@ -91,6 +93,7 @@ const opt = await Splat3DOptimizer.create(device, plan, weights, {
   stemSpatialBwd: STEM_SPATIAL_BWD,
   fusePointwiseGeluForward: FUSE_PW_GELU,
   fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
+  fuseResidualBwdIntoPw: FUSE_RESIDUAL_BWD_PW,
   singlePassBatchRasterForward: SINGLE_PASS_RASTER_FWD,
   viewLaneBatchRasterForward: VIEW_LANE_RASTER_FWD,
   viewLaneBatchRasterBackward: VIEW_LANE_RASTER_BWD,
@@ -101,6 +104,7 @@ console.log(
     `stemSpatialBwd=${STEM_SPATIAL_BWD ? 1 : 0}, ` +
     `fusePointwiseGeluForward=${FUSE_PW_GELU ? 1 : 0}, ` +
     `fuseGeluBwdIntoPw=${FUSE_GELU_BWD_PW ? 1 : 0}, ` +
+    `fuseResidualBwdIntoPw=${FUSE_RESIDUAL_BWD_PW ? 1 : 0}, ` +
     `singlePassBatchRasterForward=${SINGLE_PASS_RASTER_FWD ? 1 : 0}, ` +
     `viewLaneBatchRasterForward=${VIEW_LANE_RASTER_FWD ? 1 : 0}, ` +
     `viewLaneBatchRasterBackward=${VIEW_LANE_RASTER_BWD ? 1 : 0}, ` +
