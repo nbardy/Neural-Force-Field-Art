@@ -14,9 +14,9 @@ The learnings are recorded in `agent_notes/optimization_session/`, especially:
 - `agent_grid_clip_strategy.md`
 
 What is still missing is a real GPU-counter capture. We have WebGPU timestamp
-profiles and wall-time benches, but we have not yet used Metal shader counters
-for memory bandwidth, occupancy, register pressure, cache behavior, or
-threadgroup-memory pressure.
+profiles, wall-time benches, and a Chrome/Dawn trace workflow, but we have not
+yet used Metal shader counters for memory bandwidth, occupancy, register
+pressure, cache behavior, or threadgroup-memory pressure.
 
 The code-level experiment trail is now in `experiments/clip_forks/`. Important
 current outcomes:
@@ -34,6 +34,15 @@ current outcomes:
 - `v11_backward_local_fusions`: re-testing both existing legal backward local
   fusions on the grid80+depthwise stack passed correctness and improved the
   focused integrated median `56.20 ms -> 54.63 ms`.
+- `v12_chrome_dawn_trace`: added `tools/webgpu_trace.mjs` and captured a real
+  browser trace for `grid9_close2` / direct grid raster. This shows Dawn/WebGPU
+  command traffic and queue behavior, but not shader counters.
+- `v13_cached_clip_gradient`: naive cached `dL/dimage` cadence gave a real
+  wall-clock step-rate win (`cache2`/`cache4`), up to `2.37x` in exact-cycle
+  timing.
+- `v14_cadence_quality_gate`: fixed-wall-clock full-teacher score rejected the
+  naive cached cadence. In the 5s gate, base reached mean cosine `0.09336`,
+  while `cache2` reached `0.04363` and `cache4` reached `0.02805`.
 
 ## Tooling Reality
 
@@ -57,7 +66,7 @@ So the honest status is:
 - WebGPU timestamp profiling: yes, used.
 - Integrated split-submit wall profiling: yes, used.
 - CLIP dispatch ranking: yes, used.
-- Browser/Chrome trace: planned, not yet used.
+- Browser/Chrome trace: yes, used through `tools/webgpu_trace.mjs`.
 - Metal GPU shader counters: not yet available through the current selected
   developer toolchain.
 
@@ -189,13 +198,26 @@ Chrome trace will not give per-shader bandwidth/occupancy counters, but it can
 show queue gaps, command-buffer behavior, browser scheduling, and compilation
 events.
 
+Status update: `tools/webgpu_trace.mjs` now captures this Chrome trace
+reproducibly. A successful local probe produced:
+
+```text
+/tmp/nffa_trace_probe4/webgpu_trace_2026-07-08T12-39-16-079Z.json
+/tmp/nffa_trace_probe4/webgpu_trace_2026-07-08T12-39-16-079Z.png
+```
+
+Mode: `grid9_close2`, direct grid raster, `views=9`, `clipBatch=3`, steps
+`2 -> 35`, `40,331` events.
+
 ## Decision
 
 Keep chasing two tracks:
 
 - Productive schedule wins: N-of-K random/epoch views, grid/contact-sheet CLIP,
   and lower-frequency all-view refreshes. This is the only near-term path with
-  realistic 2x+ wall-time potential without changing the CLIP model.
+  realistic 2x+ wall-time potential without changing the CLIP model. The first
+  naive cached-gradient cadence failed the quality gate, so future cadence work
+  needs a smarter schedule rather than promotion as-is.
 - Narrow shader forks: pointwise backward/forward tiling, conv/depthwise
   spatial variants, and selective precision. The `depthwise4` result shows
   there is real shader headroom, but the size of the win argues for stacked

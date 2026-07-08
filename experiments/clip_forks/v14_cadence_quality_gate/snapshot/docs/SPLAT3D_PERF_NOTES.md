@@ -396,35 +396,6 @@ that preserves full-resolution selected CLIP views, but it is a proxy schedule,
 not an equivalent loss. Promotion requires a fixed-wall-clock quality gate
 using full-teacher scores and all nine camera screenshots.
 
-## Cached CLIP Quality Gate
-
-`tools/splat3d/cadence_quality.ts` runs the missing fixed-budget gate for
-`CLIP_REFRESH_INTERVAL`. It starts each config from the same deterministic splat
-initialization, optimizes for the same wall-clock budget, then evaluates all 9
-views with the full frozen CLIP image tower and writes a 3x3 PNG contact sheet.
-
-```bash
-BUDGET_MS=5000 CONFIGS=base=1,cache2=2,cache4=4 bun tools/splat3d/cadence_quality.ts
-```
-
-Result on Apple `metal-3`, `G=4096`, `views=3`, `clipBatch=3`, f32 weights:
-
-| Variant | Refresh Interval | Steps / 5s | Steps / Sec | Mean Full-Teacher Cos | Min Cos | Max Cos |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `base` | 1 | 88 | 17.59 | 0.09336 | 0.04962 | 0.15112 |
-| `cache2` | 2 | 147 | 29.33 | 0.04363 | 0.01030 | 0.07999 |
-| `cache4` | 4 | 221 | 44.11 | 0.02805 | -0.01557 | 0.07909 |
-
-Artifacts are saved under
-`experiments/clip_forks/v14_cadence_quality_gate/results/2026-07-08/`.
-
-Decision: do not promote naive cached gradients. The wall-clock step-rate win
-is real, but the first full-teacher quality gate regressed. `cache4` ran `2.51x`
-as many optimizer steps as base but reached only about `30%` of base's mean
-teacher cosine. This path needs a smarter schedule, likely lower cached-step
-learning rates, different cached-step objectives, or periodic full 9-view
-teacher refreshes.
-
 ## Prompt Encoding Cache
 
 The 3D page now caches text embeddings by exact expanded prompt. In `same text`

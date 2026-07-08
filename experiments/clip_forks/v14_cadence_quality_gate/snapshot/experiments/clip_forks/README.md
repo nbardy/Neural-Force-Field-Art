@@ -30,7 +30,6 @@ node experiments/clip_forks/diff_fork.mjs v10_shared_w_pointwise_forward
 node experiments/clip_forks/diff_fork.mjs v11_backward_local_fusions
 node experiments/clip_forks/diff_fork.mjs v12_chrome_dawn_trace
 node experiments/clip_forks/diff_fork.mjs v13_cached_clip_gradient
-node experiments/clip_forks/diff_fork.mjs v14_cadence_quality_gate
 ```
 
 ## Standard Gate
@@ -72,8 +71,6 @@ Use the gate-specific env vars in addition to the commands above.
   browser Dawn/WebGPU scheduling evidence.
 - `v13_cached_clip_gradient`: benchmark-only CLIP cadence gate that reuses
   cached full-resolution `dL/dimage` on skipped steps.
-- `v14_cadence_quality_gate`: fixed-wall-clock full-teacher quality probe for
-  cached CLIP gradient cadence.
 
 ## Snapshot Coverage
 
@@ -98,8 +95,6 @@ Use the gate-specific env vars in addition to the commands above.
   perf-note context.
 - `v13_cached_clip_gradient`: 3D optimizer schedule, 3D step bench/matrix, and
   perf-note context.
-- `v14_cadence_quality_gate`: cadence quality harness, 3D optimizer context,
-  3D step bench/matrix, and perf-note context.
 
 ## Related Notes
 
@@ -113,4 +108,3 @@ Use the gate-specific env vars in addition to the commands above.
 - `agent_notes/optimization_session/agent_grid_clip_strategy.md`
 - `agent_notes/optimization_session/agent_gpu_profiler_plan.md`
 - `agent_notes/optimization_session/clip_2x_4x_trace_status.md`
-- `agent_notes/optimization_session/current_strategy_reflection_v14_2026_07_08.md`

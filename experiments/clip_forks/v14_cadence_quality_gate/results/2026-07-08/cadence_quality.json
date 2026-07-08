@@ -1,0 +1,97 @@
+{
+  "date": "2026-07-08T12:58:39.135Z",
+  "adapter": {
+    "nextInChain": 0,
+    "vendor": "apple",
+    "architecture": "metal-3",
+    "device": "apple-m4",
+    "description": "Metal driver on macOS Version 15.5 (Build 24F74)",
+    "backendType": 5,
+    "adapterType": 2,
+    "vendorID": 4203,
+    "deviceID": 0,
+    "subgroupMinSize": 4,
+    "subgroupMaxSize": 64,
+    "isFallbackAdapter": false
+  },
+  "config": {
+    "G": 4096,
+    "cap": 2048,
+    "seed": 1,
+    "views": 3,
+    "clipBatch": 3,
+    "viewSampler": "epoch",
+    "clipPrecision": "f32",
+    "weightsFile": "weights_train.bin",
+    "budgetMs": 5000,
+    "runSteps": null
+  },
+  "results": [
+    {
+      "label": "base",
+      "clipRefreshInterval": 1,
+      "steps": 88,
+      "trainMs": 5002.8432920000005,
+      "stepsPerSecond": 17.58999730027922,
+      "meanCos": 0.09335913059173169,
+      "minCos": 0.04962256915954786,
+      "maxCos": 0.151122805018667,
+      "viewCos": [
+        0.09422936892893433,
+        0.09571377423501425,
+        0.04962256915954786,
+        0.08042633286436444,
+        0.0742541561929953,
+        0.1077742652796294,
+        0.151122805018667,
+        0.0784425324551077,
+        0.10864637119132507
+      ],
+      "sheetPath": "/tmp/nffa_cadence_quality/base_views.png"
+    },
+    {
+      "label": "cache2",
+      "clipRefreshInterval": 2,
+      "steps": 147,
+      "trainMs": 5012.350124999999,
+      "stepsPerSecond": 29.32756019313396,
+      "meanCos": 0.043628350337213545,
+      "minCos": 0.01030303369560951,
+      "maxCos": 0.07999291615973447,
+      "viewCos": [
+        0.07999291615973447,
+        0.019947485535978044,
+        0.021376214960520654,
+        0.0641075302649451,
+        0.03062022910767387,
+        0.0443256028958519,
+        0.07890098757380484,
+        0.04308115284080349,
+        0.01030303369560951
+      ],
+      "sheetPath": "/tmp/nffa_cadence_quality/cache2_views.png"
+    },
+    {
+      "label": "cache4",
+      "clipRefreshInterval": 4,
+      "steps": 221,
+      "trainMs": 5010.537541999998,
+      "stepsPerSecond": 44.10704403419877,
+      "meanCos": 0.02804777015285599,
+      "minCos": -0.015567259506541767,
+      "maxCos": 0.07909259981891192,
+      "viewCos": [
+        0.07909259981891192,
+        0.03775701199162691,
+        0.03414093171229251,
+        0.07116794398704632,
+        -0.005502544642539769,
+        -0.005079046210692813,
+        0.05471403247093045,
+        -0.015567259506541767,
+        0.0017062617546701592
+      ],
+      "sheetPath": "/tmp/nffa_cadence_quality/cache4_views.png"
+    }
+  ]
+}
