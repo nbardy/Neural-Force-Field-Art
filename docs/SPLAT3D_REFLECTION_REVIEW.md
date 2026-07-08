@@ -80,6 +80,26 @@ Read: `grid80` reached `93.7%` of the final mean cosine and `88.1%` of the
 mean-cosine improvement versus `base3` in the same 5s budget. That is behind,
 but close enough to keep as a serious lane.
 
+## Convergence State
+
+The speed ladder is not the whole story. The paper trail points to a separate
+convergence track: better incentives per step, not just more steps per second.
+
+See `docs/SPLAT3D_CONVERGENCE_PLAN.md` for the ranked convergence lanes. The
+short version:
+
+1. Dream Fields-style dark random backgrounds plus opacity/transmittance control
+   are the most direct fix for fog, transparent holes, and background cheating.
+2. Bounds, centering, and slightly zoomed-out framing should stop CLIP from
+   painting the whole frame instead of forming an object at the origin.
+3. Prompt policy should probably be one shared base prompt plus coarse direction
+   words, not nine fully bespoke prompts.
+4. Mip-Splatting-style scale/frequency control should reduce tiny high-frequency
+   splat artifacts that CLIP may over-reward.
+5. Surface-biased splats are a staged geometry upgrade: coarse 3DGS first,
+   anisotropic/flattened surfels later, normal/depth consistency after an object
+   exists.
+
 ## Low-Precision State
 
 Low precision is not promoted.
@@ -171,6 +191,8 @@ answer. Future mixed precision should be narrower and gradient-gated.
 
 ### 6. Convergence And Regularization
 
+- Use `docs/SPLAT3D_CONVERGENCE_PLAN.md` as the main queue for paper-derived
+  convergence work.
 - Add object-centering and zoom-out priors before exotic kernels if screenshots
   still show fog/fill-frame hacks.
 - Test opacity/transmittance pressure to reduce background leakage.

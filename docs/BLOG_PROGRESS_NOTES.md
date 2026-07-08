@@ -47,6 +47,10 @@ forward-looking direction map. The blog should separate the product-level
 - `grid80 + 2 full` uses the same three CLIP images per step, costs about `8.6%`
   more than current `3/9`, and keeps pressure on all nine views.
 
+See `docs/SPLAT3D_CONVERGENCE_PLAN.md` for the separate paper-driven convergence
+story: background/opacity regularization, centering, prompt/view curriculum,
+anti-aliasing, and staged surface-biased splats.
+
 ## Next Plan Notes
 
 - Do not start broad ablations yet.
