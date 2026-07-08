@@ -31,6 +31,9 @@ current outcomes:
   horizontal pixels at a time passed correctness and improved integrated 3D
   step median `53.12 ms -> 49.96 ms`, but it is still gated because the
   isolated timestamp profile was mixed.
+- `v11_backward_local_fusions`: re-testing both existing legal backward local
+  fusions on the grid80+depthwise stack passed correctness and improved the
+  focused integrated median `56.20 ms -> 54.63 ms`.
 
 ## Tooling Reality
 
@@ -99,6 +102,28 @@ Interpretation:
 - Grid9+2 is faster than full `9/9` per-view wall time in this short run, but
   it increases raster work and should be treated as a schedule/signal ablation,
   not a pure CLIP-kernel speedup.
+
+## Local Fusion Refresh
+
+Fresh timestamp and integrated gates re-tested the existing backward local
+fusions on top of the current grid80+depthwise stack:
+
+```bash
+SPATIAL_BWD_VARIANT=depthwise4 FUSE_GELU_BWD_PW=1 FUSE_RESIDUAL_BWD_PW=1 bun tools/clip/bwd_test.ts
+TIMESTAMP=1 STEM_SPATIAL_BWD=1 SPATIAL_BWD_VARIANT=depthwise4 FUSE_PW_GELU=1 FUSE_GELU_BWD_PW=1 FUSE_RESIDUAL_BWD_PW=1 MODE=train BATCH=3 RUNS=3 WARMUP=2 bun tools/clip/dispatch_profile.ts
+TRIALS=7 CONFIGS=grid80dw4=9:3:grid9:directgrid:dw4,grid80dw4both=9:3:grid9:directgrid:dw4:gelubwd:resbwd RUNS=7 WARMUP=5 bun tools/splat3d/step_matrix.ts
+```
+
+Result:
+
+- Correctness: all backward per-kernel and directional derivative gates passed.
+- CLIP timestamp dispatches: `257 -> 211`.
+- Isolated timestamp sum: `86.704 ms -> 54.591 ms`.
+- Integrated focused median: `56.20 ms -> 54.63 ms`.
+
+Interpretation: local fusion is real but small in the full optimizer. It is
+evidence that dispatch/materialization overhead matters, not evidence that a
+single shader tweak gives the desired 2-4x.
 
 ## Is There A Real 2-4x CLIP Path?
 

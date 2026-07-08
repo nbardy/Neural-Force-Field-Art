@@ -27,7 +27,6 @@ node experiments/clip_forks/diff_fork.mjs v07_spatial_bwd_depthwise4
 node experiments/clip_forks/diff_fork.mjs v08_grid_contact_sheet_prompt
 node experiments/clip_forks/diff_fork.mjs v09_direct_grid_raster
 node experiments/clip_forks/diff_fork.mjs v10_shared_w_pointwise_forward
-node experiments/clip_forks/diff_fork.mjs v11_backward_local_fusions
 ```
 
 ## Standard Gate
@@ -63,8 +62,6 @@ Use the gate-specific env vars in addition to the commands above.
   of full `256x256` scratch, while sharing splat params and gradients.
 - `v10_shared_w_pointwise_forward`: env-gated shared-weight batch pointwise
   forward allowlist; recorded as no-promote after integrated timing.
-- `v11_backward_local_fusions`: refresh of the existing GELU/residual backward
-  pointwise fusion gates on the current grid80+depthwise stack.
 
 ## Snapshot Coverage
 
@@ -83,8 +80,6 @@ Use the gate-specific env vars in addition to the commands above.
   controls, and grid/step benchmarks.
 - `v10_shared_w_pointwise_forward`: batch pointwise emitters, 3D optimizer
   wiring, CLIP train matrix, and 3D step matrix.
-- `v11_backward_local_fusions`: CLIP backward emitters, 3D optimizer wiring,
-  backward correctness tests, dispatch profiler, and 3D step matrix.
 
 ## Related Notes
 

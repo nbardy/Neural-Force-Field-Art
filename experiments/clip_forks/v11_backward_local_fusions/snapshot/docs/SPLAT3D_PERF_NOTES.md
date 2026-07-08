@@ -290,35 +290,6 @@ Decision: keep it as a diagnostic env gate, but do not enable it by default.
 The next pointwise attempt should target the base tile shape or backward
 pointwise, not shared-W forward.
 
-## Backward Local Fusion Refresh
-
-The older single `FUSE_GELU_BWD_PW=1` gate did not clear the integrated
-promotion bar on the then-current stack. Re-testing both legal backward fusions
-together on the newer grid contact-sheet stack changed the read:
-
-```bash
-TRIALS=7 CONFIGS=grid80dw4=9:3:grid9:directgrid:dw4,grid80dw4both=9:3:grid9:directgrid:dw4:gelubwd:resbwd RUNS=7 WARMUP=5 bun tools/splat3d/step_matrix.ts
-```
-
-| Variant | Normal Median | Profile Median | CLIP Median | Raster Median |
-| --- | ---: | ---: | ---: | ---: |
-| `grid80 + depthwise4` | `56.20 ms` | `58.33 ms` | `36.41 ms` | `19.51 ms` |
-| `grid80 + depthwise4 + GELU/residual bwd fusions` | `54.63 ms` | `56.81 ms` | `34.91 ms` | `19.29 ms` |
-
-Correctness:
-
-```bash
-SPATIAL_BWD_VARIANT=depthwise4 FUSE_GELU_BWD_PW=1 FUSE_RESIDUAL_BWD_PW=1 bun tools/clip/bwd_test.ts
-```
-
-`bwd_test` passed all per-kernel references and the end-to-end directional
-derivative gate. The isolated timestamp profile also showed dispatch count
-falling from `257` to `211`, but the integrated gain is the number to trust.
-
-Decision: this is a real small CLIP win on the current best stack. Keep it
-gated until the interactive default path is chosen; do not mistake it for the
-2-4x structural speedup.
-
 ## Prompt Encoding Cache
 
 The 3D page now caches text embeddings by exact expanded prompt. In `same text`
