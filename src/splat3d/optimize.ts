@@ -3,6 +3,7 @@ import { VisionTrainer, type TrainPlan } from "../clip/vision";
 import { BatchMajorVisionTrainer } from "../clip/vision_batch";
 import { type AdamHyper, DEFAULT_HYPER } from "../splat/adam_wgsl";
 import { DEFAULT_3D_CAMERAS, type Camera3D, type PreparedCamera3D, prepareCamera } from "./cameras";
+import { Grid9Close2ClipLayout } from "./grid_clip";
 import {
   Raster3DEngine,
   type AdamLRs3D,
@@ -34,6 +35,7 @@ export interface Splat3DOptimizerConfig {
   lrs?: AdamLRs3D;
   hyper?: AdamHyper;
   clipBatchSize?: number;
+  clipLayout?: Splat3DClipLayout;
   stemSpatialBwd?: boolean;
   fusePointwiseGeluForward?: boolean;
   fuseGeluBwdIntoPw?: boolean;
@@ -44,6 +46,7 @@ export interface Splat3DOptimizerConfig {
 }
 
 export type Splat3DClipMode = "single" | "batch";
+export type Splat3DClipLayout = "per_view" | "grid9_close2";
 export type Splat3DStepTimingMode = "split-submit-wall" | "gpu-timestamp";
 
 export interface Splat3DProfileOptions {
@@ -82,11 +85,14 @@ export class Splat3DOptimizer {
   readonly raster: Raster3DEngine;
   readonly trainer: VisionTrainer;
   readonly batchTrainer: BatchMajorVisionTrainer | null;
+  readonly gridClip: Grid9Close2ClipLayout | null;
   readonly cameras: PreparedCamera3D[];
   readonly side = SIDE;
   readonly clipBatchSize: number;
+  readonly clipLayout: Splat3DClipLayout;
   readonly batchRasterForward: Raster3DBatchForwardState | null;
   private readonly textBuffers: GPUBuffer[];
+  private readonly gridTextBuffer: GPUBuffer | null;
   private readonly singleIO: Raster3DIOState;
   private readonly batchIO: Raster3DIOState[];
   private readonly lrs: AdamLRs3D;
@@ -119,9 +125,10 @@ export class Splat3DOptimizer {
       cap: cfg.cap ?? 2048,
       bg: cfg.bg ?? [0, 0, 0],
       cameras,
-    });
+	    });
     const trainer = await VisionTrainer.create(device, trainPlan, weights);
     const clipBatchSize = normalizeClipBatchSize(cfg.clipBatchSize);
+    const clipLayout = cfg.clipLayout ?? "per_view";
     const batchTrainer =
       clipBatchSize > 1
         ? await BatchMajorVisionTrainer.create(device, trainPlan, weights, clipBatchSize, {
@@ -131,6 +138,12 @@ export class Splat3DOptimizer {
             fuseResidualBwdIntoPw: cfg.fuseResidualBwdIntoPw ?? false,
           })
         : null;
+    if (clipLayout === "grid9_close2" && !batchTrainer) {
+      throw new Error("splat3d: CLIP_LAYOUT=grid9_close2 needs CLIP_BATCH=3");
+    }
+    if (clipLayout === "grid9_close2" && cameras.length < 9) {
+      throw new Error(`splat3d: CLIP_LAYOUT=grid9_close2 needs at least 9 cameras, got ${cameras.length}`);
+    }
     raster.setParams(cfg.initParams ?? randomSplats3D(G, cfg.seed ?? 1, cfg.init));
     raster.zeroAdamState();
     const batchRasterForward =
@@ -147,7 +160,11 @@ export class Splat3DOptimizer {
             ),
           })
         : null;
-    return new Splat3DOptimizer(device, raster, trainer, batchTrainer, batchRasterForward, cameras, cfg);
+    const gridClip =
+      clipLayout === "grid9_close2" && batchTrainer
+        ? await Grid9Close2ClipLayout.create(device, raster, batchTrainer)
+        : null;
+    return new Splat3DOptimizer(device, raster, trainer, batchTrainer, gridClip, batchRasterForward, cameras, cfg);
   }
 
   private constructor(
@@ -155,6 +172,7 @@ export class Splat3DOptimizer {
     raster: Raster3DEngine,
     trainer: VisionTrainer,
     batchTrainer: BatchMajorVisionTrainer | null,
+    gridClip: Grid9Close2ClipLayout | null,
     batchRasterForward: Raster3DBatchForwardState | null,
     cameras: PreparedCamera3D[],
     cfg: Splat3DOptimizerConfig
@@ -163,9 +181,11 @@ export class Splat3DOptimizer {
     this.raster = raster;
     this.trainer = trainer;
     this.batchTrainer = batchTrainer;
+    this.gridClip = gridClip;
     this.batchRasterForward = batchRasterForward;
     this.cameras = cameras;
     this.clipBatchSize = batchTrainer?.batch ?? 1;
+    this.clipLayout = cfg.clipLayout ?? "per_view";
     this.lrs = cfg.lrs ?? DEFAULT_3D_LRS;
     this.hyper = cfg.hyper ?? DEFAULT_HYPER;
     this.singlePassBatchRasterForward = cfg.singlePassBatchRasterForward ?? false;
@@ -179,6 +199,13 @@ export class Splat3DOptimizer {
         usage: U.COPY_SRC | U.COPY_DST,
       })
     );
+    this.gridTextBuffer = gridClip
+      ? device.createBuffer({
+          label: "splat3d-grid9-text",
+          size: trainer.plan.textDim * 4,
+          usage: U.COPY_SRC | U.COPY_DST,
+        })
+      : null;
     this.singleIO = raster.createIOState(trainer.inputBuffer, 0, trainer.inputGradBuffer, 0);
     this.batchIO =
       batchRasterForward?.ios ??
@@ -205,7 +232,18 @@ export class Splat3DOptimizer {
       }
       this.device.queue.writeBuffer(this.textBuffers[i], 0, embeds[i] as unknown as BufferSource);
     }
+    if (this.gridTextBuffer) {
+      this.device.queue.writeBuffer(this.gridTextBuffer, 0, embeds[0] as unknown as BufferSource);
+    }
     this.hasPrompts = true;
+  }
+
+  setGridPrompt(embed: Float32Array): void {
+    if (!this.gridTextBuffer) return;
+    if (embed.length !== this.trainer.plan.textDim) {
+      throw new Error(`splat3d: grid text ${embed.length} != ${this.trainer.plan.textDim}`);
+    }
+    this.device.queue.writeBuffer(this.gridTextBuffer, 0, embed as unknown as BufferSource);
   }
 
   step(displayView = 0, viewsPerStep = this.cameras.length): void {
@@ -253,7 +291,18 @@ export class Splat3DOptimizer {
         this.raster.recordClearRawGrad(enc, ts);
       }, timer);
 
-      if (this.useBatchFor(views)) {
+      if (this.useGridLayoutFor(views)) {
+        const batch = this.batchTrainer!;
+        const gridViews = views.slice(0, 9);
+        const closeups = this.grid9CloseupViews(gridViews);
+        timings.rasterFwd += await this.profileGrid9Close2Inputs(gridViews, closeups, timer);
+        timings.clipBatch += await this.submitTimed((enc, ts) => {
+          batch.encode(enc, { backward: true, timestampWrites: ts });
+        }, timer);
+        const bwd = await this.profileGrid9Close2Backward(gridViews, closeups, timer);
+        timings.rasterReplay += bwd.replay;
+        timings.rasterBwd += bwd.backward;
+      } else if (this.useBatchFor(views)) {
         const batch = this.batchTrainer!;
         for (let start = 0; start < views.length; start += batch.batch) {
           const chunk = views.slice(start, start + batch.batch);
@@ -334,6 +383,8 @@ export class Splat3DOptimizer {
     this.raster.destroy();
     this.trainer.destroy();
     this.batchTrainer?.destroy();
+    this.gridClip?.destroy();
+    this.gridTextBuffer?.destroy();
     for (const b of this.textBuffers) {
       try {
         b.destroy();
@@ -345,7 +396,31 @@ export class Splat3DOptimizer {
     return !!this.batchTrainer && views.length >= this.batchTrainer.batch;
   }
 
+  private useGridLayoutFor(views: number[]): boolean {
+    if (this.clipLayout !== "grid9_close2") return false;
+    if (!this.batchTrainer || !this.gridClip || !this.gridTextBuffer) {
+      throw new Error("splat3d: grid9_close2 layout was not initialized");
+    }
+    if (views.length < 9) {
+      throw new Error(`splat3d: grid9_close2 needs VIEWS=9, got ${views.length}`);
+    }
+    if (this.batchTrainer.batch < 3) {
+      throw new Error(`splat3d: grid9_close2 needs CLIP_BATCH=3, got ${this.batchTrainer.batch}`);
+    }
+    return true;
+  }
+
+  private grid9CloseupViews(gridViews: number[]): [number, number] {
+    const n = gridViews.length;
+    const a = this.step_ % n;
+    return [gridViews[a], gridViews[(a + 4) % n]];
+  }
+
   private recordTrainingViews(enc: GPUCommandEncoder, views: number[]): void {
+    if (this.useGridLayoutFor(views)) {
+      this.recordGrid9Close2Training(enc, views.slice(0, 9));
+      return;
+    }
     if (!this.useBatchFor(views)) {
       for (const v of views) this.recordSingleTrainingView(enc, v);
       return;
@@ -368,6 +443,54 @@ export class Splat3DOptimizer {
         const io = this.batchIO[lane];
         this.raster.recordBackwardAdd(enc, view, io);
       }
+    }
+  }
+
+  private recordGrid9Close2Training(enc: GPUCommandEncoder, gridViews: number[]): void {
+    const batch = this.batchTrainer!;
+    const closeups = this.grid9CloseupViews(gridViews);
+    this.recordGrid9Close2Inputs(enc, gridViews, closeups);
+    batch.encode(enc, { backward: true });
+    this.recordGrid9Close2Backward(enc, gridViews, closeups);
+  }
+
+  private recordGrid9Close2Inputs(enc: GPUCommandEncoder, gridViews: number[], closeups: [number, number]): void {
+    const batch = this.batchTrainer!;
+    const grid = this.gridClip!;
+    this.recordGrid9Close2TextCopies(enc, closeups);
+    grid.clearGridImage(enc);
+    for (let cell = 0; cell < 9; cell++) {
+      this.raster.recordForward(enc, gridViews[cell], grid.scratchIO);
+      grid.recordCopyCell(enc, cell);
+    }
+    for (let lane = 0; lane < 2; lane++) {
+      this.raster.recordForward(enc, closeups[lane], this.batchIO[lane + 1]);
+    }
+    // The batch variable is intentionally touched here so future edits keep the
+    // lane contract visible: lane 0 grid, lanes 1-2 close-ups.
+    if (batch.batch < 3) throw new Error("splat3d: grid9_close2 lost its CLIP batch");
+  }
+
+  private recordGrid9Close2Backward(enc: GPUCommandEncoder, gridViews: number[], closeups: [number, number]): void {
+    const grid = this.gridClip!;
+    for (let cell = 0; cell < 9; cell++) {
+      grid.clearScratchGrad(enc);
+      grid.recordScatterCell(enc, cell);
+      this.raster.recordForward(enc, gridViews[cell], grid.scratchIO);
+      this.raster.recordBackwardAdd(enc, gridViews[cell], grid.scratchIO);
+    }
+    for (let lane = 0; lane < 2; lane++) {
+      this.raster.recordBackwardAdd(enc, closeups[lane], this.batchIO[lane + 1]);
+    }
+  }
+
+  private recordGrid9Close2TextCopies(enc: GPUCommandEncoder, closeups: [number, number]): void {
+    const batch = this.batchTrainer!;
+    const bytes = batch.plan.textDim * 4;
+    enc.copyBufferToBuffer(this.gridTextBuffer!, 0, batch.textBuffer, batch.textOffsetBytes(0), bytes);
+    for (let lane = 0; lane < 2; lane++) {
+      const view = closeups[lane];
+      enc.copyBufferToBuffer(this.textBuffers[view], 0, batch.textBuffer, batch.textOffsetBytes(lane + 1), bytes);
     }
   }
 
@@ -419,6 +542,72 @@ export class Splat3DOptimizer {
       }, timer);
     }
     return ms;
+  }
+
+  private async profileGrid9Close2Inputs(
+    gridViews: number[],
+    closeups: [number, number],
+    timer: GpuPassTimer | null
+  ): Promise<number> {
+    if (!timer) {
+      return this.submitTimed((enc) => this.recordGrid9Close2Inputs(enc, gridViews, closeups));
+    }
+    const grid = this.gridClip!;
+    const setup = this.device.createCommandEncoder();
+    this.recordGrid9Close2TextCopies(setup, closeups);
+    grid.clearGridImage(setup);
+    this.device.queue.submit([setup.finish()]);
+    await this.device.queue.onSubmittedWorkDone();
+
+    let ms = 0;
+    for (let cell = 0; cell < 9; cell++) {
+      ms += await this.submitTimed((enc, ts) => {
+        this.raster.recordForward(enc, gridViews[cell], grid.scratchIO, ts);
+      }, timer);
+      ms += await this.submitTimed((enc, ts) => {
+        grid.recordCopyCell(enc, cell, ts);
+      }, timer);
+    }
+    for (let lane = 0; lane < 2; lane++) {
+      ms += await this.submitTimed((enc, ts) => {
+        this.raster.recordForward(enc, closeups[lane], this.batchIO[lane + 1], ts);
+      }, timer);
+    }
+    return ms;
+  }
+
+  private async profileGrid9Close2Backward(
+    gridViews: number[],
+    closeups: [number, number],
+    timer: GpuPassTimer | null
+  ): Promise<{ replay: number; backward: number }> {
+    if (!timer) {
+      return {
+        replay: 0,
+        backward: await this.submitTimed((enc) => this.recordGrid9Close2Backward(enc, gridViews, closeups)),
+      };
+    }
+    const grid = this.gridClip!;
+    let replay = 0;
+    let backward = 0;
+    for (let cell = 0; cell < 9; cell++) {
+      backward += await this.submitTimed((enc, ts) => {
+        grid.clearScratchGrad(enc);
+        grid.recordScatterCell(enc, cell, ts);
+      }, timer);
+      replay += await this.submitTimed((enc, ts) => {
+        this.raster.recordForward(enc, gridViews[cell], grid.scratchIO, ts);
+      }, timer);
+      backward += await this.submitTimed((enc, ts) => {
+        this.raster.recordBackwardAdd(enc, gridViews[cell], grid.scratchIO, ts);
+      }, timer);
+    }
+    for (let lane = 0; lane < 2; lane++) {
+      backward += await this.submitTimed((enc, ts) => {
+        this.raster.recordBackwardAdd(enc, closeups[lane], this.batchIO[lane + 1], ts);
+      }, timer);
+    }
+    return { replay, backward };
   }
 
   private recordBatchTextCopies(enc: GPUCommandEncoder, views: number[]): void {

@@ -15,6 +15,7 @@
  *   VIEW_LANE_RASTER_FWD=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   VIEW_LANE_RASTER_BWD=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  *   CAP=1024 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
+ *   CLIP_LAYOUT=grid9_close2 CLIP_BATCH=3 VIEWS=9 bun tools/splat3d/step_bench.ts
  *   TIMESTAMP=1 CLIP_BATCH=3 VIEWS=3 bun tools/splat3d/step_bench.ts
  */
 import { readFileSync } from "node:fs";
@@ -31,6 +32,7 @@ const RUNS = Number(process.env.RUNS ?? 10);
 const WARMUP = Number(process.env.WARMUP ?? 3);
 const VIEWS = Number(process.env.VIEWS ?? 3);
 const CLIP_BATCH = Number(process.env.CLIP_BATCH ?? 1);
+const CLIP_LAYOUT = process.env.CLIP_LAYOUT === "grid9_close2" ? "grid9_close2" : "per_view";
 const SEED = Number(process.env.SEED ?? 1);
 const G = Number(process.env.G ?? LEGIBLE_3D_G);
 const CAP = Number(process.env.CAP ?? 2048);
@@ -90,6 +92,7 @@ const opt = await Splat3DOptimizer.create(device, plan, weights, {
   seed: SEED,
   initParams,
   clipBatchSize: CLIP_BATCH,
+  clipLayout: CLIP_LAYOUT,
   stemSpatialBwd: STEM_SPATIAL_BWD,
   fusePointwiseGeluForward: FUSE_PW_GELU,
   fuseGeluBwdIntoPw: FUSE_GELU_BWD_PW,
@@ -100,7 +103,7 @@ const opt = await Splat3DOptimizer.create(device, plan, weights, {
 });
 console.log(
   `splat3d step bench: G=${G}, views=${VIEWS}/${opt.cameras.length}, ` +
-    `clipBatch=${opt.clipBatchSize}, cap=${CAP}, runs=${RUNS}, warmup=${WARMUP}, ` +
+    `clipBatch=${opt.clipBatchSize}, clipLayout=${opt.clipLayout}, cap=${CAP}, runs=${RUNS}, warmup=${WARMUP}, ` +
     `stemSpatialBwd=${STEM_SPATIAL_BWD ? 1 : 0}, ` +
     `fusePointwiseGeluForward=${FUSE_PW_GELU ? 1 : 0}, ` +
     `fuseGeluBwdIntoPw=${FUSE_GELU_BWD_PW ? 1 : 0}, ` +
@@ -113,6 +116,9 @@ console.log(
 );
 
 opt.setViewPrompts(opt.cameras.map((_camera, i) => textEmbedding(i, plan.textDim)));
+if (CLIP_LAYOUT === "grid9_close2") {
+  opt.setGridPrompt(textEmbedding(99, plan.textDim));
+}
 
 for (let i = 0; i < WARMUP; i++) {
   opt.step(0, VIEWS);

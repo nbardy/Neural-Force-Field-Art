@@ -247,3 +247,70 @@ npx parcel build --no-scope-hoist --no-cache src/index.html src/splat.html src/s
 ## Recommendation
 
 Build the conservative version first: 9 separate 80x80 cell renders into lane 0 plus two existing 256x256 close-up renders. Do not start with a clever multi-view shader. The first question is whether `grid9_close2` gives better convergence per CLIP batch. If the signal works, then optimize the grid raster into a single shader path.
+
+## Measured First Pass
+
+Implemented gate:
+
+```bash
+CLIP_LAYOUT=grid9_close2 CLIP_BATCH=3 VIEWS=9
+```
+
+Implementation notes:
+
+```text
+src/splat3d/grid_clip.ts owns the contact-sheet copy/scatter shaders.
+Lane 0 is cleared to black, then filled with 9 nearest-sampled 80x80 cells.
+Lanes 1 and 2 remain normal 256x256 close-up renders.
+Grid backward scatters the lane-0 cell gradient into a scratch full-res gradient.
+The raster forward is replayed before each grid-cell backward pass so the binned/tile state matches that camera.
+```
+
+Smoke test:
+
+```bash
+bun tools/splat3d/grid9_close2_test.ts
+```
+
+Result:
+
+```text
+PASS grid9_close2 contact sheet
+cells=[0.830, 0.774, 0.761, 0.793, 0.807, 0.751, 0.735, 0.760, 0.758]
+gutter=0
+```
+
+Timestamp comparison, one run, no warmup:
+
+```bash
+TIMESTAMP=1 CLIP_BATCH=3 VIEWS=9 RUNS=1 WARMUP=0 bun tools/splat3d/step_bench.ts
+TIMESTAMP=1 CLIP_LAYOUT=grid9_close2 CLIP_BATCH=3 VIEWS=9 RUNS=1 WARMUP=0 bun tools/splat3d/step_bench.ts
+TIMESTAMP=1 CLIP_BATCH=3 VIEWS=3 RUNS=1 WARMUP=0 bun tools/splat3d/step_bench.ts
+```
+
+Results:
+
+```text
+9-view per-view batch: total=154.80 ms raster=33.49 ms clipBatch=120.91 ms
+grid9_close2:         total=84.93 ms raster=44.04 ms clipBatch=39.98 ms
+3-view per-view batch: total=64.29 ms raster=12.91 ms clipBatch=50.86 ms
+```
+
+Matrix wrapper:
+
+```bash
+TRIALS=1 CONFIGS='base9=9:3,grid=9:3:grid9' RUNS=1 WARMUP=0 bun tools/splat3d/step_matrix.ts
+```
+
+Result:
+
+```text
+base9 profile=162.86 ms clip=121.39 ms raster=37.82 ms
+grid  profile=89.06 ms  clip=40.03 ms  raster=45.86 ms
+```
+
+Conclusion: the first conservative grid path is a clear speed win versus full
+9-view CLIP because it runs one B=3 CLIP call instead of three. It is still
+slower than ordinary 3-view training because it renders/replays all 9 grid views
+plus 2 close-ups. Promotion now depends on convergence/image quality, not raw
+step speed alone.
