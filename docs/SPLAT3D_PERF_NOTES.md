@@ -245,6 +245,25 @@ The UI can toggle this against `same grid text`. This does not change kernel
 speed; it is a quality/signal ablation for whether the contact-sheet image gets
 a better CLIP target than a normal single-image prompt.
 
+## Direct Grid Raster
+
+`GRID_DIRECT_RASTER=1` changes `grid9_close2` so the nine contact-sheet views
+render directly at `80x80` instead of rendering `256x256` scratch images and
+downsampling. CLIP still receives one `256x256` lane containing nine `80x80`
+cells plus two full-resolution close-up lanes.
+
+Measured result:
+
+| Variant | Normal Median | Profile Median | CLIP Median | Raster Median |
+| --- | ---: | ---: | ---: | ---: |
+| `grid9_close2` | `87.93 ms` | `89.85 ms` | `41.07 ms` | `46.01 ms` |
+| `grid9_close2 + directgrid` | `59.03 ms` | `60.48 ms` | `38.72 ms` | `18.76 ms` |
+
+Stacked with `SPATIAL_BWD_VARIANT=depthwise4`, all-view grid supervision reached
+`56.08 ms` normal step median, close to the ordinary `3/9` per-view baseline
+while touching all nine cameras every step. This is a real schedule+raster leap,
+but it still needs visual quality testing before becoming default.
+
 ## Prompt Encoding Cache
 
 The 3D page now caches text embeddings by exact expanded prompt. In `same text`

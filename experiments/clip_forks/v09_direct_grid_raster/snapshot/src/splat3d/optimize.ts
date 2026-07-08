@@ -47,7 +47,6 @@ export interface Splat3DOptimizerConfig {
   singlePassBatchRasterForward?: boolean;
   viewLaneBatchRasterForward?: boolean;
   viewLaneBatchRasterBackward?: boolean;
-  gridDirectRaster?: boolean;
 }
 
 export type Splat3DClipMode = "single" | "batch";
@@ -107,7 +106,6 @@ export class Splat3DOptimizer {
   private readonly singlePassBatchRasterForward: boolean;
   private readonly viewLaneBatchRasterForward: boolean;
   private readonly viewLaneBatchRasterBackward: boolean;
-  private readonly gridDirectRaster: boolean;
   private step_ = 0;
   private hasPrompts = false;
   private rngState = 1;
@@ -180,7 +178,7 @@ export class Splat3DOptimizer {
         : null;
     const gridClip =
       clipLayout === "grid9_close2" && batchTrainer
-        ? await Grid9Close2ClipLayout.create(device, raster, batchTrainer, { directRaster: cfg.gridDirectRaster ?? false })
+        ? await Grid9Close2ClipLayout.create(device, raster, batchTrainer)
         : null;
     return new Splat3DOptimizer(device, raster, trainer, batchTrainer, gridClip, batchRasterForward, cameras, cfg);
   }
@@ -210,7 +208,6 @@ export class Splat3DOptimizer {
     this.singlePassBatchRasterForward = cfg.singlePassBatchRasterForward ?? false;
     this.viewLaneBatchRasterForward = cfg.viewLaneBatchRasterForward ?? false;
     this.viewLaneBatchRasterBackward = cfg.viewLaneBatchRasterBackward ?? false;
-    this.gridDirectRaster = cfg.gridDirectRaster ?? false;
     this.rngState = ((cfg.seed ?? 1) ^ 0x9e3779b9) >>> 0 || 1;
     this.textBuffers = cameras.map((_, i) =>
       device.createBuffer({
@@ -480,7 +477,7 @@ export class Splat3DOptimizer {
     this.recordGrid9Close2TextCopies(enc, closeups);
     grid.clearGridImage(enc);
     for (let cell = 0; cell < 9; cell++) {
-      grid.raster.recordForward(enc, gridViews[cell], grid.scratchIO);
+      this.raster.recordForward(enc, gridViews[cell], grid.scratchIO);
       grid.recordCopyCell(enc, cell);
     }
     for (let lane = 0; lane < 2; lane++) {
@@ -496,8 +493,8 @@ export class Splat3DOptimizer {
     for (let cell = 0; cell < 9; cell++) {
       grid.clearScratchGrad(enc);
       grid.recordScatterCell(enc, cell);
-      grid.raster.recordForward(enc, gridViews[cell], grid.scratchIO);
-      grid.raster.recordBackwardAdd(enc, gridViews[cell], grid.scratchIO);
+      this.raster.recordForward(enc, gridViews[cell], grid.scratchIO);
+      this.raster.recordBackwardAdd(enc, gridViews[cell], grid.scratchIO);
     }
     for (let lane = 0; lane < 2; lane++) {
       this.raster.recordBackwardAdd(enc, closeups[lane], this.batchIO[lane + 1]);
@@ -582,7 +579,7 @@ export class Splat3DOptimizer {
     let ms = 0;
     for (let cell = 0; cell < 9; cell++) {
       ms += await this.submitTimed((enc, ts) => {
-        grid.raster.recordForward(enc, gridViews[cell], grid.scratchIO, ts);
+        this.raster.recordForward(enc, gridViews[cell], grid.scratchIO, ts);
       }, timer);
       ms += await this.submitTimed((enc, ts) => {
         grid.recordCopyCell(enc, cell, ts);
@@ -616,10 +613,10 @@ export class Splat3DOptimizer {
         grid.recordScatterCell(enc, cell, ts);
       }, timer);
       replay += await this.submitTimed((enc, ts) => {
-        grid.raster.recordForward(enc, gridViews[cell], grid.scratchIO, ts);
+        this.raster.recordForward(enc, gridViews[cell], grid.scratchIO, ts);
       }, timer);
       backward += await this.submitTimed((enc, ts) => {
-        grid.raster.recordBackwardAdd(enc, gridViews[cell], grid.scratchIO, ts);
+        this.raster.recordBackwardAdd(enc, gridViews[cell], grid.scratchIO, ts);
       }, timer);
     }
     for (let lane = 0; lane < 2; lane++) {

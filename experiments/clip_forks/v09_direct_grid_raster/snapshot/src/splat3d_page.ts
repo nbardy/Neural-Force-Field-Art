@@ -31,7 +31,6 @@ interface Status {
   viewSampler: Splat3DViewSampler;
   clipBatchSize: number;
   clipLayout: Splat3DClipLayout;
-  gridDirectRaster: boolean;
 }
 
 const status: Status = {
@@ -52,7 +51,6 @@ const status: Status = {
   viewSampler: "epoch",
   clipBatchSize: 3,
   clipLayout: "per_view",
-  gridDirectRaster: false,
 };
 (window as any).__splat3d = status;
 
@@ -66,7 +64,6 @@ const viewSamplerSelect = document.getElementById("viewSampler") as HTMLSelectEl
 const clipModeSelect = document.getElementById("clipMode") as HTMLSelectElement;
 const clipLayoutSelect = document.getElementById("clipLayout") as HTMLSelectElement;
 const gridPromptModeSelect = document.getElementById("gridPromptMode") as HTMLSelectElement;
-const gridRasterModeSelect = document.getElementById("gridRasterMode") as HTMLSelectElement;
 const optimizeBtn = document.getElementById("optimize") as HTMLButtonElement;
 const resetBtn = document.getElementById("reset") as HTMLButtonElement;
 const readoutEl = document.getElementById("readout") as HTMLDivElement;
@@ -95,7 +92,6 @@ function renderReadout(): void {
   if (status.clipLayout === "grid9_close2") parts.push("grid+2");
   if (status.clipLayout === "grid9_close2") {
     parts.push(status.gridPromptMode === "contact_sheet" ? "grid text" : "grid=same text");
-    if (status.gridDirectRaster) parts.push("80px grid raster");
   }
   parts.push(status.promptMode === "camera" ? "camera text" : "same text");
   if (status.blackBgText) parts.push("black bg");
@@ -181,10 +177,6 @@ function selectedGridPromptMode(): Grid9PromptMode {
   return gridPromptModeSelect.value === "same" ? "same" : "contact_sheet";
 }
 
-function selectedGridDirectRaster(): boolean {
-  return gridRasterModeSelect.value === "direct80";
-}
-
 function syncClipLayoutControls(): void {
   const grid = selectedClipLayout() === "grid9_close2";
   if (grid) {
@@ -202,7 +194,6 @@ function setControlsDisabled(disabled: boolean): void {
   bgTextModeSelect.disabled = disabled;
   clipLayoutSelect.disabled = disabled;
   gridPromptModeSelect.disabled = disabled || !grid;
-  gridRasterModeSelect.disabled = disabled || !grid;
   viewBatchSelect.disabled = disabled || grid;
   viewSamplerSelect.disabled = disabled;
   clipModeSelect.disabled = disabled || grid;
@@ -212,7 +203,6 @@ async function rebuildOptimizer(nextSeed: number, phase: string): Promise<void> 
   status.phase = phase;
   status.clipLayout = selectedClipLayout();
   status.gridPromptMode = selectedGridPromptMode();
-  status.gridDirectRaster = selectedGridDirectRaster();
   status.viewsPerStep = selectedViewsPerStep();
   status.viewSampler = selectedViewSampler();
   status.clipBatchSize = selectedClipBatchSize();
@@ -223,7 +213,6 @@ async function rebuildOptimizer(nextSeed: number, phase: string): Promise<void> 
     clipBatchSize: status.clipBatchSize,
     clipLayout: status.clipLayout,
     viewSampler: status.viewSampler,
-    gridDirectRaster: status.gridDirectRaster,
   });
   status.clipLayout = opt.clipLayout;
   status.clipBatchSize = opt.clipBatchSize;
@@ -449,7 +438,6 @@ async function onOptimize(): Promise<void> {
   latestTimings = null;
   status.clipLayout = selectedClipLayout();
   status.gridPromptMode = selectedGridPromptMode();
-  status.gridDirectRaster = selectedGridDirectRaster();
   status.viewsPerStep = selectedViewsPerStep();
   status.viewSampler = selectedViewSampler();
   status.clipBatchSize = selectedClipBatchSize();
@@ -531,7 +519,6 @@ function setDisplayView(view: number): void {
 function onPromptModeChange(): void {
   status.promptMode = promptModeSelect.value === "same" ? "same" : "camera";
   status.gridPromptMode = selectedGridPromptMode();
-  status.gridDirectRaster = selectedGridDirectRaster();
   status.blackBgText = bgTextModeSelect.value !== "none";
   latestTimings = null;
   if (viewEmbeds) {
@@ -704,7 +691,6 @@ viewSamplerSelect.addEventListener("change", () => void onClipSettingsChange());
 clipModeSelect.addEventListener("change", () => void onClipSettingsChange());
 clipLayoutSelect.addEventListener("change", () => void onClipSettingsChange());
 gridPromptModeSelect.addEventListener("change", onPromptModeChange);
-gridRasterModeSelect.addEventListener("change", () => void onClipSettingsChange());
 promptInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") void onOptimize();
 });

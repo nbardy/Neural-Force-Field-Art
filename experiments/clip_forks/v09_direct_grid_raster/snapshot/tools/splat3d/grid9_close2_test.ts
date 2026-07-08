@@ -4,7 +4,6 @@
  * Verifies the contact-sheet lane is populated and its gutters remain black.
  *
  *   bun tools/splat3d/grid9_close2_test.ts
- *   GRID_DIRECT_RASTER=1 bun tools/splat3d/grid9_close2_test.ts
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -21,7 +20,6 @@ const HW = SIDE * SIDE;
 const CELL = 80;
 const GUTTER = 8;
 const IMAGE_FLOATS = 3 * HW;
-const GRID_DIRECT_RASTER = process.env.GRID_DIRECT_RASTER === "1";
 
 function f32File(path: string): Float32Array {
   const b = readFileSync(path);
@@ -82,7 +80,6 @@ const opt = await Splat3DOptimizer.create(device, plan, weights, {
   seed: 1,
   clipBatchSize: 3,
   clipLayout: "grid9_close2",
-  gridDirectRaster: GRID_DIRECT_RASTER,
 });
 opt.setViewPrompts(opt.cameras.map((_camera, i) => textEmbedding(i, plan.textDim)));
 opt.setGridPrompt(textEmbedding(99, plan.textDim));
@@ -133,3 +130,4 @@ console.log(`grid9_close2 lane0: cells=[${Array.from(cellMax).map((v) => v.toFix
 opt.destroy();
 if (failures) process.exit(1);
 console.log("PASS grid9_close2 contact sheet");
+

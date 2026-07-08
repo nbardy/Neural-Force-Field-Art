@@ -33,8 +33,6 @@ type PassTimestampWrites = {
 
 export interface Raster3DEngineConfig extends Raster3DConfig {
   cameras: PreparedCamera3D[];
-  sharedParams?: GPUBuffer;
-  sharedGradRaw?: GPUBuffer;
 }
 
 export interface Raster3DIOState {
@@ -133,8 +131,6 @@ export class Raster3DEngine {
   readonly dims: Raster3DDims;
   readonly cameras: PreparedCamera3D[];
   private readonly device: GPUDevice;
-  private ownsParams = true;
-  private ownsGradRaw = true;
 
   private prepPipe: GPUComputePipeline[] = [];
   private chainPipe: GPUComputePipeline[] = [];
@@ -203,12 +199,10 @@ export class Raster3DEngine {
     const GP = d.G * PARAM_STRIDE_3D;
     const GD = d.G * DERIVED_STRIDE_3D;
 
-    this.params = cfg.sharedParams ?? this.storage(GP, U.COPY_SRC | U.COPY_DST);
-    this.ownsParams = !cfg.sharedParams;
+    this.params = this.storage(GP, U.COPY_SRC | U.COPY_DST);
     this.derived = this.storage(GD);
     this.accGrad = this.storage(GD, U.COPY_DST);
-    this.gradRaw = cfg.sharedGradRaw ?? this.storage(GP, U.COPY_SRC | U.COPY_DST);
-    this.ownsGradRaw = !cfg.sharedGradRaw;
+    this.gradRaw = this.storage(GP, U.COPY_SRC | U.COPY_DST);
     this.mBuf = this.storage(GP, U.COPY_DST);
     this.vBuf = this.storage(GP, U.COPY_DST);
     this.tileCounts = this.storage(d.numTiles, U.COPY_DST | U.COPY_SRC);
@@ -548,9 +542,11 @@ export class Raster3DEngine {
   }
 
   destroy(): void {
-    const buffers = [
+    for (const b of [
+      this.params,
       this.derived,
       this.accGrad,
+      this.gradRaw,
       this.mBuf,
       this.vBuf,
       this.tileCounts,
@@ -561,10 +557,7 @@ export class Raster3DEngine {
       this.cameraBuffer,
       ...this.extraBuffers,
       ...this.adamUni,
-    ];
-    if (this.ownsParams) buffers.push(this.params);
-    if (this.ownsGradRaw) buffers.push(this.gradRaw);
-    for (const b of buffers) {
+    ]) {
       try {
         b.destroy();
       } catch (_) {}

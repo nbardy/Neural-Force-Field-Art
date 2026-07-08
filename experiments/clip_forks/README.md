@@ -25,6 +25,7 @@ node experiments/clip_forks/diff_fork.mjs v02_f16_weights
 node experiments/clip_forks/diff_fork.mjs v04_pointwise_tile_rewrite
 node experiments/clip_forks/diff_fork.mjs v07_spatial_bwd_depthwise4
 node experiments/clip_forks/diff_fork.mjs v08_grid_contact_sheet_prompt
+node experiments/clip_forks/diff_fork.mjs v09_direct_grid_raster
 ```
 
 ## Standard Gate
@@ -56,6 +57,8 @@ Use the gate-specific env vars in addition to the commands above.
   backward lane.
 - `v08_grid_contact_sheet_prompt`: explicit text prompt for the 3x3 grid CLIP
   lane, with a same-text toggle.
+- `v09_direct_grid_raster`: render grid contact-sheet cells at `80x80` instead
+  of full `256x256` scratch, while sharing splat params and gradients.
 
 ## Snapshot Coverage
 
@@ -70,6 +73,8 @@ Use the gate-specific env vars in addition to the commands above.
   optimizer wiring, and benchmark env gates.
 - `v08_grid_contact_sheet_prompt`: 3D camera prompt builders, grid CLIP page
   controls, and 3D benchmark context.
+- `v09_direct_grid_raster`: 3D raster engine, grid CLIP layout, optimizer/page
+  controls, and grid/step benchmarks.
 
 ## Related Notes
 
