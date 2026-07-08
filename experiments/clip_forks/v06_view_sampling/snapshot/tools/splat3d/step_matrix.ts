@@ -12,7 +12,6 @@
  *   TRIALS=3 CONFIGS=base=3:3,resbwd=3:3:resbwd bun tools/splat3d/step_matrix.ts
  *   TRIALS=3 CONFIGS=base9=9:3,grid=9:3:grid9 bun tools/splat3d/step_matrix.ts
  *   TRIALS=3 CONFIGS=base=3:3,cap1024=3:3:cap1024 bun tools/splat3d/step_matrix.ts
- *   TRIALS=3 CONFIGS=k1=1:1,k2=2:2,k2rand=2:2:random,base=3:3 bun tools/splat3d/step_matrix.ts
  *   TRIALS=3 CONFIGS=3:1,3:3,9:1,9:3,9:9 bun tools/splat3d/step_matrix.ts
  */
 import { spawnSync } from "node:child_process";
@@ -22,7 +21,6 @@ interface Config {
   views: number;
   clipBatch: number;
   clipLayout: "per_view" | "grid9_close2";
-  viewSampler: "epoch" | "random";
   fuseGeluBwdIntoPw: boolean;
   fuseResidualBwdIntoPw: boolean;
   singlePassRasterForward: boolean | null;
@@ -72,7 +70,6 @@ function parseConfigs(src: string): Config[] {
         throw new Error(`step_matrix: bad config '${part}', expected views:clipBatch`);
       }
       const clipLayout = tokens.includes("grid9") || tokens.includes("grid9_close2") ? "grid9_close2" : "per_view";
-      const viewSampler = tokens.includes("random") ? "random" : "epoch";
       const fuseGeluBwdIntoPw = tokens.includes("gelubwd");
       const fuseResidualBwdIntoPw = tokens.includes("resbwd");
       const singlePassRasterForward = tokens.includes("rasterpass")
@@ -99,7 +96,6 @@ function parseConfigs(src: string): Config[] {
         views: views | 0,
         clipBatch: clipBatch | 0,
         clipLayout,
-        viewSampler,
         fuseGeluBwdIntoPw,
         fuseResidualBwdIntoPw,
         singlePassRasterForward,
@@ -142,7 +138,6 @@ function runTrial(config: Config, trial: number): TrialResult {
     VIEWS: String(config.views),
     CLIP_BATCH: String(config.clipBatch),
     CLIP_LAYOUT: config.clipLayout,
-    VIEW_SAMPLER: config.viewSampler,
     RUNS: String(RUNS),
     WARMUP: String(WARMUP),
     SEED: String(SEED),
@@ -207,7 +202,7 @@ function fmt(n: number): string {
 const results: TrialResult[] = [];
 if (!JSON_OUT) {
   console.log(
-    `splat3d step matrix: configs=${CONFIGS.map((c) => `${c.label}=${c.views}:${c.clipBatch}${c.clipLayout === "grid9_close2" ? ":grid9" : ""}${c.viewSampler === "random" ? ":random" : ""}${c.fuseGeluBwdIntoPw ? ":gelubwd" : ""}${c.fuseResidualBwdIntoPw ? ":resbwd" : ""}${c.singlePassRasterForward === true ? ":rasterpass" : ""}${c.singlePassRasterForward === false ? ":norasterpass" : ""}${c.viewLaneRasterForward === true ? ":viewlane" : ""}${c.viewLaneRasterForward === false ? ":noviewlane" : ""}${c.viewLaneRasterBackward === true ? ":viewbwd" : ""}${c.viewLaneRasterBackward === false ? ":noviewbwd" : ""}${c.cap !== null ? `:cap${c.cap}` : ""}`).join(",")} ` +
+    `splat3d step matrix: configs=${CONFIGS.map((c) => `${c.label}=${c.views}:${c.clipBatch}${c.clipLayout === "grid9_close2" ? ":grid9" : ""}${c.fuseGeluBwdIntoPw ? ":gelubwd" : ""}${c.fuseResidualBwdIntoPw ? ":resbwd" : ""}${c.singlePassRasterForward === true ? ":rasterpass" : ""}${c.singlePassRasterForward === false ? ":norasterpass" : ""}${c.viewLaneRasterForward === true ? ":viewlane" : ""}${c.viewLaneRasterForward === false ? ":noviewlane" : ""}${c.viewLaneRasterBackward === true ? ":viewbwd" : ""}${c.viewLaneRasterBackward === false ? ":noviewbwd" : ""}${c.cap !== null ? `:cap${c.cap}` : ""}`).join(",")} ` +
       `trials=${TRIALS} runs=${RUNS} warmup=${WARMUP} seed=${SEED}${G ? ` G=${G}` : ""}`
   );
 }
@@ -221,7 +216,6 @@ for (let trial = 0; trial < TRIALS; trial++) {
       const flags = [
         config.fuseGeluBwdIntoPw ? "gelubwd=1" : "",
         config.clipLayout === "grid9_close2" ? "grid9=1" : "",
-        config.viewSampler === "random" ? "random=1" : "",
         config.fuseResidualBwdIntoPw ? "resbwd=1" : "",
         config.singlePassRasterForward === true ? "rasterpass=1" : "",
         config.singlePassRasterForward === false ? "rasterpass=0" : "",
@@ -246,7 +240,7 @@ if (JSON_OUT) {
   console.log(JSON.stringify({ trials: TRIALS, runs: RUNS, warmup: WARMUP, seed: SEED, results }, null, 2));
 } else {
   console.log("\nSummary:");
-  console.log("config           views batch  layout sampler   cap gbwd rbwd rpass vlane  vbwd  normal med [min,max]     profile med     clip med   raster med");
+  console.log("config           views batch  layout   cap gbwd rbwd rpass vlane  vbwd  normal med [min,max]     profile med     clip med   raster med");
   for (const config of CONFIGS) {
     const rows = results.filter((r) => r.label === config.label);
     const normal = rows.map((r) => r.normal);
@@ -256,7 +250,6 @@ if (JSON_OUT) {
     console.log(
       `${config.label.padEnd(16).slice(0, 16)} ${String(config.views).padStart(5)} ${String(config.clipBatch).padStart(5)} ` +
         `${(config.clipLayout === "grid9_close2" ? "grid9" : "view").padStart(7)} ` +
-        `${config.viewSampler.padStart(7)} ` +
         `${String(config.cap ?? "def").padStart(5)} ` +
         `${(config.fuseGeluBwdIntoPw ? "yes" : "no").padStart(4)} ` +
         `${(config.fuseResidualBwdIntoPw ? "yes" : "no").padStart(4)} ` +

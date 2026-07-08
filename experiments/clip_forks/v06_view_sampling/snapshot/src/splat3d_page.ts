@@ -1,12 +1,6 @@
 /// <reference types="@webgpu/types" />
 import { buildBasePrompt, buildGrid9Prompt, buildViewPrompt } from "./splat3d/cameras";
-import {
-  Splat3DOptimizer,
-  cosine,
-  type Splat3DClipLayout,
-  type Splat3DStepTimings,
-  type Splat3DViewSampler,
-} from "./splat3d/optimize";
+import { Splat3DOptimizer, cosine, type Splat3DClipLayout, type Splat3DStepTimings } from "./splat3d/optimize";
 import { fetchArrayBufferWithProgress, formatProgress } from "./splat/fetch_progress";
 import type { TrainPlan } from "./clip/vision";
 
@@ -27,7 +21,6 @@ interface Status {
   blackBgText: boolean;
   profiling: boolean;
   viewsPerStep: number;
-  viewSampler: Splat3DViewSampler;
   clipBatchSize: number;
   clipLayout: Splat3DClipLayout;
 }
@@ -46,7 +39,6 @@ const status: Status = {
   blackBgText: true,
   profiling: false,
   viewsPerStep: 3,
-  viewSampler: "epoch",
   clipBatchSize: 3,
   clipLayout: "per_view",
 };
@@ -58,7 +50,6 @@ const viewSelect = document.getElementById("view") as HTMLSelectElement;
 const promptModeSelect = document.getElementById("promptMode") as HTMLSelectElement;
 const bgTextModeSelect = document.getElementById("bgTextMode") as HTMLSelectElement;
 const viewBatchSelect = document.getElementById("viewBatch") as HTMLSelectElement;
-const viewSamplerSelect = document.getElementById("viewSampler") as HTMLSelectElement;
 const clipModeSelect = document.getElementById("clipMode") as HTMLSelectElement;
 const clipLayoutSelect = document.getElementById("clipLayout") as HTMLSelectElement;
 const optimizeBtn = document.getElementById("optimize") as HTMLButtonElement;
@@ -84,7 +75,6 @@ function renderReadout(): void {
   const camera = opt?.cameras[displayView]?.name ?? "view";
   const parts: string[] = [`step ${status.step}`, camera];
   if (opt) parts.push(`${status.viewsPerStep}/${opt.cameras.length} views`);
-  if (status.viewSampler === "random") parts.push("random");
   parts.push(status.clipBatchSize > 1 ? `clip x${status.clipBatchSize}` : "clip x1");
   if (status.clipLayout === "grid9_close2") parts.push("grid+2");
   parts.push(status.promptMode === "camera" ? "camera text" : "same text");
@@ -113,7 +103,7 @@ function renderTimings(): void {
   };
   const lines = [
     `${t.timing === "gpu-timestamp" ? "sampled GPU step" : "sampled wall step"} ${status.step}`,
-    `${t.views}/${t.totalViews} views · ${status.viewSampler} · ${t.clipMode === "batch" ? `batch CLIP x${t.clipBatchSize}` : "single CLIP"} · ${t.timing}`,
+    `${t.views}/${t.totalViews} views · ${t.clipMode === "batch" ? `batch CLIP x${t.clipBatchSize}` : "single CLIP"} · ${t.timing}`,
     line("opt total", t.total),
     line("raster", t.rasterFwd + t.rasterReplay + t.rasterBwd),
     line("  fwd", t.rasterFwd),
@@ -163,10 +153,6 @@ function selectedViewsPerStep(): number {
   return Number.isFinite(n) ? Math.max(1, Math.min(maxViews, n | 0)) : 3;
 }
 
-function selectedViewSampler(): Splat3DViewSampler {
-  return viewSamplerSelect.value === "random" ? "random" : "epoch";
-}
-
 function syncClipLayoutControls(): void {
   const grid = selectedClipLayout() === "grid9_close2";
   if (grid) {
@@ -184,7 +170,6 @@ function setControlsDisabled(disabled: boolean): void {
   bgTextModeSelect.disabled = disabled;
   clipLayoutSelect.disabled = disabled;
   viewBatchSelect.disabled = disabled || grid;
-  viewSamplerSelect.disabled = disabled;
   clipModeSelect.disabled = disabled || grid;
 }
 
@@ -192,7 +177,6 @@ async function rebuildOptimizer(nextSeed: number, phase: string): Promise<void> 
   status.phase = phase;
   status.clipLayout = selectedClipLayout();
   status.viewsPerStep = selectedViewsPerStep();
-  status.viewSampler = selectedViewSampler();
   status.clipBatchSize = selectedClipBatchSize();
   renderReadout();
   const old = opt;
@@ -200,11 +184,9 @@ async function rebuildOptimizer(nextSeed: number, phase: string): Promise<void> 
     seed: nextSeed,
     clipBatchSize: status.clipBatchSize,
     clipLayout: status.clipLayout,
-    viewSampler: status.viewSampler,
   });
   status.clipLayout = opt.clipLayout;
   status.clipBatchSize = opt.clipBatchSize;
-  status.viewSampler = opt.viewSampler;
   old?.destroy();
   populateViews();
   rebuildBlitBind();
@@ -426,7 +408,6 @@ async function onOptimize(): Promise<void> {
   latestTimings = null;
   status.clipLayout = selectedClipLayout();
   status.viewsPerStep = selectedViewsPerStep();
-  status.viewSampler = selectedViewSampler();
   status.clipBatchSize = selectedClipBatchSize();
   status.promptMode = promptModeSelect.value === "same" ? "same" : "camera";
   status.blackBgText = bgTextModeSelect.value !== "none";
@@ -534,7 +515,6 @@ async function onClipSettingsChange(): Promise<void> {
     setNotice("wait for profiling sample to finish before changing CLIP settings");
     clipModeSelect.value = String(status.clipBatchSize);
     clipLayoutSelect.value = status.clipLayout;
-    viewSamplerSelect.value = status.viewSampler;
     syncClipLayoutControls();
     return;
   }
@@ -644,11 +624,9 @@ async function boot(): Promise<void> {
     seed,
     clipBatchSize: selectedClipBatchSize(),
     clipLayout: selectedClipLayout(),
-    viewSampler: selectedViewSampler(),
   });
   status.clipLayout = opt.clipLayout;
   status.viewsPerStep = selectedViewsPerStep();
-  status.viewSampler = opt.viewSampler;
   status.clipBatchSize = opt.clipBatchSize;
   populateViews();
   rebuildBlitBind();
@@ -673,7 +651,6 @@ viewSelect.addEventListener("change", () => void onViewChange());
 promptModeSelect.addEventListener("change", onPromptModeChange);
 bgTextModeSelect.addEventListener("change", onPromptModeChange);
 viewBatchSelect.addEventListener("change", onViewBatchChange);
-viewSamplerSelect.addEventListener("change", () => void onClipSettingsChange());
 clipModeSelect.addEventListener("change", () => void onClipSettingsChange());
 clipLayoutSelect.addEventListener("change", () => void onClipSettingsChange());
 promptInput.addEventListener("keydown", (e) => {

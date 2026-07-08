@@ -52,7 +52,6 @@
       }
 	      select { max-width: 128px; }
 	      #clipLayout { max-width: 178px; }
-	      #viewSampler { max-width: 148px; }
       button:hover, select:hover { border-color: #89b4fa; }
       button:disabled, select:disabled { opacity: 0.5; cursor: default; }
       #readout {
@@ -93,19 +92,12 @@
           <option value="none">no bg text</option>
         </select>
         <select id="viewBatch">
-          <option value="1">1/9 view</option>
-          <option value="2">2/9 views</option>
           <option value="3" selected>3/9 views</option>
           <option value="5">5/9 views</option>
           <option value="9">9/9 views</option>
         </select>
-        <select id="viewSampler">
-          <option value="epoch" selected>epoch views</option>
-          <option value="random">random views</option>
-        </select>
 	        <select id="clipMode">
 	          <option value="1">single CLIP</option>
-	          <option value="2">batch CLIP x2</option>
 	          <option value="3" selected>batch CLIP x3</option>
 	          <option value="9">batch CLIP x9</option>
 	        </select>

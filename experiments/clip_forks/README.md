@@ -49,6 +49,7 @@ Use the gate-specific env vars in addition to the commands above.
 - `v04_pointwise_tile_rewrite`: new pointwise matmul tiling variants.
 - `v05_gpu_counter_trace`: Chrome / Xcode / Metal trace plan for real shader
   bottleneck evidence.
+- `v06_view_sampling`: same-resolution N-of-K camera schedules.
 
 ## Snapshot Coverage
 
@@ -58,6 +59,7 @@ Use the gate-specific env vars in addition to the commands above.
 - `v03_residual_bwd_pw_fusion`: CLIP WGSL emitters and backward/profile tests.
 - `v04_pointwise_tile_rewrite`: CLIP pointwise emitters and pointwise benches.
 - `v05_gpu_counter_trace`: integrated 3D profiler and CLIP dispatch profiler.
+- `v06_view_sampling`: 3D optimizer/page controls and 3D step benches.
 
 ## Related Notes
 

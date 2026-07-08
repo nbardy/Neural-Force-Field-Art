@@ -24,12 +24,7 @@ import { fileURLToPath } from "node:url";
 import { setupGlobals } from "bun-webgpu";
 import type { TrainPlan } from "../../src/clip/vision";
 import type { WeightPrecision } from "../../src/clip/vision_wgsl";
-import {
-  LEGIBLE_3D_G,
-  Splat3DOptimizer,
-  randomSplats3D,
-  type Splat3DViewSampler,
-} from "../../src/splat3d/optimize";
+import { LEGIBLE_3D_G, Splat3DOptimizer, randomSplats3D } from "../../src/splat3d/optimize";
 
 setupGlobals();
 
@@ -39,7 +34,6 @@ const WARMUP = Number(process.env.WARMUP ?? 3);
 const VIEWS = Number(process.env.VIEWS ?? 3);
 const CLIP_BATCH = Number(process.env.CLIP_BATCH ?? 1);
 const CLIP_LAYOUT = process.env.CLIP_LAYOUT === "grid9_close2" ? "grid9_close2" : "per_view";
-const VIEW_SAMPLER: Splat3DViewSampler = process.env.VIEW_SAMPLER === "random" ? "random" : "epoch";
 const SEED = Number(process.env.SEED ?? 1);
 const G = Number(process.env.G ?? LEGIBLE_3D_G);
 const CAP = Number(process.env.CAP ?? 2048);
@@ -116,7 +110,6 @@ const opt = await Splat3DOptimizer.create(device, plan, weights, {
   initParams,
   clipBatchSize: CLIP_BATCH,
   clipLayout: CLIP_LAYOUT,
-  viewSampler: VIEW_SAMPLER,
   clipWeightPrecision: CLIP_PRECISION,
   stemSpatialBwd: STEM_SPATIAL_BWD,
   fusePointwiseGeluForward: FUSE_PW_GELU,
@@ -129,7 +122,7 @@ const opt = await Splat3DOptimizer.create(device, plan, weights, {
 console.log(
   `splat3d step bench: G=${G}, views=${VIEWS}/${opt.cameras.length}, ` +
     `clipBatch=${opt.clipBatchSize}, clipLayout=${opt.clipLayout}, clipPrecision=${CLIP_PRECISION}, ` +
-    `viewSampler=${opt.viewSampler}, weights=${WEIGHTS_FILE}, cap=${CAP}, runs=${RUNS}, warmup=${WARMUP}, ` +
+    `weights=${WEIGHTS_FILE}, cap=${CAP}, runs=${RUNS}, warmup=${WARMUP}, ` +
     `stemSpatialBwd=${STEM_SPATIAL_BWD ? 1 : 0}, ` +
     `fusePointwiseGeluForward=${FUSE_PW_GELU ? 1 : 0}, ` +
     `fuseGeluBwdIntoPw=${FUSE_GELU_BWD_PW ? 1 : 0}, ` +

@@ -37,7 +37,6 @@ export interface Splat3DOptimizerConfig {
   hyper?: AdamHyper;
   clipBatchSize?: number;
   clipLayout?: Splat3DClipLayout;
-  viewSampler?: Splat3DViewSampler;
   clipWeightPrecision?: WeightPrecision;
   stemSpatialBwd?: boolean;
   fusePointwiseGeluForward?: boolean;
@@ -50,7 +49,6 @@ export interface Splat3DOptimizerConfig {
 
 export type Splat3DClipMode = "single" | "batch";
 export type Splat3DClipLayout = "per_view" | "grid9_close2";
-export type Splat3DViewSampler = "epoch" | "random";
 export type Splat3DStepTimingMode = "split-submit-wall" | "gpu-timestamp";
 
 export interface Splat3DProfileOptions {
@@ -94,7 +92,6 @@ export class Splat3DOptimizer {
   readonly side = SIDE;
   readonly clipBatchSize: number;
   readonly clipLayout: Splat3DClipLayout;
-  readonly viewSampler: Splat3DViewSampler;
   readonly batchRasterForward: Raster3DBatchForwardState | null;
   private readonly textBuffers: GPUBuffer[];
   private readonly gridTextBuffer: GPUBuffer | null;
@@ -199,7 +196,6 @@ export class Splat3DOptimizer {
     this.cameras = cameras;
     this.clipBatchSize = batchTrainer?.batch ?? 1;
     this.clipLayout = cfg.clipLayout ?? "per_view";
-    this.viewSampler = cfg.viewSampler ?? "epoch";
     this.lrs = cfg.lrs ?? DEFAULT_3D_LRS;
     this.hyper = cfg.hyper ?? DEFAULT_HYPER;
     this.singlePassBatchRasterForward = cfg.singlePassBatchRasterForward ?? false;
@@ -662,7 +658,6 @@ export class Splat3DOptimizer {
     const n = this.cameras.length;
     const k = Math.max(1, Math.min(n, viewsPerStep | 0));
     if (k >= n) return Array.from({ length: n }, (_unused, i) => i);
-    if (this.viewSampler === "random") return this.sampleRandomViews(k);
     const views: number[] = [];
     while (views.length < k) {
       if (this.viewCursor >= this.viewOrder.length) this.shuffleViewOrder();
@@ -670,17 +665,6 @@ export class Splat3DOptimizer {
       this.viewCursor += 1;
     }
     return views;
-  }
-
-  private sampleRandomViews(k: number): number[] {
-    const pool = Array.from({ length: this.cameras.length }, (_unused, i) => i);
-    for (let i = 0; i < k; i++) {
-      const j = i + (this.nextRandomU32() % (pool.length - i));
-      const tmp = pool[i];
-      pool[i] = pool[j];
-      pool[j] = tmp;
-    }
-    return pool.slice(0, k);
   }
 
   private shuffleViewOrder(): void {
