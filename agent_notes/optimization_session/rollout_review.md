@@ -46,6 +46,32 @@ fork, browser/runtime options, and dynaworld/FasterGS-style renderer lessons.
 7. Consider GELU/pointwise fusion only if dispatch and slot traffic show up.
 8. Treat attention backward rewrites as conditional, not assumed.
 
+## Iteration Outcome
+
+The rollout was useful once the recommendations were forced through the
+commit-and-measure loop:
+
+- Batch-major CLIP, raster/CLIP buffer aliasing, per-lane raster forward state,
+  and default `batch CLIP x3` all landed.
+- Dispatch profiling landed and directly selected the stem `spatial_bwd` kernel
+  as the first non-pointwise shader target.
+- Shared-W pointwise forward was implemented behind a gate but not promoted,
+  because isolated microbench wins did not survive full-chain B=2/B=3 train
+  timing.
+- Generic spatial-backward weight staging was rejected and recorded after
+  correctness passed but integrated timing failed to prove a win.
+- Stem spatial backward specialization was promoted for 3D batch CLIP.
+- Pointwise + GELU forward fusion was promoted for 3D batch CLIP after it
+  reduced B=3 train median and integrated CLIP split time.
+- STAR UVT/world-tube review clarified that exact multi-view raster batching is
+  a scheduler problem first; sublinear camera-bundle rendering needs a different
+  primitive.
+
+The highest-value process lesson remains: every attractive GPU idea needs both
+a local correctness gate and a full-chain optimizer timing gate. The shared-W
+attempt was the clearest example of a plausible microkernel that should remain
+gated instead of becoming default.
+
 ## Process Rule Going Forward
 
 Each performance attempt should be one commit when it lands, and failed attempts

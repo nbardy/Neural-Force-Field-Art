@@ -397,18 +397,50 @@ Integrated 3D step matrix:
 | `STEM_SPATIAL_BWD=0` | `95.58 ms` | `116.12 ms` | `86.56 ms` |
 | default stem on | `72.72 ms` | `90.13 ms` | `65.30 ms` |
 
+## Iteration 5c - Pointwise GELU Forward Fusion
+
+Implemented:
+
+- `pointwiseFusedGelu` in `src/clip/vision_wgsl.ts`
+- `fusePointwiseGeluForward` in batch dispatch options
+- `FUSE_PW_GELU` benchmark flags
+
+Train mode keeps standalone GELU steps so backward can read the saved
+pre-activation. For pointwise convs immediately followed by GELU, the fused
+forward dispatch writes both the pre-activation slot and the GELU output slot.
+This removes 24 standalone forward GELU dispatches in the B=3 batch-major train
+path. Spatial and SE GELU pairs stay split.
+
+Verification:
+
+```bash
+FUSE_PW_GELU=1 STEM_SPATIAL_BWD=1 BATCH=3 RUNS=1 WARMUP=1 bun tools/clip/batch_major_train_bench.ts
+bun tools/clip/bwd_test.ts
+```
+
+Results:
+
+| Measurement | Stem Only | Stem + Pointwise GELU Fusion |
+| --- | ---: | ---: |
+| B=3 CLIP train median | `73.33 ms` | `68.06 ms` |
+| dispatch count | `281` | `257` |
+| integrated 3D CLIP median | `80.68 ms` | `76.38 ms` |
+
+Decision: promote for the 3D batch optimizer. The fused path is exact under
+batch-major parity and is enabled by default for `Splat3DOptimizer` batch CLIP.
+Use `FUSE_PW_GELU=0` as the integrated negative control.
+
 ## Next Five Iterations
 
-1. **Production speed win:** add `views/step` N-of-K to the 3D page, default 3
-   of 9, and avoid refreshing the 9-view grid every optimizer step.
-2. **3D optimizer integration:** render N selected views into batched CLIP input
-   lanes, run `BatchMajorVisionTrainer`, then apply each lane's image gradient
-   to the matching camera view.
-3. **Selective pointwise integration:** use the shared-W pointwise kernel only
-   for shape/batch combinations that win in a full-CLIP profile.
-4. **Train-plan memory tightening:** allocate only slots touched by the active
+1. **Raster view-lane dispatch:** move camera constants into a buffer and run
+   prep/emit/forward over `workgroup_id.z = view lane`.
+2. **Batched raster backward state:** make `accGrad` lane-strided or add a
+   carefully gated fixed-point raw-gradient path so backward can also batch
+   view lanes.
+3. **GELU backward fusion gate:** only try folding `gelu_bwd` into neighboring
+   `pw_bwd` after a full-chain profile shows it can move wall time.
+4. **F16 weights with f32 math:** feature-gated experiment with strict embedding
+   and gradient cosine thresholds.
+5. **Train-plan memory tightening:** allocate only slots touched by the active
    forward/backward batch path, or split forward-only and train-plan batches so
    benchmark memory pressure is easier to reason about.
-5. **Integrate only if proven:** wire the fastest measured batch path behind a
-   toggle; keep N-of-K random views as the default if CLIP batching is not a
-   clear GPU win.

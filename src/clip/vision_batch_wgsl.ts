@@ -12,10 +12,12 @@
 /// <reference types="@webgpu/types" />
 import {
   planDispatches,
+  pointwiseFusedGelu,
   stepDispatches,
   type BufferRef,
   type ConvStep,
   type DispatchSpec,
+  type GeluStep,
   type VisionPlan,
 } from "./vision_wgsl";
 import { planBwdDispatches, type BwdDispatchOptions, type TrainPlan } from "./vision_bwd_wgsl";
@@ -29,6 +31,7 @@ interface BatchBinding {
 
 export interface BatchDispatchOptions extends BwdDispatchOptions {
   sharedWForwardSteps?: ReadonlySet<number>;
+  fusePointwiseGeluForward?: boolean;
 }
 
 function mainSignature(code: string): { start: number; openBrace: number; signature: string } {
@@ -115,25 +118,41 @@ function addBatchOffsets(plan: VisionPlan, spec: DispatchSpec): string {
 }
 
 function forwardDispatches(plan: VisionPlan, batch: number, opts: BatchDispatchOptions): DispatchSpec[] {
-  return plan.steps.flatMap((step, index) => {
+  const specs: DispatchSpec[] = [];
+  for (let index = 0; index < plan.steps.length; index++) {
+    const step = plan.steps[index];
     if (
       opts.sharedWForwardSteps?.has(index) &&
       step.kind === "conv" &&
       step.variant === "pointwise"
     ) {
-      return [pointwiseSharedWBatchForwardDispatch(plan, step as ConvStep, batch)];
+      specs.push(pointwiseSharedWBatchForwardDispatch(plan, step as ConvStep, batch));
+      continue;
     }
-    return stepDispatches(step).map((spec) => {
+    const next = plan.steps[index + 1];
+    if (
+      opts.fusePointwiseGeluForward &&
+      step.kind === "conv" &&
+      step.variant === "pointwise" &&
+      next?.kind === "gelu" &&
+      next.src === step.dst
+    ) {
+      specs.push(batchSpec(plan, pointwiseFusedGelu(step as ConvStep, next as GeluStep), batch));
+      index += 1;
+      continue;
+    }
+    for (const spec of stepDispatches(step)) {
       if (spec.workgroups[2] !== 1) {
         throw new Error(`vision_batch_wgsl: ${spec.label} already uses workgroup z=${spec.workgroups[2]}`);
       }
-      return {
+      specs.push({
         ...spec,
         code: addBatchOffsets(plan, spec),
         workgroups: [spec.workgroups[0], spec.workgroups[1], batch] as [number, number, number],
-      };
-    });
-  });
+      });
+    }
+  }
+  return specs;
 }
 
 function batchSpec(plan: VisionPlan, spec: DispatchSpec, batch: number): DispatchSpec {
@@ -155,7 +174,7 @@ export function batchForwardDispatches(
   if (!Number.isInteger(batch) || batch < 1) {
     throw new Error(`vision_batch_wgsl: invalid batch ${batch}`);
   }
-  if (!opts.sharedWForwardSteps?.size) {
+  if (!opts.sharedWForwardSteps?.size && !opts.fusePointwiseGeluForward) {
     return planDispatches(plan).map((spec) => batchSpec(plan, spec, batch));
   }
   return forwardDispatches(plan, batch, opts);
@@ -172,7 +191,7 @@ export function batchTrainDispatches(
   if (!Number.isInteger(batch) || batch < 1) {
     throw new Error(`vision_batch_wgsl: invalid batch ${batch}`);
   }
-  const fwd = opts.sharedWForwardSteps?.size
+  const fwd = opts.sharedWForwardSteps?.size || opts.fusePointwiseGeluForward
     ? forwardDispatches(plan, batch, opts)
     : planDispatches(plan).map((spec) => batchSpec(plan, spec, batch));
   const bwd = planBwdDispatches(plan, opts).map((spec) => batchSpec(plan, spec, batch));

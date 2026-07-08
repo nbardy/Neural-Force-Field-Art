@@ -6,7 +6,7 @@
  * based to preserve the same parity checks as the normal bench and avoid
  * parallel GPU contention.
  *
- *   TRIALS=2 CONFIGS='base=;early=8,10;stem=stem' bun tools/clip/batch_major_train_matrix.ts
+ *   TRIALS=2 CONFIGS='base=;early=8,10;stem=stem;gelu=gelu' bun tools/clip/batch_major_train_matrix.ts
  */
 import { spawnSync } from "node:child_process";
 
@@ -14,6 +14,7 @@ interface Config {
   name: string;
   steps: string;
   stemSpatialBwd: boolean;
+  fusePointwiseGeluForward: boolean;
 }
 
 interface Result extends Config {
@@ -46,8 +47,9 @@ function parseConfigs(src: string): Config[] {
       if (!name) throw new Error(`batch_major_train_matrix: bad config '${part}'`);
       const tokens = raw.split(",").map((token) => token.trim()).filter(Boolean);
       const stemSpatialBwd = tokens.includes("stem");
-      const steps = tokens.filter((token) => token !== "stem").join(",");
-      return { name, steps, stemSpatialBwd };
+      const fusePointwiseGeluForward = tokens.includes("gelu");
+      const steps = tokens.filter((token) => token !== "stem" && token !== "gelu").join(",");
+      return { name, steps, stemSpatialBwd, fusePointwiseGeluForward };
     });
   if (!configs.length) throw new Error("batch_major_train_matrix: CONFIGS produced no configs");
   return configs;
@@ -67,6 +69,7 @@ function runOne(config: Config, trial: number): Result {
     WARMUP: String(WARMUP),
     SHARED_W_FWD_STEPS: config.steps,
     STEM_SPATIAL_BWD: config.stemSpatialBwd ? "1" : "0",
+    FUSE_PW_GELU: config.fusePointwiseGeluForward ? "1" : "0",
   };
   delete env.CONFIGS;
   delete env.TRIALS;
@@ -124,6 +127,7 @@ for (let trial = 0; trial < TRIALS; trial++) {
       console.log(
         `trial ${trial} ${config.name.padEnd(10)} steps=${config.steps || "-"} ` +
           `${config.stemSpatialBwd ? "stem=1 " : ""}` +
+          `${config.fusePointwiseGeluForward ? "gelu=1 " : ""}` +
           `batch=${result.batchMs.toFixed(2)} ms (${result.msPerImage.toFixed(2)} ms/img) ` +
           `separate=${result.separateMs.toFixed(2)}`
       );
@@ -135,7 +139,7 @@ if (JSON_OUT) {
   console.log(JSON.stringify({ trials: TRIALS, batch: BATCH, runs: RUNS, warmup: WARMUP, results }, null, 2));
 } else {
   console.log("\nSummary:");
-  console.log("config       steps                 stem   batch med [min,max]   img med");
+  console.log("config       steps                 stem gelu   batch med [min,max]   img med");
   for (const config of CONFIGS) {
     const rows = results.filter((r) => r.name === config.name);
     const batchMs = rows.map((r) => r.batchMs);
@@ -143,6 +147,7 @@ if (JSON_OUT) {
     console.log(
       `${config.name.padEnd(11)} ${(config.steps || "-").padEnd(21).slice(0, 21)} ` +
         `${(config.stemSpatialBwd ? "yes" : "no").padStart(4)} ` +
+        `${(config.fusePointwiseGeluForward ? "yes" : "no").padStart(4)} ` +
         `${fmt(median(batchMs))} [${min(batchMs).toFixed(2)},${max(batchMs).toFixed(2)}] ${fmt(median(imgMs))}`
     );
   }

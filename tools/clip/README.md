@@ -236,16 +236,19 @@ BATCH=3 RUNS=2 WARMUP=3 bun tools/clip/batch_major_train_bench.ts
 BATCH=9 RUNS=2 WARMUP=2 bun tools/clip/batch_major_train_bench.ts
 TRIALS=2 CONFIGS='base=;early=8,10;candidates=8,10,111,115' bun tools/clip/batch_major_train_matrix.ts
 TRIALS=2 CONFIGS='base=;stem=stem' bun tools/clip/batch_major_train_matrix.ts
+TRIALS=2 CONFIGS='stem=stem;gelu=stem,gelu' bun tools/clip/batch_major_train_matrix.ts
 ```
 
 Gradient parity is exact for tested B=2/3/9. In the warmed train bench,
 B=3 was about 2x faster than repeated single-image forward+backward, and B=9
-was about 2.9x faster. Integration still needs the 3D rasterizer to render
-selected views into batched CLIP input lanes and route each lane's image
-gradient back through the matching camera view.
+was about 2.9x faster. The 3D optimizer now renders selected views into
+batched CLIP input lanes and routes each lane's image gradient back through the
+matching camera view using private raster forward state.
 
 The 3D optimizer enables the stem spatial-backward specialization by default for
 batch-major CLIP. Use `STEM_SPATIAL_BWD=0` in benches for the negative control.
+It also enables pointwise + GELU forward fusion for batch-major CLIP; use
+`FUSE_PW_GELU=0` in integrated 3D benches for that negative control.
 
 The shared-weight pointwise microbench tests whether multiple image lanes can
 reuse one staged W tile inside the same workgroup:

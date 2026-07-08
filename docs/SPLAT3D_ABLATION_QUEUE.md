@@ -507,7 +507,80 @@ Decision:
 - Keep `stemSpatialBwd` enabled by default for the 3D batch optimizer.
 - Keep `STEM_SPATIAL_BWD=0` as the negative-control path for future benches.
 
-### 7. F16 Weights With F32 Math
+### 7. Pointwise + GELU Forward Fusion
+
+Hypothesis: in train mode, pointwise convs followed by standalone GELU can write
+both the saved pre-activation and the GELU output in one dispatch. This removes
+24 forward GELU dispatches in the B=3 batch-major train path without changing
+backward math.
+
+Status: promoted for the 3D batch optimizer. The fused path is enabled by
+default when `clipBatchSize > 1`; `FUSE_PW_GELU=0` is the integrated benchmark
+negative control.
+
+Implementation notes:
+
+- `pointwiseFusedGelu` emits a pointwise kernel with two output bindings:
+  the original pre-activation slot and the following GELU output slot.
+- Batch dispatch generation skips the standalone GELU step only for exact
+  pointwise-conv + GELU pairs where `gelu.src === conv.dst`.
+- Spatial and SE GELU pairs are unchanged.
+
+Correctness:
+
+```bash
+FUSE_PW_GELU=1 STEM_SPATIAL_BWD=1 BATCH=3 RUNS=1 WARMUP=1 bun tools/clip/batch_major_train_bench.ts
+bun tools/clip/bwd_test.ts
+npx parcel build --no-scope-hoist --no-cache src/index.html src/splat.html src/splat3d.html
+```
+
+- Batch-major gradient parity passed for all B=3 lanes:
+  `cos=1.000000`, `relLinf=0.00e+0`.
+- Default backward tests and directional derivative gate passed.
+- Parcel build passed with the standard Browserslist warning.
+
+CLIP-only timing:
+
+```bash
+TRIALS=2 RUNS=3 WARMUP=3 CONFIGS='stem=stem;gelu=stem,gelu' bun tools/clip/batch_major_train_matrix.ts
+```
+
+| Variant | B=3 CLIP Train Median |
+| --- | ---: |
+| stem only | `73.33 ms` |
+| stem + pointwise GELU fusion | `68.06 ms` |
+
+Dispatch profile:
+
+```bash
+FUSE_PW_GELU=1 STEM_SPATIAL_BWD=1 MODE=train BATCH=3 RUNS=3 WARMUP=1 TOP=16 bun tools/clip/dispatch_profile.ts
+```
+
+- Dispatch count dropped from `281` to `257`.
+- The remaining standalone `gelu` isolated median sum was `2.194 ms`; the
+  fused `pw+gelu` group accounted for `17.046 ms`.
+
+Integrated 3D step matrix:
+
+```bash
+FUSE_PW_GELU=0 TRIALS=2 CONFIGS=3:3 RUNS=5 WARMUP=3 bun tools/splat3d/step_matrix.ts
+TRIALS=2 CONFIGS=3:3 RUNS=5 WARMUP=3 bun tools/splat3d/step_matrix.ts
+```
+
+| Variant | Normal Step Median | Profile Median | CLIP Median | Raster Median |
+| --- | ---: | ---: | ---: | ---: |
+| stem only | `88.99 ms` | `111.50 ms` | `80.68 ms` | `27.82 ms` |
+| stem + pointwise GELU fusion | `87.28 ms` | `104.88 ms` | `76.38 ms` | `25.41 ms` |
+
+Decision:
+
+- Enable by default for 3D batch CLIP because it is exact, reduces dispatch
+  count, improves B=3 CLIP train median by about `7%`, and improves integrated
+  split-profile CLIP median by about `5%`.
+- Keep it scoped to pointwise forward GELU. Do not fuse spatial/SE GELUs or
+  GELU backward until a separate full-chain-visible gate justifies it.
+
+### 8. F16 Weights With F32 Math
 
 Hypothesis: f16 weights reduce memory traffic and payload size without changing
 the core accumulation path.
@@ -520,7 +593,7 @@ Promotion gate:
 - B=3 train path improves at least 10%, or payload reduction is explicitly the
   reason for promotion.
 
-### 8. Prompt Embedding Cache
+### 9. Prompt Embedding Cache
 
 Hypothesis: same-text mode and repeated camera prompts should avoid repeated
 text encoder work.

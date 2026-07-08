@@ -178,7 +178,9 @@ export function pointwiseTiledMain(o: {
   cin: number; cout: number; P4: number; wOff: number;
   init: (j: number) => string;
   store: (j: number) => string;
+  extraStore?: (j: number) => string;
 }): string {
+  const extra = (j: number) => o.extraStore ? `\n  ${o.extraStore(j)}` : "";
   return /* wgsl */ `
 @compute @workgroup_size(8, 8)
 fn main(@builtin(workgroup_id) wid : vec3u,
@@ -211,10 +213,10 @@ fn main(@builtin(workgroup_id) wid : vec3u,
     }
     workgroupBarrier();
   }
-  dst[co * ${o.P4}u + p4] = ${o.store(0)};
-  dst[(co + 1u) * ${o.P4}u + p4] = ${o.store(1)};
-  dst[(co + 2u) * ${o.P4}u + p4] = ${o.store(2)};
-  dst[(co + 3u) * ${o.P4}u + p4] = ${o.store(3)};
+  dst[co * ${o.P4}u + p4] = ${o.store(0)};${extra(0)}
+  dst[(co + 1u) * ${o.P4}u + p4] = ${o.store(1)};${extra(1)}
+  dst[(co + 2u) * ${o.P4}u + p4] = ${o.store(2)};${extra(2)}
+  dst[(co + 3u) * ${o.P4}u + p4] = ${o.store(3)};${extra(3)}
 }`;
 }
 
@@ -264,6 +266,41 @@ ${pointwiseTiledMain({
     code,
     workgroups: [P4 / 8, s.cout / 32, 1],
     buffers,
+  };
+}
+
+export function pointwiseFusedGelu(s: ConvStep, gelu: GeluStep): DispatchSpec {
+  assertStep(s.variant === "pointwise", `${s.name}: fused GELU only supports pointwise conv`);
+  assertStep(s.act === "none", `${s.name}: fused GELU expects split train-mode conv`);
+  assertStep(s.residual === null && s.layerScaleOff === null, `${s.name}: fused GELU does not support residual epilogues`);
+  assertStep(gelu.src === s.dst, `${s.name}: fused GELU src slot ${gelu.src} != conv dst ${s.dst}`);
+  const P = s.outH * s.outW;
+  assertStep(gelu.n === s.cout * P, `${s.name}: fused GELU n=${gelu.n} != cout*P=${s.cout * P}`);
+  assertPointwiseTiles(s.name, s.cin, s.cout, P, s.wOff);
+  const P4 = P / 4;
+  const code = /* wgsl */ `
+${weightsDecl(0)}
+@group(0) @binding(1) var<storage, read> src : array<vec4f>;
+@group(0) @binding(2) var<storage, read_write> dst : array<vec4f>;
+@group(0) @binding(3) var<storage, read_write> geluDst : array<vec4f>;
+${GELU}
+${PW_TILE_DECLS}
+${pointwiseTiledMain({
+    cin: s.cin, cout: s.cout, P4, wOff: s.wOff,
+    init: (j) => `vec4f(W(${s.bOff}u + co + ${j}u))`,
+    store: (j) => `acc${j}`,
+    extraStore: (j) => `geluDst[(co + ${j}u) * ${P4}u + p4] = gelu4(acc${j});`,
+  })}`;
+  return {
+    label: `pw+gelu ${s.cin}->${s.cout} @${s.outH}x${s.outW}`,
+    code,
+    workgroups: [P4 / 8, s.cout / 32, 1],
+    buffers: [
+      { kind: "weights" },
+      { kind: "slot", slot: s.src },
+      { kind: "slot", slot: s.dst },
+      { kind: "slot", slot: gelu.dst },
+    ],
   };
 }
 

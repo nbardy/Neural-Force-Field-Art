@@ -263,3 +263,36 @@ TRIALS=2 CONFIGS=3:3 RUNS=5 WARMUP=3 bun tools/splat3d/step_matrix.ts
 
 Use `STEM_SPATIAL_BWD=0` as the negative-control path when future CLIP changes
 need to compare against the pre-specialization baseline.
+
+## Pointwise GELU Forward Fusion
+
+The B=3 post-stem dispatch profile still showed standalone train-mode GELU
+forward/backward as a visible traffic cost. The promoted forward-only fusion
+handles the 24 exact pointwise-conv + GELU pairs by writing both the saved
+pre-activation slot and the GELU output slot from one pointwise dispatch.
+Spatial and SE GELU pairs remain split.
+
+Verification:
+
+```bash
+FUSE_PW_GELU=1 STEM_SPATIAL_BWD=1 BATCH=3 RUNS=1 WARMUP=1 bun tools/clip/batch_major_train_bench.ts
+bun tools/clip/bwd_test.ts
+npx parcel build --no-scope-hoist --no-cache src/index.html src/splat.html src/splat3d.html
+```
+
+Same-session B=3 CLIP matrix:
+
+| Variant | B=3 CLIP Train Median |
+| --- | ---: |
+| stem only | `73.33 ms` |
+| stem + pointwise GELU fusion | `68.06 ms` |
+
+Integrated 3D step matrix:
+
+| Variant | Normal Step Median | Profile Median | CLIP Median |
+| --- | ---: | ---: | ---: |
+| `FUSE_PW_GELU=0` | `88.99 ms` | `111.50 ms` | `80.68 ms` |
+| default fused | `87.28 ms` | `104.88 ms` | `76.38 ms` |
+
+The 3D batch optimizer enables this by default. Use `FUSE_PW_GELU=0` in
+`tools/splat3d/step_bench.ts` / `step_matrix.ts` as the negative control.
