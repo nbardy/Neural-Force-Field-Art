@@ -331,3 +331,17 @@ numbers are noisy at `G=256`, but the important result is that the dynamic
 background and regularizer paths execute, and the regularizer overhead is visible
 as its own measured timing row instead of being hidden in the hot raster/CLIP
 paths.
+
+Follow-up branch/fusion gate at `G=512` compared the current all-off path to the
+pre-toggle parent commit (`9423aee`) and found no default-path regression:
+
+- pre-toggle `base=3:3`: `46.49 ms` normal-step median;
+- current all-off `base=3:3`: `46.17 ms` normal-step median;
+- current dark background only: `46.88 ms` normal-step median;
+- current dark background + weak alpha/bounds: `46.48 ms` normal-step median,
+  with `0.30 ms` median regularizer pass.
+
+Decision: keep these as browser toggles. They are not implemented as hot
+per-pixel shader branches: black render keeps the static bind layout, dynamic
+background uses a separate raster variant, and regularization is a skipped pass
+when disabled.

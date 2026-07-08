@@ -320,6 +320,31 @@ Result: `normal step avg 148.76 ms`, `profile 53.66 ms`, `clipBatch 46.15 ms`,
 `raster 4.06 ms`, `regularizer 0.29 ms`. This validates that dynamic background
 and the regularizer pass also work through the `grid80 + 2 full` path.
 
+Branch/fusion checkpoint after the toggle implementation:
+
+```bash
+G=512 TRIALS=4 RUNS=5 WARMUP=2 CONFIGS='base=3:3,bg=3:3:bgdark,conv=3:3:bgdark:alphaweak:boundsweak' bun tools/splat3d/step_matrix.ts
+```
+
+| Config | Normal Median | Profile Median | Clip Median | Raster Median | Regularizer Median |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `base` | `46.17 ms` | `48.73 ms` | `41.10 ms` | `5.51 ms` | `0.00 ms` |
+| `bg` | `46.88 ms` | `49.47 ms` | `42.02 ms` | `5.40 ms` | `0.00 ms` |
+| `conv` | `46.48 ms` | `50.52 ms` | `42.23 ms` | `5.54 ms` | `0.30 ms` |
+
+Pre-toggle parent baseline (`9423aee`) with the same `G=512`, `TRIALS=4`,
+`RUNS=5`, `WARMUP=2`, `CONFIGS='base=3:3'` measured `46.49 ms` normal-step
+median, `48.61 ms` profile median, `41.22 ms` CLIP median, and `5.30 ms`
+raster median.
+
+Read: there is no measured default-path regression from adding the toggles in
+this gate. The all-off path stays comparable to the pre-toggle commit. The
+background toggle does not add a per-pixel shader branch: black render uses the
+static raster bind layout and random/curriculum background compiles the
+dynamic-background raster variant. The regularizer toggle is a separate GPU pass
+that is not recorded when disabled, so it should not block CLIP/raster shader
+fusion.
+
 ## Default Grid80 Backward Stack
 
 The grid80 path now defaults to the measured exact backward stack when the
