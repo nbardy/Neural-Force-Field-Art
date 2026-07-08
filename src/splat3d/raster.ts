@@ -196,7 +196,7 @@ export class Raster3DEngine {
     this.vBuf = this.storage(GP, U.COPY_DST);
     this.tileCounts = this.storage(d.numTiles, U.COPY_DST | U.COPY_SRC);
     this.binnedIds = this.storage(d.numTiles * d.cap);
-    this.tileStop = this.storage(d.numTiles);
+    this.tileStop = this.storage(d.numTiles, U.COPY_SRC);
     this.image = this.storage(3 * d.H * d.W, U.COPY_SRC);
     this.gradImage = this.storage(3 * d.H * d.W, U.COPY_DST);
     this.cameraBuffer = this.device.createBuffer({

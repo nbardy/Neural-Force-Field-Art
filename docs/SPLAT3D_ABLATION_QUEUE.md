@@ -826,6 +826,58 @@ Remaining:
 - Add an explicit browser smoke/readout check for same-text prompt count.
 - Consider IndexedDB persistence after the hot-loop work is further along.
 
+### 10. Raster Occupancy Telemetry
+
+Hypothesis: before another raster scheduler or staging rewrite, measure whether
+the current bottleneck is tile overflow, high occupancy, or long per-tile
+compositing chains.
+
+Status: telemetry tool landed.
+
+Implementation:
+
+- Added `tools/splat3d/raster_telemetry.ts`.
+- It renders selected 3D views, reads `tileCounts` and `tileStop`, and reports
+  active-tile rate, overflow tiles/pairs, count percentiles, stop percentiles,
+  and mean `stop/count`.
+- `tileStop` now has `COPY_SRC` usage so tools can inspect it.
+
+Commands:
+
+```bash
+bun tools/splat3d/raster_telemetry.ts
+G=12000 CAP=2048 bun tools/splat3d/raster_telemetry.ts
+```
+
+Default `G=4096`, `CAP=2048` result:
+
+| Metric | Result |
+| --- | ---: |
+| Aggregate overflow pairs | `0 / 576871` |
+| Max tile count | `911` |
+| Max tile stop | `365` |
+| Worst dropped pair pct | `0.0%` |
+
+High-splat stress `G=12000`, `CAP=2048` result:
+
+| Metric | Result |
+| --- | ---: |
+| Aggregate overflow pairs | `21440 / 1717219` (`1.2%`) |
+| Max tile count | `2678` |
+| Max tile stop | `702` |
+| Worst dropped pair pct | `3.6%` |
+
+Interpretation:
+
+- Overflow is not a default-workload bottleneck at 4096 splats.
+- The current default cap is conservative for the initial 4096-splat scene:
+  observed max tile count is below `1024`.
+- Overflow starts to matter at much higher splat counts, especially oblique
+  high/low views.
+- The next measured raster ablation should test a smaller cap such as `1024`
+  on the default workload, while keeping high-splat stress telemetry as the
+  safety check.
+
 ## Already Tried
 
 ### Exact Circle-Vs-Tile Support Pruning

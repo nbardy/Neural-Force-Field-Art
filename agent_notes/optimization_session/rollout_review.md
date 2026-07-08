@@ -77,6 +77,9 @@ commit-and-measure loop:
 - View-lane raster backward with lane-strided `accGrad` was also implemented as
   an exact gate and parity-tested. It reduced sampled raster time in some
   matrices but did not improve the default optimizer step, so it stays gated.
+- Raster occupancy telemetry landed after the forward/backward scheduler gates.
+  It showed zero default overflow at 4096 splats and max tile count below 1024,
+  making smaller-cap testing more actionable than overflow handling.
 - STAR UVT/world-tube review clarified that exact multi-view raster batching is
   a scheduler problem first; sublinear camera-bundle rendering needs a different
   primitive.

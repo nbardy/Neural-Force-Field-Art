@@ -402,3 +402,36 @@ Decision: keep the gate and parity coverage, but do not enable it by default.
 The sampled raster split improved in places, but the default 3-view optimizer
 step got slower. Further raster work should add overflow/occupancy telemetry or
 real timestamp attribution before more scheduling rewrites.
+
+## Raster Occupancy Telemetry
+
+`tools/splat3d/raster_telemetry.ts` now reads `tileCounts` and `tileStop` after
+real raster forwards:
+
+```bash
+bun tools/splat3d/raster_telemetry.ts
+G=12000 CAP=2048 bun tools/splat3d/raster_telemetry.ts
+```
+
+Default `G=4096`, `CAP=2048` has no overflow:
+
+| Metric | Value |
+| --- | ---: |
+| Aggregate overflow pairs | `0 / 576871` |
+| Max tile count | `911` |
+| Max tile stop | `365` |
+| Worst dropped pair pct | `0.0%` |
+
+Stress `G=12000`, `CAP=2048` starts to overflow:
+
+| Metric | Value |
+| --- | ---: |
+| Aggregate overflow pairs | `21440 / 1717219` (`1.2%`) |
+| Max tile count | `2678` |
+| Max tile stop | `702` |
+| Worst dropped pair pct | `3.6%` |
+
+Takeaway: overflow handling is not a default 4096-splat bottleneck. The current
+`2048` cap is conservative for the default scene, so the next concrete raster
+ablation should test `cap=1024` in the integrated step matrix, with telemetry as
+the safety gate.
