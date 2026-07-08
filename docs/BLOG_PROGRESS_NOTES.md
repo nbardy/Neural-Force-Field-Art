@@ -35,6 +35,18 @@ Capture these as the system gets better:
 - Call out the first prompt/background hypothesis: black renderer background plus optional `on a black background` CLIP text.
 - Leave ablations for later; this checkpoint is about making the system visible and testable.
 
+## Reflection Checkpoint
+
+See `docs/SPLAT3D_REFLECTION_REVIEW.md` for the corrected speed ladder and
+forward-looking direction map. The blog should separate the product-level
+`9/9 -> 3/9` speedup story from the same-CLIP-budget optimization story:
+
+- product-level: original full `9/9` independent views to current sampled/grid
+  paths is roughly `3.6x-3.9x` faster depending on layout;
+- same CLIP count: old `3/9` to current `3/9` is about `1.33x` faster;
+- `grid80 + 2 full` uses the same three CLIP images per step, costs about `8.6%`
+  more than current `3/9`, and keeps pressure on all nine views.
+
 ## Next Plan Notes
 
 - Do not start broad ablations yet.
