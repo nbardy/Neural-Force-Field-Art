@@ -58,6 +58,7 @@
 	      #gridPromptMode { max-width: 156px; }
 	      #gridRasterMode { max-width: 166px; }
 	      #viewSampler { max-width: 148px; }
+	      #qualityPreset { max-width: 142px; }
 	      #backgroundMode { max-width: 142px; }
 	      #alphaReg { max-width: 132px; }
 	      #boundsReg { max-width: 132px; }
@@ -92,46 +93,51 @@
       <div id="controls">
         <input id="prompt" type="text" placeholder="a photo of a cat"
                value="a photo of a cat" autocomplete="off" />
+        <select id="qualityPreset">
+          <option value="dream" selected>dream-ish</option>
+          <option value="fast">fast base</option>
+          <option value="manual">manual</option>
+        </select>
         <select id="view"></select>
         <select id="promptMode">
           <option value="camera">camera text</option>
-          <option value="coarse">coarse text</option>
+          <option value="coarse" selected>coarse text</option>
           <option value="same">same text</option>
         </select>
         <select id="bgTextMode">
           <option value="black">black bg</option>
-          <option value="centered">centered bg</option>
+          <option value="centered" selected>centered bg</option>
           <option value="none">no bg text</option>
         </select>
         <select id="backgroundMode">
-          <option value="black" selected>black render</option>
+          <option value="black">black render</option>
           <option value="dark_random">dark random</option>
-          <option value="curriculum">bg curriculum</option>
+          <option value="curriculum" selected>bg curriculum</option>
         </select>
         <select id="alphaReg">
-          <option value="off" selected>alpha off</option>
-          <option value="weak">alpha weak</option>
+          <option value="off">alpha off</option>
+          <option value="weak" selected>alpha weak</option>
           <option value="medium">alpha med</option>
         </select>
         <select id="boundsReg">
-          <option value="off" selected>bounds off</option>
-          <option value="weak">bounds weak</option>
+          <option value="off">bounds off</option>
+          <option value="weak" selected>bounds weak</option>
           <option value="medium">bounds med</option>
         </select>
         <select id="framingMode">
-          <option value="normal" selected>normal cam</option>
-          <option value="zoom_out">zoom out</option>
+          <option value="normal">normal cam</option>
+          <option value="zoom_out" selected>zoom out</option>
         </select>
         <select id="viewBatch">
           <option value="1">1/9 view</option>
           <option value="2">2/9 views</option>
-          <option value="3" selected>3/9 views</option>
-          <option value="5">5/9 views</option>
+          <option value="3">3/9 views</option>
+          <option value="5" selected>5/9 views</option>
           <option value="9">9/9 views</option>
         </select>
         <select id="viewSampler">
-          <option value="epoch" selected>epoch views</option>
-          <option value="random">random views</option>
+          <option value="epoch">epoch views</option>
+          <option value="random" selected>random views</option>
         </select>
 	        <select id="clipMode">
 	          <option value="1">single CLIP</option>

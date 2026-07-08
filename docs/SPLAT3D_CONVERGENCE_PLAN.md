@@ -345,3 +345,33 @@ Decision: keep these as browser toggles. They are not implemented as hot
 per-pixel shader branches: black render keeps the static bind layout, dynamic
 background uses a separate raster variant, and regularization is a skipped pass
 when disabled.
+
+## Quality Default Checkpoint
+
+The first browser default was still the fast ablation baseline:
+
+- camera-specific prompt wording;
+- black render;
+- alpha/bounds regularizers off;
+- normal framing;
+- 3 epoch-sampled views.
+
+That is useful for speed comparisons, but it is a bad default for visual
+quality and still looks far behind Dream Fields. The page now opens in a
+`dream-ish` preset:
+
+- coarse view prompts;
+- `centered on a black background` prompt suffix;
+- background curriculum;
+- weak alpha and bounds regularization;
+- zoomed-out framing;
+- 5 random views per step;
+- a geometry-biased LR profile: higher position/radius LR and lower color LR.
+
+The old setup is preserved as `fast base`, and any manual control edit switches
+the readout to `manual`.
+
+This is still not Dream Fields parity. The next real quality gap is not another
+UI preset; it is differentiable image augmentation and a rendered alpha /
+transmittance coverage loss. The current alpha regularizer is per-splat opacity
+sparsity, which is weaker than a rendered occupancy/transmittance objective.

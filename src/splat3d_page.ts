@@ -24,6 +24,7 @@ import type { TrainPlan } from "./clip/vision";
 
 const SIDE = 256;
 const HW = SIDE * SIDE;
+type QualityPreset = "dream" | "fast" | "manual";
 
 interface Status {
   gpu: boolean;
@@ -35,6 +36,7 @@ interface Status {
   initialCos: number | null;
   error: string | null;
   phase: string;
+  qualityPreset: QualityPreset;
   promptMode: ViewPromptMode;
   gridPromptMode: Grid9PromptMode;
   bgPromptMode: BackgroundPromptMode;
@@ -60,16 +62,17 @@ const status: Status = {
   initialCos: null,
   error: null,
   phase: "boot",
-  promptMode: "camera",
+  qualityPreset: "dream",
+  promptMode: "coarse",
   gridPromptMode: "contact_sheet",
-  bgPromptMode: "black",
-  backgroundMode: "black",
-  alphaReg: "off",
-  boundsReg: "off",
-  framingMode: "normal",
+  bgPromptMode: "centered",
+  backgroundMode: "curriculum",
+  alphaReg: "weak",
+  boundsReg: "weak",
+  framingMode: "zoom_out",
   profiling: false,
-  viewsPerStep: 3,
-  viewSampler: "epoch",
+  viewsPerStep: 5,
+  viewSampler: "random",
   clipBatchSize: 3,
   clipLayout: "per_view",
   gridDirectRaster: false,
@@ -78,6 +81,7 @@ const status: Status = {
 
 const gridEl = document.getElementById("grid") as HTMLDivElement;
 const promptInput = document.getElementById("prompt") as HTMLInputElement;
+const qualityPresetSelect = document.getElementById("qualityPreset") as HTMLSelectElement;
 const viewSelect = document.getElementById("view") as HTMLSelectElement;
 const promptModeSelect = document.getElementById("promptMode") as HTMLSelectElement;
 const bgTextModeSelect = document.getElementById("bgTextMode") as HTMLSelectElement;
@@ -113,6 +117,7 @@ function renderReadout(): void {
   status.step = opt ? opt.stepCount : 0;
   const camera = opt?.cameras[displayView]?.name ?? "view";
   const parts: string[] = [`step ${status.step}`, camera];
+  parts.push(status.qualityPreset === "dream" ? "dream-ish" : status.qualityPreset === "fast" ? "fast base" : "manual");
   if (opt) parts.push(`${status.viewsPerStep}/${opt.cameras.length} views`);
   if (status.viewSampler === "random") parts.push("random");
   parts.push(status.clipBatchSize > 1 ? `clip x${status.clipBatchSize}` : "clip x1");
@@ -200,6 +205,22 @@ function selectedClipBatchSize(): number {
   return Number.isFinite(n) && n > 1 ? Math.min(9, n | 0) : 1;
 }
 
+function selectedQualityPreset(): QualityPreset {
+  if (qualityPresetSelect.value === "fast") return "fast";
+  if (qualityPresetSelect.value === "manual") return "manual";
+  return "dream";
+}
+
+function selectedLrs() {
+  if (selectedQualityPreset() !== "dream") return undefined;
+  return {
+    position: 0.035,
+    logRadius: 0.018,
+    color: 0.035,
+    opacity: 0.025,
+  };
+}
+
 function selectedClipLayout(): Splat3DClipLayout {
   return clipLayoutSelect.value === "grid9_close2" ? "grid9_close2" : "per_view";
 }
@@ -268,7 +289,57 @@ function selectedConvergenceConfig(): Splat3DConvergenceConfig {
   };
 }
 
+let applyingPreset = false;
+
+function applyQualityPresetToControls(preset: QualityPreset): void {
+  if (preset === "manual") return;
+  applyingPreset = true;
+  try {
+    if (preset === "dream") {
+      promptModeSelect.value = "coarse";
+      bgTextModeSelect.value = "centered";
+      backgroundModeSelect.value = "curriculum";
+      alphaRegSelect.value = "weak";
+      boundsRegSelect.value = "weak";
+      framingModeSelect.value = "zoom_out";
+      viewBatchSelect.value = "5";
+      viewSamplerSelect.value = "random";
+      clipLayoutSelect.value = "per_view";
+      clipModeSelect.value = "3";
+      return;
+    }
+    promptModeSelect.value = "camera";
+    bgTextModeSelect.value = "black";
+    backgroundModeSelect.value = "black";
+    alphaRegSelect.value = "off";
+    boundsRegSelect.value = "off";
+    framingModeSelect.value = "normal";
+    viewBatchSelect.value = "3";
+    viewSamplerSelect.value = "epoch";
+    clipLayoutSelect.value = "per_view";
+    clipModeSelect.value = "3";
+  } finally {
+    applyingPreset = false;
+  }
+}
+
+function markManualPreset(): void {
+  if (applyingPreset) return;
+  if (qualityPresetSelect.value !== "manual") {
+    qualityPresetSelect.value = "manual";
+    status.qualityPreset = "manual";
+  }
+}
+
+function syncPromptStatus(): void {
+  status.promptMode = selectedPromptMode();
+  status.gridPromptMode = selectedGridPromptMode();
+  status.gridDirectRaster = selectedGridDirectRaster();
+  status.bgPromptMode = selectedBgPromptMode();
+}
+
 function syncConvergenceStatus(): void {
+  status.qualityPreset = selectedQualityPreset();
   status.backgroundMode = selectedBackgroundMode();
   status.alphaReg = selectedAlphaReg();
   status.boundsReg = selectedBoundsReg();
@@ -287,6 +358,7 @@ function setControlsDisabled(disabled: boolean): void {
   const grid = selectedClipLayout() === "grid9_close2";
   optimizeBtn.disabled = disabled;
   resetBtn.disabled = disabled;
+  qualityPresetSelect.disabled = disabled;
   viewSelect.disabled = disabled;
   promptModeSelect.disabled = disabled;
   bgTextModeSelect.disabled = disabled;
@@ -310,6 +382,7 @@ async function rebuildOptimizer(nextSeed: number, phase: string): Promise<void> 
   status.viewsPerStep = selectedViewsPerStep();
   status.viewSampler = selectedViewSampler();
   status.clipBatchSize = selectedClipBatchSize();
+  syncPromptStatus();
   syncConvergenceStatus();
   renderReadout();
   const old = opt;
@@ -319,6 +392,7 @@ async function rebuildOptimizer(nextSeed: number, phase: string): Promise<void> 
     clipLayout: status.clipLayout,
     viewSampler: status.viewSampler,
     gridDirectRaster: status.gridDirectRaster,
+    lrs: selectedLrs(),
     convergence: selectedConvergenceConfig(),
     cameras: camerasForFraming(status.framingMode),
   });
@@ -632,10 +706,8 @@ function setDisplayView(view: number): void {
 }
 
 function onPromptModeChange(): void {
-  status.promptMode = selectedPromptMode();
-  status.gridPromptMode = selectedGridPromptMode();
-  status.gridDirectRaster = selectedGridDirectRaster();
-  status.bgPromptMode = selectedBgPromptMode();
+  markManualPreset();
+  syncPromptStatus();
   latestTimings = null;
   if (viewEmbeds) {
     status.running = false;
@@ -659,6 +731,7 @@ async function onConvergenceSettingsChange(): Promise<void> {
     framingModeSelect.value = status.framingMode;
     return;
   }
+  markManualPreset();
   syncConvergenceStatus();
   status.running = false;
   viewEmbeds = null;
@@ -678,7 +751,48 @@ async function onConvergenceSettingsChange(): Promise<void> {
   }
 }
 
+async function onQualityPresetChange(): Promise<void> {
+  const previous = status.qualityPreset;
+  const preset = selectedQualityPreset();
+  status.qualityPreset = preset;
+  if (!status.ready) {
+    applyQualityPresetToControls(preset);
+    syncPromptStatus();
+    syncConvergenceStatus();
+    status.viewsPerStep = selectedViewsPerStep();
+    status.viewSampler = selectedViewSampler();
+    status.clipBatchSize = selectedClipBatchSize();
+    renderReadout();
+    return;
+  }
+  if (profileBusy) {
+    setNotice("wait for profiling sample to finish before changing quality preset");
+    qualityPresetSelect.value = previous;
+    status.qualityPreset = previous;
+    return;
+  }
+  applyQualityPresetToControls(preset);
+  syncClipLayoutControls();
+  status.running = false;
+  viewEmbeds = null;
+  status.cos = null;
+  status.initialCos = null;
+  latestTimings = null;
+  setControlsDisabled(true);
+  try {
+    await rebuildOptimizer(seed, "preset");
+    setNotice("");
+    status.phase = "idle";
+  } catch (e: any) {
+    fail(`quality preset change failed: ${e?.message ?? e}`);
+  } finally {
+    setControlsDisabled(false);
+    renderReadout();
+  }
+}
+
 function onViewBatchChange(): void {
+  markManualPreset();
   syncClipLayoutControls();
   status.viewsPerStep = selectedViewsPerStep();
   latestTimings = null;
@@ -697,6 +811,7 @@ async function onClipSettingsChange(): Promise<void> {
     syncClipLayoutControls();
     return;
   }
+  markManualPreset();
   status.running = false;
   viewEmbeds = null;
   status.cos = null;
@@ -783,7 +898,9 @@ async function boot(): Promise<void> {
   status.phase = "optimizer";
   readoutEl.textContent = "building 3D optimizer…";
   await buildBlitPipeline();
+  applyQualityPresetToControls(selectedQualityPreset());
   syncClipLayoutControls();
+  syncPromptStatus();
   syncConvergenceStatus();
   opt = await Splat3DOptimizer.create(device, plan, weights, {
     seed,
@@ -791,6 +908,7 @@ async function boot(): Promise<void> {
     clipLayout: selectedClipLayout(),
     viewSampler: selectedViewSampler(),
     gridDirectRaster: selectedGridDirectRaster(),
+    lrs: selectedLrs(),
     convergence: selectedConvergenceConfig(),
     cameras: camerasForFraming(status.framingMode),
   });
@@ -820,6 +938,7 @@ async function boot(): Promise<void> {
 optimizeBtn.addEventListener("click", () => void onOptimize());
 resetBtn.addEventListener("click", () => void onReset());
 viewSelect.addEventListener("change", () => void onViewChange());
+qualityPresetSelect.addEventListener("change", () => void onQualityPresetChange());
 promptModeSelect.addEventListener("change", onPromptModeChange);
 bgTextModeSelect.addEventListener("change", onPromptModeChange);
 backgroundModeSelect.addEventListener("change", () => void onConvergenceSettingsChange());
