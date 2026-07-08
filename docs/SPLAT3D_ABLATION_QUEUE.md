@@ -103,7 +103,8 @@ Hypothesis: exact dispatch timing will prevent wasted kernel rewrites and show
 whether pointwise, `spatial_bwd`, attention, or elementwise kernels are the real
 next target.
 
-Status: first isolated profiler landed.
+Status: first isolated profiler landed. A sequential integrated matrix runner
+also landed after single-run timing proved noisy.
 
 Implementation notes:
 
@@ -147,6 +148,36 @@ Interpretation:
   1.8%-1.9% of the isolated median sum in the warmed profiles.
 - GELU traffic is large enough to keep fusion on the backlog, but after batch
   integration and the highest pointwise/spatial tests.
+
+Attempt 2 result:
+
+- Added `tools/splat3d/step_matrix.ts`.
+- It runs `tools/splat3d/step_bench.ts` sequentially for a config matrix and
+  summarizes median/min/max normal step, split profile, CLIP, and raster time.
+- This is a benchmark-control tool for future ablations, not a runtime speed
+  change.
+
+Command run:
+
+```bash
+TRIALS=2 CONFIGS=3:1,3:3 RUNS=4 WARMUP=2 bun tools/splat3d/step_matrix.ts
+```
+
+Observed run:
+
+| Views | CLIP batch | Median normal | Range | Median profile | Median CLIP | Median raster |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3/9 | 1 | 194.68 ms | 163.44-225.91 ms | 188.71 ms | 156.67 ms | 24.76 ms |
+| 3/9 | 3 | 143.66 ms | 141.55-145.77 ms | 139.09 ms | 111.31 ms | 23.69 ms |
+
+Interpretation:
+
+- Current machine/GPU state is much slower than the earlier per-lane raster
+  baseline, so one-off timings should not be used to judge a shader patch.
+- The same-session matrix still supports `batch CLIP x3` over single CLIP for
+  the default `3/9` workload.
+- Future performance attempts should use `step_matrix.ts` or GPU timestamp
+  queries before promotion.
 
 ### 3. Raster/CLIP Buffer Aliasing
 

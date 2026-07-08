@@ -198,3 +198,17 @@ x9` is still not worth promoting on this hardware.
 
 The 3D page now defaults to `3 / 9 views` plus `batch CLIP x3`. Single CLIP and
 batch x9 remain available as explicit ablation toggles.
+
+## Step Matrix Runner
+
+`tools/splat3d/step_matrix.ts` runs `step_bench.ts` sequentially across a config
+matrix and reports medians plus min/max ranges. Use it for future performance
+promotion decisions when the GPU is noisy:
+
+```bash
+TRIALS=2 CONFIGS=3:1,3:3 RUNS=4 WARMUP=2 bun tools/splat3d/step_matrix.ts
+```
+
+First control run under a slow/noisy GPU state still showed the same-session
+direction: `3/9 batch x3` median normal step `143.66 ms` versus `194.68 ms` for
+`3/9 single CLIP`.
