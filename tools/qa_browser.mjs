@@ -82,6 +82,22 @@ await clickPiece("Helmholtz · Species");
 await sleep(12000);
 await probe("helmholtz_species");
 
+// ---- the selectable model types — all FUSED-trained since M4 (train_wgsl
+// generates each backward; verified vs tfjs fixtures on Metal, see
+// tools/train_types_test.ts). QA: they must render, move, and show the
+// fused rollout/optim HUD lines without console errors. ----
+await clickPiece("Helmholtz · SIREN");
+await sleep(12000);
+await probe("helmholtz_siren");
+
+await clickPiece("Helmholtz · Fourier");
+await sleep(12000);
+await probe("helmholtz_fourier");
+
+await clickPiece("Helmholtz · HashGrid");
+await sleep(12000);
+await probe("helmholtz_hashgrid");
+
 console.log(`\n--- CONSOLE (${consoleLines.length}) ---`);
 for (const l of consoleLines.slice(0, 40)) console.log(l);
 
