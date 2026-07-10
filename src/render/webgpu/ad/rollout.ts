@@ -29,16 +29,52 @@ export interface RolloutCfg {
   wSpiral: number;
   wIso: number;
   N: number; // batch size — for the 1/N and 1/(N·K) loss scalings
+  /**
+   * Input encoding ahead of the heads (default raw). Fourier builds γ(p) in
+   * the IR — sin/cos nodes — so its encoding jacobian falls out of the same
+   * reverse pass (nothing hand-derived). SIREN needs no entry here: it is raw
+   * encoding + act:"sin" layers in the head dims. HashGrid is NOT expressible
+   * in this static scalar graph (its gather indices are data-dependent) — its
+   * fused backward is verified directly on Metal vs the tfjs fixture instead
+   * (tools/train_types_test.ts).
+   */
+  encoding?: { kind: "raw" } | { kind: "fourier"; octaves: number };
+}
+
+/** γ(p) in the IR — [x, y, sin(ωk x), sin(ωk y), cos(ωk x), cos(ωk y)]·k,
+ *  ωk = 2^k·2π; feature order matches helmholtz.ts fourierEncode / the WGSL. */
+function encodeInput(g: Graph, pn: V2, cfg: RolloutCfg): Node[] {
+  const enc = cfg.encoding ?? { kind: "raw" };
+  if (enc.kind === "raw") return [pn[0], pn[1]];
+  const out: Node[] = [pn[0], pn[1]];
+  for (let k = 0; k < enc.octaves; k++) {
+    const w = g.const(Math.pow(2, k) * 2 * Math.PI);
+    out.push(
+      g.sin(g.mul(w, pn[0])),
+      g.sin(g.mul(w, pn[1])),
+      g.cos(g.mul(w, pn[0])),
+      g.cos(g.mul(w, pn[1]))
+    );
+  }
+  return out;
 }
 
 // weight/bias leaf names (head h ∈ {0=order/g, 1=chaos/r}), shared across samples
 export const wName = (h: number) => (l: number, i: number, j: number) => `w_${h}_${l}_${i}_${j}`;
 export const bName = (h: number) => (l: number, j: number) => `b_${h}_${l}_${j}`;
 
-/** blended RAW field force F(pn) = (1−α)·head0(pn) + α·head1(pn). No forceMag. */
-function blendRaw(g: Graph, dimsG: HeadDim[], dimsR: HeadDim[], pn: V2, alpha: number): V2 {
-  const fg = buildHead(g, dimsG, [pn[0], pn[1]], wName(0), bName(0));
-  const fr = buildHead(g, dimsR, [pn[0], pn[1]], wName(1), bName(1));
+/** blended RAW field force F(pn) = (1−α)·head0(γ(pn)) + α·head1(γ(pn)). No forceMag. */
+function blendRaw(
+  g: Graph,
+  cfg: RolloutCfg,
+  dimsG: HeadDim[],
+  dimsR: HeadDim[],
+  pn: V2,
+  alpha: number
+): V2 {
+  const enc = encodeInput(g, pn, cfg);
+  const fg = buildHead(g, dimsG, enc, wName(0), bName(0));
+  const fr = buildHead(g, dimsR, enc, wName(1), bName(1));
   const a1 = g.const(1 - alpha), a = g.const(alpha);
   return [
     g.add(g.mul(a1, fg[0]), g.mul(a, fr[0])),
@@ -69,7 +105,7 @@ export function buildSample(g: Graph, cfg: RolloutCfg, dimsG: HeadDim[], dimsR: 
   const Fs: V2[] = [];
   for (let k = 0; k < cfg.K; k++) {
     const pn: V2 = [g.div(pos[0], W), g.div(pos[1], H)];
-    const fraw = blendRaw(g, dimsG, dimsR, pn, cfg.alpha);
+    const fraw = blendRaw(g, cfg, dimsG, dimsR, pn, cfg.alpha);
     const Fk: V2 = [g.mul(fraw[0], fm), g.mul(fraw[1], fm)];
     Fs.push(Fk);
     // vel = clip((vel+F)·friction, ±maxVel)  — clip via min/max
@@ -84,9 +120,9 @@ export function buildSample(g: Graph, cfg: RolloutCfg, dimsG: HeadDim[], dimsR: 
   // probes at pn = pos_K/[W,H] (raw field output — matches the fixture)
   const pn: V2 = [g.div(posK[0], W), g.div(posK[1], H)];
   const hh = g.const(cfg.hh);
-  const f0 = blendRaw(g, dimsG, dimsR, pn, cfg.alpha);
-  const fx = blendRaw(g, dimsG, dimsR, [g.add(pn[0], hh), pn[1]], cfg.alpha);
-  const fy = blendRaw(g, dimsG, dimsR, [pn[0], g.add(pn[1], hh)], cfg.alpha);
+  const f0 = blendRaw(g, cfg, dimsG, dimsR, pn, cfg.alpha);
+  const fx = blendRaw(g, cfg, dimsG, dimsR, [g.add(pn[0], hh), pn[1]], cfg.alpha);
+  const fy = blendRaw(g, cfg, dimsG, dimsR, [pn[0], g.add(pn[1], hh)], cfg.alpha);
   const chaos = chaosTerm(g, f0, fx, fy, cfg.hh);
   const div = divergenceTerm(g, f0, fx, fy, cfg.hh);
 

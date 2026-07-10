@@ -1,8 +1,37 @@
 # Source-to-source AD: generating the backward WGSL from the forward codegen
 
-**Status:** design + plan (2026-07). Sibling to `MATH_ANALYTIC_GRADIENTS.md`
-(which is the *hand-derived* math this AD pass must reproduce bit-for-bit) and
-`PLAN_FUSED_TRAIN.md` (the shipped hand-written trainer).
+**Status:** M0–M4 SHIPPED (2026-07-10), M5 (forward-mode JVP) landed in the IR.
+Sibling to `MATH_ANALYTIC_GRADIENTS.md` (the *hand-derived* math this AD pass
+must reproduce bit-for-bit) and `PLAN_FUSED_TRAIN.md` (the shipped trainer).
+
+**M4 outcome (fused training for every field type):** `train_wgsl.ts` now
+generates the backward for all four model types — standard, SIREN, Fourier,
+HashGrid — and `main.ts` routes them ALL through the fused trainer (the
+`?train=tfjs` fallback remains for A/B). Per-type derivative machinery, each
+piece exactly what §5 predicted:
+- **SIREN** — sin layers checkpoint their PRE-activation to scratch
+  (`pOff` blocks); backward computes `cos(stored s)` (1 SFU op — recompute
+  beat the extra `cos` store, §5.2). The checkpoint requirement was surfaced
+  mechanically by the IR's sin rule (`ad/autodiff.ts`).
+- **Fourier** — `encodeSite` stores γ(u) per site; the encoding jacobian
+  REUSES the stored sin/cos features as their own derivatives
+  (d sin(ωx)/dx = ω·cos(ωx) = ω·enc[o+2]) — zero new transcendentals, the
+  derivative-from-value trick applied to the encoding (§5.1-style reuse).
+- **HashGrid** — bilinear-interp jacobian (grid-value differences × (gs−1),
+  clip-masked to match tfjs `clipByValue`); pass A stores per-site dL/dEnc;
+  pass B gained a `grid` segment handler that gather-side scatters
+  corner-weight × dEnc into each cell (tfjs's onehotᵀ matmul backward,
+  expressed per-thread).
+Verification (tools/train_types_test.ts, real Metal via bun-webgpu): loss +
+per-variable grads vs tfjs-autograd fixtures for standard/siren/fourier/
+hashgrid (K=1) and siren (K=4 BPTT) — **worst cos = 1.0000000 across all
+five fixtures**, and every type's loss strictly drops over 30 fused steps.
+The IR oracle (`tools/ad_train_test.ts`) independently reproduces the
+siren/fourier/standard gradients in pure JS (hashgrid's data-dependent gather
+is not expressible in the static scalar graph — Metal-verified only).
+Fixtures: `tools/grad_reference.ts` gained `MODEL=` (fixture recipe unchanged
+otherwise). The encoding/activation dispatch happens at CODEGEN time — each
+generated shader still has exactly one path.
 
 **One-line thesis:** `train_wgsl.ts` is, today, *the hand-written output of what
 reverse-mode autodiff would generate* for the standard architecture. Adding

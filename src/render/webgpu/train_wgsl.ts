@@ -36,10 +36,30 @@
  *   header (6K+2): pos_0..pos_K, velPre_1..velPre_K, Fs_0..Fs_{K-1}
  *   site inputs ((K+3)·2): u per site — sites 0..K-1 are the physics evals,
  *     sites K..K+2 the probes at pos_K
- *   per site, per head: [a_l for every layer] then [δ_l for every layer]
+ *   encoded inputs (sites·encDim, ENCODED LAYOUTS ONLY): γ(u) per site —
+ *     pass B's layer-0 dW needs a_in = the encoded features, and the fourier
+ *     backward reuses the stored sin/cos features as their own derivatives
+ *   dEnc (sites·encDim, HASHGRID ONLY): dL/d(encoded input) per site, written
+ *     by pass A's bwd, read by pass B's grid-scatter segment
+ *   per site, per head: [a_l for every layer] then [δ_l for every layer] then
+ *     [pre-activations, SIN LAYERS ONLY] — sin' = cos(s) needs the PRE-act
+ *     (post-act sin(s) loses cos's sign), the checkpoint the AD engine
+ *     surfaced mechanically (src/render/webgpu/ad/, docs/PLAN_AD_IR_BACKWARD_CODEGEN.md §5)
+ *
+ * FIELD-TYPE SUPPORT: all four model types (standard / siren / fourier /
+ * hashgrid) train fused. The encoding dispatch happens at CODEGEN time — each
+ * generated shader has exactly ONE path (no runtime branching on type).
+ * Gradient semantics verified vs tfjs-autograd fixtures per type
+ * (tools/grad_reference.ts MODEL=…, tools/train_types_test.ts).
  */
 
-import { CLASS_SALT, type FieldLayout, type HeadSpec } from "./advect_wgsl";
+import {
+  CLASS_SALT,
+  encodingDim,
+  type Encoding,
+  type FieldLayout,
+  type HeadSpec,
+} from "./advect_wgsl";
 
 export const TRAIN_WG = 256;
 /** Pass A is now MULTI-workgroup (ceil(N/TRAIN_WG) workgroups for fwd/bwd),
@@ -79,6 +99,16 @@ export interface TrainScratchLayout {
   siteBlk: number;
   /** offset of site-input array within a sample block */
   siteInOff: number;
+  /** encoded input width (2 for raw; 2+4·oct fourier; F hashgrid) */
+  encDim: number;
+  /** floats per site of stored encoded input (0 when encoding is raw) */
+  encStore: number;
+  /** offset of the per-site encoded-input array (== dEncOff when raw) */
+  encOff: number;
+  /** floats per site of stored dL/dEnc (encDim for hashgrid, else 0) */
+  dEncStore: number;
+  /** offset of the per-site dEnc array (== headSiteOff when not hashgrid) */
+  dEncOff: number;
   /** offset of the (site,head) blocks within a sample block */
   headSiteOff: number;
   /** floats per sample block */
@@ -87,6 +117,8 @@ export interface TrainScratchLayout {
   aOff: number[][];
   /** per head: delta offsets per layer within its block */
   dOff: number[][];
+  /** per head: PRE-activation offset per layer (−1 unless activation is sin) */
+  pOff: number[][];
 }
 
 export function trainScratchLayout(
@@ -99,6 +131,7 @@ export function trainScratchLayout(
   const heads = field.spec.heads as HeadSpec[];
   const aOff: number[][] = [];
   const dOff: number[][] = [];
+  const pOff: number[][] = [];
   const headBlk: number[] = [];
   for (const h of heads) {
     const outs = h.layers.map((L) => L.outSize);
@@ -115,9 +148,23 @@ export function trainScratchLayout(
       dg.push(d);
       d += s;
     }
+    // sin layers (SIREN) checkpoint their PRE-activation after the δ block —
+    // sin'(s)=cos(s) is not recoverable from the stored post-act sin(s).
+    // Non-sin heads add zero floats, so standard layouts are bit-identical.
+    let p = 2 * total;
+    const po: number[] = [];
+    for (const L of h.layers) {
+      if (L.activation === "sin") {
+        po.push(p);
+        p += L.outSize;
+      } else {
+        po.push(-1);
+      }
+    }
     aOff.push(ao);
     dOff.push(dg);
-    headBlk.push(2 * total);
+    pOff.push(po);
+    headBlk.push(p);
   }
   const sites = kSteps + 3;
   const siteBlk = headBlk.reduce((a, b) => a + b, 0);
@@ -127,11 +174,21 @@ export function trainScratchLayout(
   const clsOff = fsOff + 2 * kSteps;
   const headerSize = clsOff + 1; // = 6K+3
   const siteInOff = headerSize;
-  const headSiteOff = siteInOff + sites * 2;
+  // encoded layouts store γ(u) per site (pass B layer-0 a_in + fourier bwd
+  // feature reuse); hashgrid additionally stores dL/dEnc per site (pass B grid
+  // scatter). Raw: both blocks are empty → offsets collapse, stride unchanged.
+  const enc = field.encoding;
+  const encDim = encodingDim(enc);
+  const encStore = enc.kind === "raw" ? 0 : encDim;
+  const dEncStore = enc.kind === "hashgrid" ? encDim : 0;
+  const encOff = siteInOff + sites * 2;
+  const dEncOff = encOff + sites * encStore;
+  const headSiteOff = dEncOff + sites * dEncStore;
   const sampleStride = headSiteOff + sites * siteBlk;
   return {
     kSteps, sites, headerSize, posOff, velPreOff, fsOff, clsOff,
-    headBlk, siteBlk, siteInOff, headSiteOff, sampleStride, aOff, dOff,
+    headBlk, siteBlk, siteInOff, encDim, encStore, encOff, dEncStore, dEncOff,
+    headSiteOff, sampleStride, aOff, dOff, pOff,
   };
 }
 
@@ -174,36 +231,121 @@ function actApply(act: string, expr: string): string {
     case "selu": return `selu(${expr})`;
     case "tanh": return `tanh(${expr})`;
     case "sigmoid": return `sigmoid_(${expr})`;
+    case "sin": return `sin(${expr})`;
     default: return expr;
   }
 }
+/** derivative from the POST-activation — sin is NOT here on purpose: sin'
+ *  needs the pre-activation (see layerDeriv), which the layout checkpoints. */
 function actDeriv(act: string, postAct: string): string {
   switch (act) {
     case "selu": return `seluD(${postAct})`;
     case "tanh": return `tanhD(${postAct})`;
     case "sigmoid": return `sigmoidD(${postAct})`;
+    case "sin":
+      throw new Error("train: sin derivative needs the pre-activation (layerDeriv)");
     default: return `1.0`;
   }
 }
+/** φ' for layer l of head h: post-act trick where possible, cos(stored
+ *  pre-act) for sin (1 SFU op — recompute beats the extra store, plan §5.2). */
+function layerDeriv(
+  h: number,
+  l: number,
+  act: string,
+  sl: TrainScratchLayout,
+  postAct: string,
+  idx: string
+): string {
+  if (act !== "sin") return actDeriv(act, postAct);
+  return `cos(scratch[base + ${sl.pOff[h][l]}u + ${idx}])`;
+}
+
+/** fourier ωk literals — MUST match advect_wgsl's looped emitter + helmholtz.ts
+ *  fourierEncode (ωk = 2^k·2π, feature order [sin ωx, sin ωy, cos ωx, cos ωy]). */
+const fourierOmega = (k: number) => (Math.pow(2, k) * 2 * Math.PI).toFixed(8);
 
 /**
- * Forward evaluator for head `h` that STORES every post-activation to
- * scratch at `base` (the (sample,site,head) block start) and returns the
- * 2-vector output.
+ * `encodeSite(u, encBase)` — computes the encoded input γ(u) once per site and
+ * stores it to scratch (both heads + pass B read it). Only emitted for
+ * encoded (non-raw) layouts; one generated handler per encoding kind.
  */
-function emitFwdStore(h: number, head: HeadSpec, sl: TrainScratchLayout, maxW: number): string {
-  // inputs beyond [x,y] are one-hot class channels (validated by layoutField)
-  const classChannels = head.layers[0].inSize - 2;
+function emitEncode(enc: Encoding): string {
+  if (enc.kind === "fourier") {
+    const lines: string[] = [`fn encodeSite(uIn : vec2f, encBase : u32) {`];
+    lines.push(`  scratch[encBase] = uIn.x;`);
+    lines.push(`  scratch[encBase + 1u] = uIn.y;`);
+    for (let k = 0; k < enc.octaves; k++) {
+      const w = fourierOmega(k);
+      const o = 2 + 4 * k;
+      lines.push(`  scratch[encBase + ${o}u] = sin(${w} * uIn.x);`);
+      lines.push(`  scratch[encBase + ${o + 1}u] = sin(${w} * uIn.y);`);
+      lines.push(`  scratch[encBase + ${o + 2}u] = cos(${w} * uIn.x);`);
+      lines.push(`  scratch[encBase + ${o + 3}u] = cos(${w} * uIn.y);`);
+    }
+    lines.push(`}`);
+    return lines.join("\n");
+  }
+  if (enc.kind === "hashgrid") {
+    // bilinear interp of the learned grid at weights offset 0 — same indexing
+    // as advect_wgsl's looped emitter and helmholtz.ts gridInterp.
+    const { gridSize: gs, features: F } = enc;
+    return `fn encodeSite(uIn : vec2f, encBase : u32) {
+  let gxf = clamp(uIn.x, 0.0, 1.0) * ${(gs - 1).toFixed(1)};
+  let gyf = clamp(uIn.y, 0.0, 1.0) * ${(gs - 1).toFixed(1)};
+  let ix = u32(floor(gxf)); let iy = u32(floor(gyf));
+  let fx = gxf - floor(gxf); let fy = gyf - floor(gyf);
+  let ix1 = min(ix + 1u, ${gs - 1}u); let iy1 = min(iy + 1u, ${gs - 1}u);
+  let b00 = (iy * ${gs}u + ix) * ${F}u;
+  let b10 = (iy * ${gs}u + ix1) * ${F}u;
+  let b01 = (iy1 * ${gs}u + ix) * ${F}u;
+  let b11 = (iy1 * ${gs}u + ix1) * ${F}u;
+  let w00 = (1.0 - fx) * (1.0 - fy); let w10 = fx * (1.0 - fy);
+  let w01 = (1.0 - fx) * fy; let w11 = fx * fy;
+  for (var fi = 0u; fi < ${F}u; fi = fi + 1u) {
+    scratch[encBase + fi] = w00 * weights[b00 + fi] + w10 * weights[b10 + fi]
+                          + w01 * weights[b01 + fi] + w11 * weights[b11 + fi];
+  }
+}`;
+  }
+  throw new Error("train: emitEncode called for raw encoding");
+}
+
+/**
+ * Forward evaluator for head `h` that STORES every post-activation (and, for
+ * sin layers, the pre-activation) to scratch at `base` (the (sample,site,head)
+ * block start) and returns the 2-vector output.
+ *
+ * Raw layouts keep the original `(p, base, cls)` signature; encoded layouts
+ * read the per-site γ(u) that `encodeSite` stored (`(encBase, base)` — classes
+ * are raw-only, enforced by layoutField).
+ */
+function emitFwdStore(
+  h: number,
+  head: HeadSpec,
+  sl: TrainScratchLayout,
+  maxW: number,
+  enc: Encoding
+): string {
+  // inputs beyond the encoded dims are one-hot class channels (raw only)
+  const classChannels = head.layers[0].inSize - sl.encDim;
   const lines: string[] = [];
-  lines.push(`fn fwd_head_${h}(p : vec2f, base : u32, cls : u32) -> vec2f {`);
-  if (classChannels === 0) lines.push(`  let _cls = cls; // classless head`);
-  lines.push(`  var cur : array<f32, ${maxW}>;`);
-  lines.push(`  var nxt : array<f32, ${maxW}>;`);
-  lines.push(`  cur[0] = p.x; cur[1] = p.y;`);
-  if (classChannels > 0) {
-    lines.push(`  for (var k = 0u; k < ${classChannels}u; k = k + 1u) {`);
-    lines.push(`    cur[2u + k] = select(0.0, 1.0, k == cls);`);
-    lines.push(`  }`);
+  if (enc.kind === "raw") {
+    lines.push(`fn fwd_head_${h}(p : vec2f, base : u32, cls : u32) -> vec2f {`);
+    if (classChannels === 0) lines.push(`  let _cls = cls; // classless head`);
+    lines.push(`  var cur : array<f32, ${maxW}>;`);
+    lines.push(`  var nxt : array<f32, ${maxW}>;`);
+    lines.push(`  cur[0] = p.x; cur[1] = p.y;`);
+    if (classChannels > 0) {
+      lines.push(`  for (var k = 0u; k < ${classChannels}u; k = k + 1u) {`);
+      lines.push(`    cur[2u + k] = select(0.0, 1.0, k == cls);`);
+      lines.push(`  }`);
+    }
+  } else {
+    lines.push(`fn fwd_head_${h}(encBase : u32, base : u32) -> vec2f {`);
+    lines.push(`  var cur : array<f32, ${maxW}>;`);
+    lines.push(`  var nxt : array<f32, ${maxW}>;`);
+    lines.push(`  for (var i = 0u; i < ${sl.encDim}u; i = i + 1u) { cur[i] = scratch[encBase + i]; }`);
   }
   head.layers.forEach((L, l) => {
     lines.push(`  // layer ${l}: ${L.inSize} -> ${L.outSize} (${L.activation})`);
@@ -212,6 +354,9 @@ function emitFwdStore(h: number, head: HeadSpec, sl: TrainScratchLayout, maxW: n
     lines.push(`    for (var i = 0u; i < ${L.inSize}u; i = i + 1u) {`);
     lines.push(`      s = s + cur[i] * weights[${L.weightOffset}u + i * ${L.outSize}u + j];`);
     lines.push(`    }`);
+    if (L.activation === "sin") {
+      lines.push(`    scratch[base + ${sl.pOff[h][l]}u + j] = s; // sin checkpoint (bwd needs cos(s))`);
+    }
     lines.push(`    let a = ${actApply(L.activation, "s")};`);
     lines.push(`    scratch[base + ${sl.aOff[h][l]}u + j] = a;`);
     lines.push(`    nxt[j] = a;`);
@@ -227,11 +372,33 @@ function emitFwdStore(h: number, head: HeadSpec, sl: TrainScratchLayout, maxW: n
  * Backward for head `h`: takes dL/d(head output) (blend factor already
  * applied), reads stored activations, writes per-layer δ's to scratch, and
  * returns dL/d(input) — the probe/position chains need it.
+ *
+ * The input-gradient tail is type-directed (one generated path per encoding):
+ *   raw      — du = W0ᵀ·δ0 rows [x,y] (original code, byte-stable)
+ *   fourier  — full dEnc = W0ᵀ·δ0, then du = J_γᵀ·dEnc where J_γ REUSES the
+ *              stored sin/cos features as their own derivatives (d sin(ωx)/dx
+ *              = ω·cos(ωx) = ω·enc[o+2] — zero new transcendentals, plan §5)
+ *   hashgrid — dEnc stored to scratch (pass B's grid scatter reads it; head 0
+ *              seeds, head 1 accumulates), du via the bilinear-interp jacobian
+ *              (grid-value differences × (gs−1), clip-masked like tfjs
+ *              clipByValue: zero gradient outside [0,1])
  */
-function emitBwdStore(h: number, head: HeadSpec, sl: TrainScratchLayout, maxW: number): string {
+function emitBwdStore(
+  h: number,
+  head: HeadSpec,
+  sl: TrainScratchLayout,
+  maxW: number,
+  enc: Encoding
+): string {
   const nL = head.layers.length;
   const lines: string[] = [];
-  lines.push(`fn bwd_head_${h}(dOut : vec2f, base : u32) -> vec2f {`);
+  const sig =
+    enc.kind === "raw"
+      ? `fn bwd_head_${h}(dOut : vec2f, base : u32) -> vec2f {`
+      : enc.kind === "fourier"
+      ? `fn bwd_head_${h}(dOut : vec2f, base : u32, encBase : u32) -> vec2f {`
+      : `fn bwd_head_${h}(dOut : vec2f, base : u32, uIn : vec2f, dEncBase : u32) -> vec2f {`;
+  lines.push(sig);
   lines.push(`  var dcur : array<f32, ${maxW}>;`);
   lines.push(`  var dprev : array<f32, ${maxW}>;`);
   {
@@ -240,8 +407,8 @@ function emitBwdStore(h: number, head: HeadSpec, sl: TrainScratchLayout, maxW: n
     lines.push(`  {`);
     lines.push(`    let a0 = scratch[base + ${sl.aOff[h][nL - 1]}u];`);
     lines.push(`    let a1 = scratch[base + ${sl.aOff[h][nL - 1]}u + 1u];`);
-    lines.push(`    dcur[0] = dOut.x * ${actDeriv(L.activation, "a0")};`);
-    lines.push(`    dcur[1] = dOut.y * ${actDeriv(L.activation, "a1")};`);
+    lines.push(`    dcur[0] = dOut.x * ${layerDeriv(h, nL - 1, L.activation, sl, "a0", "0u")};`);
+    lines.push(`    dcur[1] = dOut.y * ${layerDeriv(h, nL - 1, L.activation, sl, "a1", "1u")};`);
     lines.push(`    scratch[base + ${sl.dOff[h][nL - 1]}u] = dcur[0];`);
     lines.push(`    scratch[base + ${sl.dOff[h][nL - 1]}u + 1u] = dcur[1];`);
     lines.push(`  }`);
@@ -256,20 +423,74 @@ function emitBwdStore(h: number, head: HeadSpec, sl: TrainScratchLayout, maxW: n
     lines.push(`      s = s + weights[${Lnext.weightOffset}u + i * ${Lnext.outSize}u + j] * dcur[j];`);
     lines.push(`    }`);
     lines.push(`    let a = scratch[base + ${sl.aOff[h][l]}u + i];`);
-    lines.push(`    dprev[i] = s * ${actDeriv(L.activation, "a")};`);
+    lines.push(`    dprev[i] = s * ${layerDeriv(h, l, L.activation, sl, "a", "i")};`);
     lines.push(`    scratch[base + ${sl.dOff[h][l]}u + i] = dprev[i];`);
     lines.push(`  }`);
     lines.push(`  for (var i = 0u; i < ${L.outSize}u; i = i + 1u) { dcur[i] = dprev[i]; }`);
   }
-  {
-    const L0 = head.layers[0];
+  const L0 = head.layers[0];
+  if (enc.kind === "raw") {
     lines.push(`  var du = vec2f(0.0, 0.0);`);
     lines.push(`  for (var j = 0u; j < ${L0.outSize}u; j = j + 1u) {`);
     lines.push(`    du.x = du.x + weights[${L0.weightOffset}u + j] * dcur[j];`);
     lines.push(`    du.y = du.y + weights[${L0.weightOffset + L0.outSize}u + j] * dcur[j];`);
     lines.push(`  }`);
     lines.push(`  return du;`);
+    lines.push(`}`);
+    return lines.join("\n");
   }
+  // encoded: full dL/dEnc = W0ᵀ·δ0 over all encDim input channels
+  lines.push(`  var dEnc : array<f32, ${sl.encDim}>;`);
+  lines.push(`  for (var i = 0u; i < ${sl.encDim}u; i = i + 1u) {`);
+  lines.push(`    var s = 0.0;`);
+  lines.push(`    for (var j = 0u; j < ${L0.outSize}u; j = j + 1u) {`);
+  lines.push(`      s = s + weights[${L0.weightOffset}u + i * ${L0.outSize}u + j] * dcur[j];`);
+  lines.push(`    }`);
+  lines.push(`    dEnc[i] = s;`);
+  lines.push(`  }`);
+  if (enc.kind === "fourier") {
+    lines.push(`  var du = vec2f(dEnc[0], dEnc[1]);`);
+    for (let k = 0; k < enc.octaves; k++) {
+      const w = fourierOmega(k);
+      const o = 2 + 4 * k;
+      lines.push(
+        `  du.x = du.x + ${w} * (scratch[encBase + ${o + 2}u] * dEnc[${o}] - scratch[encBase + ${o}u] * dEnc[${o + 2}]);`
+      );
+      lines.push(
+        `  du.y = du.y + ${w} * (scratch[encBase + ${o + 3}u] * dEnc[${o + 1}] - scratch[encBase + ${o + 1}u] * dEnc[${o + 3}]);`
+      );
+    }
+    lines.push(`  return du;`);
+    lines.push(`}`);
+    return lines.join("\n");
+  }
+  // hashgrid
+  const { gridSize: gs, features: F } = enc;
+  const store = h === 0 ? `scratch[dEncBase + i] = dEnc[i];`
+                        : `scratch[dEncBase + i] = scratch[dEncBase + i] + dEnc[i];`;
+  lines.push(`  // pass B's grid scatter reads dEnc; head 0 seeds, head 1 accumulates`);
+  lines.push(`  for (var i = 0u; i < ${F}u; i = i + 1u) { ${store} }`);
+  lines.push(`  // du through the bilinear interp (corner geometry recomputed from uIn)`);
+  lines.push(`  let gxf = clamp(uIn.x, 0.0, 1.0) * ${(gs - 1).toFixed(1)};`);
+  lines.push(`  let gyf = clamp(uIn.y, 0.0, 1.0) * ${(gs - 1).toFixed(1)};`);
+  lines.push(`  let ix = u32(floor(gxf)); let iy = u32(floor(gyf));`);
+  lines.push(`  let fx = gxf - floor(gxf); let fy = gyf - floor(gyf);`);
+  lines.push(`  let ix1 = min(ix + 1u, ${gs - 1}u); let iy1 = min(iy + 1u, ${gs - 1}u);`);
+  lines.push(`  let b00 = (iy * ${gs}u + ix) * ${F}u;`);
+  lines.push(`  let b10 = (iy * ${gs}u + ix1) * ${F}u;`);
+  lines.push(`  let b01 = (iy1 * ${gs}u + ix) * ${F}u;`);
+  lines.push(`  let b11 = (iy1 * ${gs}u + ix1) * ${F}u;`);
+  lines.push(`  var gx = 0.0; var gy = 0.0;`);
+  lines.push(`  for (var fi = 0u; fi < ${F}u; fi = fi + 1u) {`);
+  lines.push(`    let g00 = weights[b00 + fi]; let g10 = weights[b10 + fi];`);
+  lines.push(`    let g01 = weights[b01 + fi]; let g11 = weights[b11 + fi];`);
+  lines.push(`    gx = gx + dEnc[fi] * ((1.0 - fy) * (g10 - g00) + fy * (g11 - g01));`);
+  lines.push(`    gy = gy + dEnc[fi] * ((1.0 - fx) * (g01 - g00) + fx * (g11 - g10));`);
+  lines.push(`  }`);
+  lines.push(`  // clip mask: tfjs clipByValue has zero grad outside [0,1] (probes can exceed 1)`);
+  lines.push(`  let mx = select(0.0, 1.0, uIn.x >= 0.0 && uIn.x <= 1.0);`);
+  lines.push(`  let my = select(0.0, 1.0, uIn.y >= 0.0 && uIn.y <= 1.0);`);
+  lines.push(`  return vec2f(gx * ${(gs - 1).toFixed(1)} * mx, gy * ${(gs - 1).toFixed(1)} * my);`);
   lines.push(`}`);
   return lines.join("\n");
 }
@@ -298,8 +519,10 @@ export function trainPassAShader(
   const K = opts.kSteps ?? 1;
   const sl = trainScratchLayout(field, K);
   const heads = field.spec.heads as HeadSpec[];
+  const enc = field.encoding;
   const maxW = Math.max(
     2,
+    sl.encDim,
     ...heads.flatMap((h) => h.layers.map((L) => Math.max(L.outSize, L.inSize)))
   );
   const WG = TRAIN_WG;
@@ -313,6 +536,27 @@ export function trainPassAShader(
   const blendAt = (sx: string) =>
     `(1.0 - u.alpha) * vec2f(scratch[${hsBase(sx, 0)} + ${aoutOff(0)}u], scratch[${hsBase(sx, 0)} + ${aoutOff(0) + 1}u])` +
     ` + u.alpha * vec2f(scratch[${hsBase(sx, 1)} + ${aoutOff(1)}u], scratch[${hsBase(sx, 1)} + ${aoutOff(1) + 1}u])`;
+
+  // --- type-directed call-site generators (dispatch happens HERE, at codegen
+  // time — every emitted shader has exactly one path per encoding kind) -------
+  const encBase = (site: string) => `sBase + ${sl.encOff}u + (${site}) * ${sl.encDim}u`;
+  const dEncBase = (site: string) => `sBase + ${sl.dEncOff}u + (${site}) * ${sl.encDim}u`;
+  /** stored site input u, for bwd call sites that need it (hashgrid jacobian) */
+  const siteU = (site: string) =>
+    `vec2f(scratch[sBase + ${sl.siteInOff}u + (${site}) * 2u], scratch[sBase + ${sl.siteInOff}u + (${site}) * 2u + 1u])`;
+  /** lines to run once per site before the head evals (encoded layouts only) */
+  const encodeAt = (uExpr: string, site: string) =>
+    enc.kind === "raw" ? `` : `encodeSite(${uExpr}, ${encBase(site)});\n    `;
+  const fwdCall = (h: number, uExpr: string, site: string) =>
+    enc.kind === "raw"
+      ? `fwd_head_${h}(${uExpr}, ${hsBase(site, h)}, cls)`
+      : `fwd_head_${h}(${encBase(site)}, ${hsBase(site, h)})`;
+  const bwdCall = (h: number, dExpr: string, site: string) =>
+    enc.kind === "raw"
+      ? `bwd_head_${h}(${dExpr}, ${hsBase(site, h)})`
+      : enc.kind === "fourier"
+      ? `bwd_head_${h}(${dExpr}, ${hsBase(site, h)}, ${encBase(site)})`
+      : `bwd_head_${h}(${dExpr}, ${hsBase(site, h)}, ${siteU(site)}, ${dEncBase(site)})`;
 
   const TWO_PI = 6.283185307179586;
 
@@ -354,9 +598,10 @@ struct UA {
 
 ${COMMON}
 
-${heads.map((h, i) => emitFwdStore(i, h, sl, maxW)).join("\n\n")}
+${enc.kind === "raw" ? "" : emitEncode(enc) + "\n"}
+${heads.map((h, i) => emitFwdStore(i, h, sl, maxW, enc)).join("\n\n")}
 
-${heads.map((h, i) => emitBwdStore(i, h, sl, maxW)).join("\n\n")}
+${heads.map((h, i) => emitBwdStore(i, h, sl, maxW, enc)).join("\n\n")}
 
 // per-workgroup reduction scratch: vec4(Σ Fs.x², Σ Fs.y², Σ Fs.xy, Σ loss)
 // — the Fs sums run over ALL K steps' forces (isotropy batch = N·K).
@@ -420,8 +665,8 @@ fn fwd(@builtin(global_invocation_id) gid : vec3u,
       let uk = p / res;
       scratch[sBase + ${sl.siteInOff}u + k * 2u] = uk.x;
       scratch[sBase + ${sl.siteInOff}u + k * 2u + 1u] = uk.y;
-      let F = (1.0 - u.alpha) * fwd_head_0(uk, ${hsBase("k", 0)}, cls)
-            + u.alpha * fwd_head_1(uk, ${hsBase("k", 1)}, cls);
+      ${encodeAt("uk", "k")}let F = (1.0 - u.alpha) * ${fwdCall(0, "uk", "k")}
+            + u.alpha * ${fwdCall(1, "uk", "k")};
       let Fs = F * u.forceMag;
       scratch[sBase + ${sl.fsOff}u + k * 2u] = Fs.x;
       scratch[sBase + ${sl.fsOff}u + k * 2u + 1u] = Fs.y;
@@ -447,9 +692,9 @@ fn fwd(@builtin(global_invocation_id) gid : vec3u,
     scratch[sBase + ${sl.siteInOff}u + ${K * 2 + 3}u] = px.y;
     scratch[sBase + ${sl.siteInOff}u + ${K * 2 + 4}u] = py.x;
     scratch[sBase + ${sl.siteInOff}u + ${K * 2 + 5}u] = py.y;
-    let f0 = (1.0 - u.alpha) * fwd_head_0(p0, ${hsBase(`${K}u`, 0)}, cls) + u.alpha * fwd_head_1(p0, ${hsBase(`${K}u`, 1)}, cls);
-    let fx = (1.0 - u.alpha) * fwd_head_0(px, ${hsBase(`${K + 1}u`, 0)}, cls) + u.alpha * fwd_head_1(px, ${hsBase(`${K + 1}u`, 1)}, cls);
-    let fy = (1.0 - u.alpha) * fwd_head_0(py, ${hsBase(`${K + 2}u`, 0)}, cls) + u.alpha * fwd_head_1(py, ${hsBase(`${K + 2}u`, 1)}, cls);
+    ${encodeAt("p0", `${K}u`)}${encodeAt("px", `${K + 1}u`)}${encodeAt("py", `${K + 2}u`)}let f0 = (1.0 - u.alpha) * ${fwdCall(0, "p0", `${K}u`)} + u.alpha * ${fwdCall(1, "p0", `${K}u`)};
+    let fx = (1.0 - u.alpha) * ${fwdCall(0, "px", `${K + 1}u`)} + u.alpha * ${fwdCall(1, "px", `${K + 1}u`)};
+    let fy = (1.0 - u.alpha) * ${fwdCall(0, "py", `${K + 2}u`)} + u.alpha * ${fwdCall(1, "py", `${K + 2}u`)};
 
     // per-sample loss terms (means applied via 1/n)
     let dxv = fx - f0;
@@ -591,12 +836,12 @@ fn bwd(@builtin(global_invocation_id) gid : vec3u) {
 
     // probe backward (input grads flow to pn); blend factors on the way in
     var dpn = vec2f(0.0);
-    dpn = dpn + bwd_head_0(df0 * (1.0 - u.alpha), ${hsBase(`${K}u`, 0)});
-    dpn = dpn + bwd_head_1(df0 * u.alpha,         ${hsBase(`${K}u`, 1)});
-    dpn = dpn + bwd_head_0(dfx * (1.0 - u.alpha), ${hsBase(`${K + 1}u`, 0)});
-    dpn = dpn + bwd_head_1(dfx * u.alpha,         ${hsBase(`${K + 1}u`, 1)});
-    dpn = dpn + bwd_head_0(dfy * (1.0 - u.alpha), ${hsBase(`${K + 2}u`, 0)});
-    dpn = dpn + bwd_head_1(dfy * u.alpha,         ${hsBase(`${K + 2}u`, 1)});
+    dpn = dpn + ${bwdCall(0, "df0 * (1.0 - u.alpha)", `${K}u`)};
+    dpn = dpn + ${bwdCall(1, "df0 * u.alpha", `${K}u`)};
+    dpn = dpn + ${bwdCall(0, "dfx * (1.0 - u.alpha)", `${K + 1}u`)};
+    dpn = dpn + ${bwdCall(1, "dfx * u.alpha", `${K + 1}u`)};
+    dpn = dpn + ${bwdCall(0, "dfy * (1.0 - u.alpha)", `${K + 2}u`)};
+    dpn = dpn + ${bwdCall(1, "dfy * u.alpha", `${K + 2}u`)};
 
     // dL/dpos_K = spiral + probes/res ; dL/dvel_K = 0 (loss ignores velocity)
     var dpos = spc * (vec2f(dx, dy) / r - b * reluMask * vec2f(-dy, dx) / r2)
@@ -622,8 +867,8 @@ fn bwd(@builtin(global_invocation_id) gid : vec3u) {
       dFs.x = dFs.x + ${LOSS.W_ISO} * (2.0 * dC.x * Fs.x + dC.z * Fs.y) / nkf;
       dFs.y = dFs.y + ${LOSS.W_ISO} * (2.0 * dC.y * Fs.y + dC.z * Fs.x) / nkf;
       let dF = dFs * u.forceMag;
-      let du0 = bwd_head_0(dF * (1.0 - u.alpha), ${hsBase("k", 0)});
-      let du1 = bwd_head_1(dF * u.alpha,         ${hsBase("k", 1)});
+      let du0 = ${bwdCall(0, "dF * (1.0 - u.alpha)", "k")};
+      let du1 = ${bwdCall(1, "dF * u.alpha", "k")};
       dpos = dpos + (du0 + du1) / res;       // dL/dpos_k
       dvel = dpre * u.friction;              // dL/dvel_k
     }
@@ -659,21 +904,62 @@ export function trainPassBShader(
   const K = opts.kSteps ?? 1;
   const sl = trainScratchLayout(field, K);
   const heads = field.spec.heads as HeadSpec[];
+  const enc = field.encoding;
   const STRIDE = sl.sampleStride;
 
   const blocks: string[] = [];
   for (const seg of field.segments) {
+    if (seg.role === "grid") {
+      // hashgrid feature table (weights offset 0): thread = one grid float
+      // (cell, feature). dGrid[cell][f] = Σ over (sample, site) of the
+      // bilinear corner weight × the stored dL/dEnc — the scatter that tfjs's
+      // oneHotᵀ·(w·dOut) matmul backward performs, expressed gather-side (each
+      // grid float scans the sites and claims the corners that land on it;
+      // ix1==ix at the clamp border makes TWO corners match — both add, same
+      // as tfjs summing coincident scatters).
+      const encH = enc as Extract<Encoding, { kind: "hashgrid" }>;
+      const { gridSize: gs, features: F } = encH;
+      blocks.push(`
+  if (t >= ${seg.floatOffset}u && t < ${seg.floatOffset + seg.floatLength}u) {
+    let cell = (t - ${seg.floatOffset}u) / ${F}u;
+    let f = (t - ${seg.floatOffset}u) % ${F}u;
+    for (var s = 0u; s < ub.n; s = s + 1u) {
+      let sBase = s * ${STRIDE}u;
+      for (var site = 0u; site < ${sl.sites}u; site = site + 1u) {
+        let ux = scratch[sBase + ${sl.siteInOff}u + site * 2u];
+        let uy = scratch[sBase + ${sl.siteInOff}u + site * 2u + 1u];
+        let gxf = clamp(ux, 0.0, 1.0) * ${(gs - 1).toFixed(1)};
+        let gyf = clamp(uy, 0.0, 1.0) * ${(gs - 1).toFixed(1)};
+        let ix = u32(floor(gxf)); let iy = u32(floor(gyf));
+        let fx = gxf - floor(gxf); let fy = gyf - floor(gyf);
+        let ix1 = min(ix + 1u, ${gs - 1}u); let iy1 = min(iy + 1u, ${gs - 1}u);
+        var wsum = 0.0;
+        if (iy * ${gs}u + ix == cell) { wsum = wsum + (1.0 - fx) * (1.0 - fy); }
+        if (iy * ${gs}u + ix1 == cell) { wsum = wsum + fx * (1.0 - fy); }
+        if (iy1 * ${gs}u + ix == cell) { wsum = wsum + (1.0 - fx) * fy; }
+        if (iy1 * ${gs}u + ix1 == cell) { wsum = wsum + fx * fy; }
+        g = g + wsum * scratch[sBase + ${sl.dEncOff}u + site * ${sl.encDim}u + f];
+      }
+    }
+  }`);
+      continue;
+    }
     const h = seg.head;
     const l = seg.layer;
     const L = heads[h].layers[l];
-    const classChannels = l === 0 ? heads[h].layers[0].inSize - 2 : 0;
+    const classChannels =
+      l === 0 ? heads[h].layers[0].inSize - sl.encDim : 0;
     const start = seg.floatOffset;
     const end = seg.floatOffset + seg.floatLength;
     const headOff = h === 0 ? 0 : sl.headBlk[0];
     const hsBase = `sBase + ${sl.headSiteOff}u + site * ${sl.siteBlk}u + ${headOff}u`;
+    // layer-0 a_in: raw reads the stored site position; encoded layouts read
+    // the per-site γ(u) block that pass A's encodeSite stored.
     const aIn =
       l === 0
-        ? `scratch[sBase + ${sl.siteInOff}u + site * 2u + i]`
+        ? enc.kind === "raw"
+          ? `scratch[sBase + ${sl.siteInOff}u + site * 2u + i]`
+          : `scratch[sBase + ${sl.encOff}u + site * ${sl.encDim}u + i]`
         : `scratch[${hsBase} + ${sl.aOff[h][l - 1]}u + i]`;
     if (seg.role === "kernel" && classChannels > 0) {
       // layer 0 of a class-aware head: rows 0,1 read the site position, rows

@@ -92,6 +92,16 @@ const OUT = process.env.OUT ?? "tools/fixtures/grad_ref.json";
 //         the shipped case). field.forces() throws for C>0, so the blend is
 //         computed by hand through field.heads (see forceEval below).
 const CLASSES = Number(process.env.CLASSES ?? 0);
+//   MODEL — field architecture (standard | siren | fourier | hashgrid). The
+//         non-standard types use the field's tfjs path (manual sin / γ(p) /
+//         gridInterp) — the SAME code the app's ?train=tfjs route runs — so a
+//         fixture verifies the fused trainer against real app semantics.
+//         classes>0 is standard-only (HelmholtzField throws otherwise).
+const MODEL = (process.env.MODEL ?? "standard") as
+  | "standard" | "siren" | "fourier" | "hashgrid";
+if (!["standard", "siren", "fourier", "hashgrid"].includes(MODEL)) {
+  throw new Error(`MODEL '${MODEL}' not one of standard|siren|fourier|hashgrid`);
+}
 
 // ---------------------------------------------------------------------------
 // pinned constants
@@ -167,7 +177,14 @@ interface Result {
 function computeAll(): Result {
   // classes defaults to 0 → identical nets / trainableWeights to the classless
   // field, so passing `classes: 0` is bit-for-bit the original construction.
-  const field = new HelmholtzField({ alpha: ALPHA, classes: CLASSES }); // hiddenUnits default [32,32]
+  // modelType "standard" is likewise the original construction; other MODELs
+  // use the field's defaults (ω0=6, octaves=4, grid 32²×4). The ω0 init is
+  // irrelevant here — weights are OVERWRITTEN from the seed stream below.
+  const field = new HelmholtzField({
+    alpha: ALPHA,
+    classes: CLASSES,
+    modelType: MODEL,
+  }); // hiddenUnits default [32,32]
 
   // (3) OVERWRITE every trainable variable from a single shared PRNG stream.
   //     Order = field.trainableWeights order (g head kernels/biases, then r).
@@ -382,7 +399,7 @@ if (!Number.isFinite(result.loss)) throw new Error(`loss is not finite: ${result
 //      seeds, the K-step rollout collapses to the ORIGINAL single-step loss, so
 //      the composite must reproduce the originally-shipped grad_ref.json loss
 //      bit-close (≤1e-12). Guards the whole K-generalization against drift.
-if (CLASSES === 0 && K === 1 && N === 256 && WEIGHTS_SEED === 42 && BATCH_SEED === 7) {
+if (MODEL === "standard" && CLASSES === 0 && K === 1 && N === 256 && WEIGHTS_SEED === 42 && BATCH_SEED === 7) {
   const OLD_K1_LOSS = 1.0965325832366943;
   const dLoss = Math.abs(result.loss - OLD_K1_LOSS);
   if (dLoss > 1e-12)
@@ -401,8 +418,13 @@ for (let i = 0; i < result.variables.length; i++) {
   const g = result.grads[i];
   if (g.shape.length !== v.shape.length || g.shape.some((d, k) => d !== v.shape[k]))
     throw new Error(`grad shape ${g.shape} != var shape ${v.shape} for ${v.name}`);
-  totalEntries += g.values.length;
-  nonzeroEntries += g.values.filter((x) => x !== 0).length;
+  // the hashgrid feature table is legitimately SPARSE (only cells the batch's
+  // sites touch get gradient) — exclude it from the density tripwire.
+  const isGrid = MODEL === "hashgrid" && i === 0;
+  if (!isGrid) {
+    totalEntries += g.values.length;
+    nonzeroEntries += g.values.filter((x) => x !== 0).length;
+  }
   console.log(
     `  [${String(i).padStart(2)}] ${v.name.padEnd(24)} shape=[${v.shape.join(",")}]` +
       `  |grad|₂ = ${l2(g.values).toExponential(6)}`
@@ -423,6 +445,11 @@ const fixture = {
     N,
     W,
     H,
+    model: MODEL,
+    // encoding params (field defaults) — the kernel layout must match these
+    fourierOctaves: 4,
+    gridSize: 32,
+    gridFeatures: 4,
     classes: CLASSES,
     alpha: ALPHA,
     forceMagnitude: FORCE_MAGNITUDE,

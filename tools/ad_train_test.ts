@@ -30,6 +30,14 @@ const fix = JSON.parse(
 ) as { meta: any; variables: FixVar[]; batch: number[]; loss: number; grads: FixVar[] };
 
 const m = fix.meta;
+const model: string = m.model ?? "standard";
+if (model === "hashgrid") {
+  // the hashgrid gather is data-dependent — not expressible in the static
+  // scalar IR (see rollout.ts). Its fused backward is verified on Metal vs
+  // the tfjs fixture by tools/train_types_test.ts instead.
+  console.log("hashgrid fixture: skipped (IR oracle is siren/fourier/standard only)");
+  process.exit(0);
+}
 const lc = m.loss_constants;
 const cfg: RolloutCfg = {
   K: m.K, alpha: m.alpha, hh: m.HH,
@@ -37,15 +45,19 @@ const cfg: RolloutCfg = {
   W: m.W, H: m.H, spiralTurns: 3,
   wChaos: lc.W_CHAOS, wDiv: lc.W_DIV, wSpiral: lc.W_SPIRAL, wIso: lc.W_ISO,
   N: m.N,
+  encoding: model === "fourier"
+    ? { kind: "fourier", octaves: m.fourierOctaves ?? 4 }
+    : { kind: "raw" },
 };
-console.log(`fixture: K=${m.K} N=${m.N} classes=${m.classes} loss=${fix.loss}\n`);
+console.log(`fixture: model=${model} K=${m.K} N=${m.N} classes=${m.classes} loss=${fix.loss}\n`);
 if (m.classes !== 0) { console.log("(classless fixture only for now)"); }
 
 // --- head dims from variable shapes (vars 0..5 = head0/g, 6..11 = head1/r) ---
+const hiddenAct = model === "siren" ? ("sin" as const) : ("selu" as const);
 function headDims(vars: FixVar[]): HeadDim[] {
-  // kernels are the even-indexed vars; act = selu except the output layer (tanh)
+  // kernels are the even-indexed vars; hidden act by model type, output tanh
   const kernels = [vars[0], vars[2], vars[4]];
-  return kernels.map((k, l) => ({ inSize: k.shape[0], outSize: k.shape[1], act: l === 2 ? "tanh" : "selu" }));
+  return kernels.map((k, l) => ({ inSize: k.shape[0], outSize: k.shape[1], act: l === 2 ? "tanh" : hiddenAct }));
 }
 const dimsG = headDims(fix.variables.slice(0, 6));
 const dimsR = headDims(fix.variables.slice(6, 12));

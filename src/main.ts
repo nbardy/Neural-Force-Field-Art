@@ -420,7 +420,7 @@ export const GALLERY: ArtPieceConfig[] = [
     // defined spatial derivatives (which the chaos/divergence probe losses
     // measure), and higher-frequency structure than SELU. A SELECTABLE model
     // type to compare against the standard field (same loss, same knobs).
-    // Trains via tfjs autograd; advects via the fused sin-kernel.
+    // Trains FUSED (sin backward checkpoints pre-acts); advects fused too.
     name: "Helmholtz · SIREN",
     particleCount: 200000,
     friction: 0.99,
@@ -439,8 +439,8 @@ export const GALLERY: ArtPieceConfig[] = [
   {
     // FOURIER-feature field — γ(p) = [x,y,sin/cos(ωk·x/y)] input encoding beats
     // the plain MLP's spectral bias, exposing fine "filigree" spatial detail.
-    // ω0/octaves are the artistic dial. Trains via tfjs; advects via the fused
-    // fourier-encoding kernel. SELECTABLE comparison type.
+    // ω0/octaves are the artistic dial. Trains FUSED (encoding jacobian reuses
+    // the stored sin/cos features); advects fused. SELECTABLE comparison type.
     name: "Helmholtz · Fourier",
     particleCount: 200000,
     friction: 0.99,
@@ -459,9 +459,9 @@ export const GALLERY: ArtPieceConfig[] = [
   {
     // HASH-GRID field (Instant-NGP essence, single-level): a learned feature
     // grid (32×32×4) is bilinearly interpolated → tiny MLP. Best detail-per-
-    // FLOP; the field reads more "painted texture" than "equation". Grid is a
-    // trainable tf.Variable (tfjs autograd scatters into cells); advects via
-    // the fused grid-interp kernel. SELECTABLE comparison type.
+    // FLOP; the field reads more "painted texture" than "equation". Trains
+    // FUSED (pass B scatters into grid cells); advects via the fused
+    // grid-interp kernel. SELECTABLE comparison type.
     name: "Helmholtz · HashGrid",
     particleCount: 200000,
     friction: 0.99,
@@ -965,7 +965,6 @@ export function startLoop(
     let wantTfjsTrainer =
       new URLSearchParams(location.search).get("train") === "tfjs";
     const fieldClasses = field ? (field as HelmholtzField).classes ?? 0 : 0;
-    const fieldModel = field ? (field as HelmholtzField).modelType : "standard";
     if (wantTfjsTrainer && fieldClasses > 0) {
       console.warn(
         "[train] ?train=tfjs ignored: class-aware fields are fused-only " +
@@ -973,13 +972,11 @@ export function startLoop(
       );
       wantTfjsTrainer = false;
     }
-    // SIREN/Fourier fields train via tfjs autograd — the fused trainer's
-    // hand-written backward is standard-arch only. They still ADVECT via the
-    // fused forward kernel (weights sync tfjs→kernel each frame, the hybrid
-    // path). Only "standard" fields use the fully-fused GPU-resident trainer.
-    if (field && fieldModel !== "standard") {
-      wantTfjsTrainer = true;
-    }
+    // ALL field types (standard/siren/fourier/hashgrid) now train FUSED: the
+    // trainer codegen handles sin backward (pre-act checkpoint), the fourier
+    // encoding jacobian, and the hashgrid interp/scatter — each verified vs a
+    // tfjs-autograd fixture on Metal at cos=1.0 (tools/train_types_test.ts).
+    // `?train=tfjs` keeps the autograd path selectable for A/B comparison.
     if (field && !wantTfjsTrainer) {
       // `?rollout=K` (1..16, default 1): K-step BPTT rollout — the loss sees
       // how particles FLOW through the field (evolving pos+vel), not just one

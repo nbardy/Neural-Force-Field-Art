@@ -103,8 +103,11 @@ export interface HelmholtzFieldConfig {
    *   "fourier"  — SELU hidden but the input is Fourier-encoded γ(p) =
    *                [x, y, sin/cos(ωk·x/y)] over `fourierOctaves` octaves —
    *                beats spectral bias, exposes fine structure.
-   * SIREN/Fourier train via tfjs autograd (the fused trainer's hand-written
-   * backward is standard-only); they still ADVECT via the fused forward kernel.
+   * ALL types train FUSED (train_wgsl.ts generates each type's backward —
+   * sin pre-act checkpoints, encoding jacobians, grid scatter — verified vs
+   * tfjs fixtures on Metal at cos=1.0, tools/train_types_test.ts) and advect
+   * via the fused forward kernel. `?train=tfjs` selects this class's autograd
+   * path instead, for A/B comparison.
    */
   modelType?: "standard" | "siren" | "fourier" | "hashgrid";
   /** SIREN first-layer frequency (folded into weights). Default 6. */
