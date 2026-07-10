@@ -28,7 +28,7 @@ import {
 // needs browser QA). See src/render/gpuPoints.ts.
 import { GpuPointRenderer } from "./render/gpuPoints";
 import { GpuPointRendererWebGPU } from "./render/webgpu/points";
-import { SplatRenderer } from "./render/webgpu/splat";
+import { SplatRenderer, SplatStyle } from "./render/webgpu/splat";
 import { AdvectKernel } from "./render/webgpu/advect";
 import { FusedTrainer } from "./render/webgpu/train";
 import { GpuTimer } from "./render/webgpu/gputime";
@@ -699,6 +699,24 @@ export function startLoop(
   const SPLAT_MIN_N = 0;
   const exposureScale =
     parseFloat(new URLSearchParams(location.search).get("exposure") ?? "1") || 1;
+  // `?stroke=dot|vel|curl` — splat draw style (default dot, the shipped look).
+  // "vel"/"curl" draw per-frame geometric strokes along each particle's
+  // backward trajectory, so fast particles (maxVelocity ~26 px/frame vs a
+  // ~1.6px dot) read as continuous filaments instead of disconnected dots.
+  const strokeParam = new URLSearchParams(location.search).get("stroke");
+  const strokeStyle: SplatStyle =
+    strokeParam === "vel" || strokeParam === "curl" ? strokeParam : "dot";
+  // `?strokeLen=F` — stroke length in FRAMES of travel (default 3, [0.5, 16]).
+  // Number.isFinite (not `|| 3`) so an explicit `?strokeLen=0` clamps to the
+  // documented 0.5 floor instead of silently becoming the default.
+  const strokeLenParam = new URLSearchParams(location.search).get("strokeLen");
+  const strokeLenParsed = strokeLenParam !== null ? parseFloat(strokeLenParam) : NaN;
+  const strokeLen = Number.isFinite(strokeLenParsed)
+    ? Math.max(0.5, Math.min(16, strokeLenParsed))
+    : 3;
+  // Stroke-style segmented control (dot|vel|curl) — created next to the
+  // trails bar once the splat renderer exists; removed in the cleanup closure.
+  let strokeUi: HTMLDivElement | null = null;
 
   let frame = 0;
 
@@ -1047,11 +1065,52 @@ export function startLoop(
           decayParam !== null
             ? Math.max(0, Math.min(0.995, parseFloat(decayParam) || 0))
             : SPLAT_DECAY_BY_RENDERER[cfg.renderer],
+        // `?stroke=` / `?strokeLen=` — geometric stroke trails (parsed above)
+        style: strokeStyle,
+        strokeLen,
       });
     } catch (e) {
       console.error("[webgpu] renderer init failed", e);
       showWebGPUWarning();
       return;
+    }
+
+    // --- Stroke-style segmented control (dot | vel | curl) -----------------
+    // Sits at the right end of the trails-slider bar (the React bar at
+    // bottom:42 shrink-wraps its content on the left). Built imperatively
+    // here rather than in index.tsx: it drives a renderer-local knob —
+    // splat.style is live-switchable (SplatRenderer lazily builds the stroke
+    // pipeline on the first "vel"/"curl" frame, so flipping is cheap).
+    {
+      const paint = (b: HTMLButtonElement, active: boolean): void => {
+        b.style.cssText =
+          "padding:2px 8px;border-radius:3px;cursor:pointer;font:11px monospace;" +
+          (active
+            ? "border:1px solid #5b8cff;background:rgba(60,90,200,0.4);color:#dce8ff"
+            : "border:1px solid #444;background:rgba(30,30,50,0.6);color:#888");
+      };
+      strokeUi = document.createElement("div");
+      strokeUi.style.cssText =
+        "position:fixed;bottom:44px;right:12px;z-index:101;display:flex;gap:4px;" +
+        "align-items:center;padding:5px 8px;background:rgba(0,0,0,0.55);" +
+        "border-radius:4px;color:#8fbcff;font:12px monospace";
+      const label = document.createElement("span");
+      label.textContent = "stroke";
+      label.style.marginRight = "4px";
+      strokeUi.appendChild(label);
+      const btns: HTMLButtonElement[] = [];
+      (["dot", "vel", "curl"] as SplatStyle[]).forEach((s) => {
+        const b = document.createElement("button");
+        b.textContent = s;
+        b.onclick = () => {
+          if (splat) splat.style = s;
+          btns.forEach((x) => paint(x, x.textContent === s));
+        };
+        paint(b, s === strokeStyle);
+        btns.push(b);
+        strokeUi!.appendChild(b);
+      });
+      document.body.appendChild(strokeUi);
     }
 
     // Live controls for the UI: particle count (resizes kernel buffers,
@@ -1096,6 +1155,7 @@ export function startLoop(
     if (splat) splat.destroy?.();
     if (timer) timer.destroy(); // querySet + resolve/staging GPUBuffers
     tele.remove();
+    if (strokeUi) strokeUi.remove();
     if (optimizer) optimizer.dispose(); // frees Adam accumulators (leaked on tab switch)
     if (wh) wh.dispose();
     if (trainer) trainer.destroy(); // batch/scratch/grads/adam GPUBuffers

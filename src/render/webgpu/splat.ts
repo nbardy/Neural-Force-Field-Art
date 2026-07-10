@@ -45,6 +45,13 @@
  * colour grading / tone curves, edit `fs` in TONEMAP_WGSL — that is the ONE
  * place where accumulated energy becomes screen colour.
  *
+ * STROKE STYLES — `.style` ("dot" default | "vel" | "curl") + `.strokeLen`:
+ * "vel"/"curl" replace the single dot with S tapered cone stamps along the
+ * particle's backward trajectory (STROKE_WGSL — a separate, lazily-built
+ * pipeline reading a renderer-owned prevVel snapshot, so the shipped dot
+ * shader stays byte-identical). Per-particle energy stays 4096 counts in
+ * every style, keeping main.ts's auto-exposure contract.
+ *
  * HEADLESS: pass canvas=null plus an explicit opts.device — output goes to an
  * internal rgba8unorm offscreen texture (`.offscreen.texture`) sized on first
  * render, which tests read back via copyTextureToBuffer (tools/splat_test.ts).
@@ -65,10 +72,26 @@ import {
 /** Fixed-point scale of the accumulator: energy 1.0 == 4096 integer counts. */
 export const SPLAT_FIXED_POINT = 4096;
 
+/**
+ * Draw style. "dot" = the original single radial-cone stamp — its WGSL below
+ * is untouched and regression-guarded (tools/splat_stroke_test.ts pins the
+ * exact accumulator bytes), so the shipped look is byte-stable. "vel"/"curl"
+ * replace the dot with a per-frame GEOMETRIC stroke of tapered cone stamps
+ * along the particle's backward trajectory (straight / 2nd-order curved) —
+ * see STROKE_WGSL.
+ */
+export type SplatStyle = "dot" | "vel" | "curl";
+
 const WG = 256;
 /** Max native cone radius. Caps the splat tap count so retina (dpr>1) doesn't
  *  explode the atomic-bound splat pass; a crisp small dot, not a fat blob. */
 const NATIVE_RADIUS_MAX = 1.6;
+/** Stroke-style tap budget: the splat pass is atomic-tap-bound and ~25M taps
+ *  ≈ one 60fps frame (HANDOFF §2 measured rates). Used with the ~10 avg taps
+ *  a tapered stroke stamp costs to derive the count-aware sample cap that
+ *  keeps `?stroke=vel|curl` inside budget at ANY particle count. */
+const STROKE_TAP_BUDGET = 24e6;
+const STROKE_TAPS_PER_SAMPLE = 10;
 
 // Shared uniform block — one 64-byte buffer bound to all three passes.
 const UNI_WGSL = /* wgsl */ `
@@ -176,6 +199,176 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 }
 `;
 
+// Uniform block for the STROKE pipeline. Byte-layout IDENTICAL to UNI_WGSL —
+// same 64-byte buffer is bound — only the two pad slots gain meaning
+// (strokeLen @52, curlAmp @56). UNI_WGSL itself is left untouched so the dot
+// pipeline's WGSL stays byte-stable.
+const STROKE_UNI_WGSL = /* wgsl */ `
+struct Uni {
+  size       : vec2u,  // accumulator W,H (NATIVE pixels: ceil(css * dpr))
+  count      : u32,    // live particles
+  classes    : u32,    // 0 = speed colouring
+  maxSpeed   : f32,
+  exposure   : f32,
+  decay      : f32,
+  radius     : f32,    // cone radius in NATIVE pixels, pre-clamped [0.75, 1.6]
+  background : vec4f,  // rgb 0-1 (pre-divided by 255), a unused
+  dpr        : f32,    // devicePixelRatio: CSS particle coords -> native texels
+  strokeLen  : f32,    // T: stroke length in FRAMES of travel (UNI_WGSL pad0)
+  curlAmp    : f32,    // 1 = curved 2nd-order stroke, 0 = straight (pad1)
+  maxS       : f32,    // count-aware sample cap (tap-budget degrade; pad2)
+};
+@group(0) @binding(0) var<uniform> u : Uni;
+`;
+
+// Pass 1, STROKE variant — the "vel"/"curl" styles. Same colour formulas and
+// normalized-cone stamp machinery as SPLAT_WGSL, but instead of ONE dot each
+// particle deposits S tapered cone stamps along its BACKWARD trajectory
+//   p(-tau) = pos - tau*v + 0.5*tau^2*a,   tau in [0, T] frames,
+// a 2nd-order Taylor expansion of the path it actually just travelled
+// (a = v - vPrev is the per-frame acceleration; curlAmp=0 zeroes the
+// quadratic term for the straight "vel" style). At maxVelocity ~26 px/frame
+// a 1.6px dot leaves disconnected dots — the stroke reconnects them into
+// continuous filaments. Total deposited energy per particle stays EXACTLY
+// 1.0 (4096 counts) — taper weights are normalized in closed form — so
+// main.ts's count-adaptive auto-exposure contract is style-invariant.
+// A SEPARATE module (not a branch in SPLAT_WGSL) so the shipped dot shader
+// stays byte-identical.
+const STROKE_WGSL = /* wgsl */ `
+${STROKE_UNI_WGSL}
+// same hash + salt as points.ts / advect / train kernels
+fn pcg(v : u32) -> u32 {
+  let s = v * 747796405u + 2891336453u;
+  let t = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+  return (t >> 22u) ^ t;
+}
+
+@group(0) @binding(1) var<storage, read> posBuf : array<f32>;
+@group(0) @binding(2) var<storage, read> velBuf : array<f32>;
+@group(0) @binding(3) var<storage, read_write> acc : array<atomic<u32>>;
+// last frame's velocities (v_old). record() copies vel -> prevVel AFTER this
+// pass, so while the pass runs: velBuf = post-advect v_new, prevVelBuf = v_old.
+@group(0) @binding(4) var<storage, read> prevVelBuf : array<f32>;
+
+fn tap(x : i32, y : i32, wgt : f32, col : vec3f) {
+  if (wgt <= 0.0) { return; } // box corners outside the cone: skip the atomics
+  if (x < 0 || y < 0 || x >= i32(u.size.x) || y >= i32(u.size.y)) { return; }
+  let base = (u32(y) * u.size.x + u32(x)) * 3u;
+  // ROUNDS (+0.5) where the dot shader floors: a stroke splits its 4096
+  // counts over up to 24 samples x ~9 taps each, and flooring every tap
+  // would lose up to a few % of the energy (the dot's ~9 floors lose
+  // <0.15%). Rounding keeps the expected loss ~0, preserving the
+  // dot == vel == curl total-energy contract.
+  atomicAdd(&acc[base + 0u], u32(col.r * wgt * ${SPLAT_FIXED_POINT}.0 + 0.5));
+  atomicAdd(&acc[base + 1u], u32(col.g * wgt * ${SPLAT_FIXED_POINT}.0 + 0.5));
+  atomicAdd(&acc[base + 2u], u32(col.b * wgt * ${SPLAT_FIXED_POINT}.0 + 0.5));
+}
+
+fn coneW(x : i32, y : i32, p : vec2f, r : f32) -> f32 {
+  let d = distance(vec2f(f32(x), f32(y)), p);
+  return max(0.0, 1.0 - d / r);
+}
+
+// One normalized cone stamp of total energy \`energy\` at subpixel p, radius r
+// — the same two-pass (wsum, then deposit) scheme as the dot shader, with the
+// radius as a parameter so stamps can taper along the stroke.
+fn stamp(p : vec2f, r : f32, energy : f32, col : vec3f) {
+  let x0 = i32(ceil(p.x - r));
+  let x1 = i32(floor(p.x + r));
+  let y0 = i32(ceil(p.y - r));
+  let y1 = i32(floor(p.y + r));
+  var wsum = 0.0;
+  for (var y = y0; y <= y1; y++) {
+    for (var x = x0; x <= x1; x++) {
+      wsum += coneW(x, y, p, r);
+    }
+  }
+  for (var y = y0; y <= y1; y++) {
+    for (var x = x0; x <= x1; x++) {
+      tap(x, y, coneW(x, y, p, r) / wsum * energy, col);
+    }
+  }
+}
+
+@compute @workgroup_size(${WG})
+fn main(@builtin(global_invocation_id) gid : vec3u) {
+  let iid = gid.x;
+  if (iid >= u.count) { return; }
+  // CSS-pixel particle position -> native accumulator texels
+  let pN = vec2f(posBuf[iid * 2u], posBuf[iid * 2u + 1u]) * u.dpr;
+  let v  = vec2f(velBuf[iid * 2u], velBuf[iid * 2u + 1u]);
+  let vp = vec2f(prevVelBuf[iid * 2u], prevVelBuf[iid * 2u + 1u]);
+
+  // colour: identical to the dot shader (keyed to the HEAD velocity)
+  let t = clamp(length(v) / u.maxSpeed, 0.0, 1.0);
+  var col = mix(vec3f(0.25, 0.55, 1.0), vec3f(1.0, 0.55, 0.2), t); // blue->orange
+  if (u.classes > 0u) {
+    let cls = pcg(iid ^ 2166136261u) % u.classes;
+    let hue = f32(cls) * 2.399963;
+    let base = 0.55 + 0.45 * cos(vec3f(hue, hue + 2.0944, hue + 4.1888));
+    col = base * (0.55 + 0.45 * t);
+  }
+
+  // native-space per-frame velocity and acceleration (CSS px/frame * dpr)
+  let vN = v * u.dpr;
+  var aN = (v - vp) * u.dpr * u.curlAmp;
+  // GLITCH GUARD: after a fused random reset the advect kernel writes v = 0
+  // while prevVel still holds the pre-reset velocity, so the raw a = v - vPrev
+  // would paint a huge spurious arc at the respawn point. Clamp |a| to
+  // 1.5*|v|: reset particles (v = 0) get a == 0 exactly (their "curl"
+  // collapses onto pos), live particles keep a bounded bend. The scale is
+  // dpr-invariant (both lengths carry the same dpr factor).
+  let vLen = length(vN);
+  let aLen = length(aN);
+  let aScale = min(1.0, (1.5 * vLen) / max(aLen, 1e-6));
+  aN = aN * aScale;
+
+  // ADAPTIVE SAMPLE COUNT: enough stamps that neighbours overlap (spacing
+  // ~1.5*r along the path). Path length = |v|*T plus the quadratic term's
+  // arc allowance 0.5*|a|*T^2. Upper bound u.maxS is COUNT-AWARE (set on the
+  // CPU: ~24M-tap budget / (n * ~10 taps per stamp), clamped [2, 24]) — the
+  // splat pass is atomic-bound, taps ~= cost, and without this cap 1M
+  // particles in stroke mode would blow the budget ~6x (review finding).
+  let T = u.strokeLen;
+  let pixLen = vLen * T + 0.5 * (aLen * aScale) * T * T;
+  let S = clamp(u32(ceil(pixLen / (u.radius * 1.5))), 2u, u32(u.maxS));
+  // CONTINUITY CLAMP: when S hits the cap, SHORTEN the stroke to the path
+  // length S overlapped stamps can cover instead of spacing the stamps out —
+  // fast particles get a compact continuous comet, never a beaded dash (and
+  // the tap budget above stays honest). ceil() makes S*1.5r >= pixLen when
+  // uncapped, so usedFrac = 1 exactly unless the cap engaged.
+  let usedFrac = min(1.0, (f32(S) * u.radius * 1.5) / max(pixLen, 1e-6));
+
+  // TAPER weights w_i prop. to (1 - 0.7*t_i), t_i = i/(S-1): since
+  // sum(t_i) = S/2, sum(w_i) = 0.65*S EXACTLY, so dividing normalizes the particle's
+  // total energy to 1.0 (4096 counts) in closed form — no accumulation error,
+  // and the same per-particle energy as the dot style (the auto-exposure
+  // contract in main.ts requires energy to be style-invariant).
+  let wNorm = 1.0 / (0.65 * f32(S));
+  let sizeF = vec2f(f32(u.size.x), f32(u.size.y));
+  for (var i = 0u; i < S; i++) {
+    let ti = f32(i) / f32(S - 1u);
+    let tau = ti * T * usedFrac;
+    // backward 2nd-order Taylor along the actual trajectory
+    var sp = pN - tau * vN + 0.5 * tau * tau * aN;
+    // TORUS WRAP: floored-mod EACH sample into [0, res) individually, so a
+    // stroke crossing a screen edge correctly appears on both sides.
+    // KNOWN 1-TEXEL SEAM at fractional dpr (review finding, accepted): the
+    // modulus here is the ceil'ed accumulator size, while physics wraps at
+    // w*dpr exactly — at dpr 1.25/1.5 a wrapped tail can land 1 texel off
+    // along the seam. Integer dpr (the shipped cap is 2) is exact.
+    sp = sp - floor(sp / sizeF) * sizeF;
+    // radius taper toward the tail. The 0.75 floor keeps the nearest texel
+    // centre (at most sqrt(2)/2 ~ 0.707 away) inside the cone so wsum > 0 —
+    // the same guarantee the CPU-side radius clamp gives the dot path.
+    // u.radius <= NATIVE_RADIUS_MAX already and the taper only shrinks it,
+    // so the cap is respected too.
+    let ri = max(u.radius * mix(1.0, 0.55, ti), 0.75);
+    stamp(sp, ri, (1.0 - 0.7 * ti) * wNorm, col);
+  }
+}
+`;
+
 // Pass 2 (final) — tonemap + FUSED DECAY. Reads the accumulator as plain u32
 // (pass ordering within the encoder makes the splat atomics visible), writes
 // the display pixel, THEN multiplies the accumulator by decay in place — so
@@ -238,6 +431,12 @@ export interface SplatOpts {
   /** radial cone splat radius in CSS px (default 1.25); native radius
    *  = radius*dpr, clamped to [0.75, 4] */
   radius?: number;
+  /** draw style (default "dot") — "vel"/"curl" draw per-frame geometric
+   *  strokes along the trajectory instead of single dots (see SplatStyle) */
+  style?: SplatStyle;
+  /** stroke length T in FRAMES of travel at the current velocity (default 3;
+   *  "vel"/"curl" styles only) */
+  strokeLen?: number;
   /** explicit device (headless/tests) — defaults to tfjs's webgpu device */
   device?: GPUDevice;
 }
@@ -325,6 +524,11 @@ export class SplatRenderer {
   exposure: number;
   /** radial cone splat radius, CSS px (native = radius*dpr, clamped [0.75,4]) */
   radius: number;
+  /** draw style — live-switchable ("vel"/"curl" lazily build their pipeline
+   *  + prevVel buffer on first use; the dot path allocates nothing new) */
+  style: SplatStyle;
+  /** stroke length T in frames ("vel"/"curl" styles) — live-settable */
+  strokeLen: number;
 
   // accumulation buffer + bind groups, cached on size / buffer identity
   private accBuf: GPUBuffer | null = null;
@@ -334,6 +538,16 @@ export class SplatRenderer {
   private splatBind: GPUBindGroup | null = null;
   private splatBindPos: GPUBuffer | null = null;
   private splatBindVel: GPUBuffer | null = null;
+
+  // stroke-style ("vel"/"curl") machinery — all lazily created so the default
+  // dot path is untouched. prevVel snapshots last frame's velocities (v_old):
+  // record() copies vel -> prevVel AFTER the stroke pass each stroke frame.
+  private strokePipe: GPUComputePipeline | null = null;
+  private prevVel: GPUBuffer | null = null;
+  private prevVelCount = 0;
+  private strokeBind: GPUBindGroup | null = null;
+  private strokeBindPos: GPUBuffer | null = null;
+  private strokeBindVel: GPUBuffer | null = null;
 
   /**
    * @param canvas on-screen canvas (must NOT have a 2d/webgl context yet), or
@@ -371,6 +585,29 @@ export class SplatRenderer {
     this.decay = opts.decay ?? 0;
     this.exposure = opts.exposure ?? 1;
     this.radius = opts.radius ?? 1.25;
+    this.style = opts.style ?? "dot";
+    this.strokeLen = opts.strokeLen ?? 3;
+
+    // PRE-WARM the stroke pipeline off the encode path (review finding): the
+    // first switch to "vel"/"curl" would otherwise compile STROKE_WGSL
+    // synchronously inside record() — a one-frame hitch of several ms.
+    // Async compile at construction hides it; ensureStroke still falls back
+    // to a sync build if a style switch beats the async compile (or the
+    // runtime lacks createComputePipelineAsync, e.g. older bun-webgpu).
+    try {
+      device
+        .createComputePipelineAsync?.({
+          layout: "auto",
+          compute: {
+            module: device.createShaderModule({ code: STROKE_WGSL }),
+            entryPoint: "main",
+          },
+        })
+        ?.then((p) => {
+          this.strokePipe ??= p;
+        })
+        .catch(() => {});
+    } catch (_) {}
   }
 
   /** Splat N particles (interleaved-xy f32 pos/vel storage buffers — the same
@@ -424,7 +661,12 @@ export class SplatRenderer {
     const nw = Math.ceil(w * this.dpr);
     const nh = Math.ceil(h * this.dpr);
     this.ensureAccum(nw, nh);
-    this.ensureSplatBind(posBuf, velBuf);
+    const stroke = this.style !== "dot";
+    if (stroke) {
+      this.ensureStroke(posBuf, velBuf, n);
+    } else {
+      this.ensureSplatBind(posBuf, velBuf);
+    }
 
     this.uniU[0] = nw;
     this.uniU[1] = nh;
@@ -444,6 +686,18 @@ export class SplatRenderer {
     this.uniF[10] = this.background[2] / 255;
     this.uniF[11] = 1;
     this.uniF[12] = this.dpr;
+    // stroke params live in UNI_WGSL's pad slots — the dot shader never
+    // reads them, so writing unconditionally keeps this branch-free and
+    // provably cannot change dot output.
+    this.uniF[13] = this.strokeLen;
+    this.uniF[14] = this.style === "curl" ? 1 : 0;
+    // TAP-BUDGET DEGRADE (review finding): the splat pass is atomic-tap-bound
+    // (~25M taps ≈ the 60fps budget, HANDOFF §2) and a tapered stroke stamp
+    // costs ~10 taps, so cap the per-particle sample count by count:
+    // 200k → 12, 500k → 4, 1M → 2. Paired with the in-shader continuity
+    // clamp, high counts degrade to SHORTER continuous strokes — never a
+    // beaded dash, never a 5-10fps cliff.
+    this.uniF[15] = Math.max(2, Math.min(24, Math.floor(STROKE_TAP_BUDGET / (Math.max(1, n) * STROKE_TAPS_PER_SAMPLE))));
     this.device.queue.writeBuffer(this.uni, 0, this.uniData);
 
     const enc = encoder;
@@ -459,14 +713,27 @@ export class SplatRenderer {
       : undefined;
 
     {
-      // 1 — splat (thread per particle); reads last frame's decayed buffer
+      // 1 — splat (thread per particle); reads last frame's decayed buffer.
+      // Stroke styles swap in the stroke pipeline/bind group — same dispatch
+      // shape, the per-thread loop just deposits S stamps instead of one.
       const p = enc.beginComputePass(
         (splatTs ? { timestampWrites: splatTs } : undefined) as GPUComputePassDescriptor
       );
-      p.setPipeline(this.splatPipe);
-      p.setBindGroup(0, this.splatBind!);
+      p.setPipeline(stroke ? this.strokePipe! : this.splatPipe);
+      p.setBindGroup(0, stroke ? this.strokeBind! : this.splatBind!);
       p.dispatchWorkgroups(Math.ceil(n / WG));
       p.end();
+    }
+    if (stroke) {
+      // Snapshot THIS frame's post-advect velocities for the NEXT frame: the
+      // stroke pass recorded above still reads prevVel = v_old (command order
+      // within one encoder is execution order), then this copy overwrites it
+      // with v_new — so next frame a = v_new' - v_old' with zero main.ts
+      // wiring. The advect kernel's vel buffer carries COPY_SRC already.
+      // First stroke frame after a style switch / particle resize sees a
+      // zeroed-or-stale prevVel for ONE frame; the in-shader |a| <= 1.5|v|
+      // clamp bounds the damage (see STROKE_WGSL's glitch guard).
+      enc.copyBufferToBuffer(velBuf, 0, this.prevVel!, 0, n * 8);
     }
     {
       // 2 — tonemap + fused decay (fullscreen triangle; the draw covers every
@@ -529,6 +796,47 @@ export class SplatRenderer {
       { binding: 1, resource: { buffer: this.accBuf } },
     ]);
     this.splatBindPos = null; // splat group binds acc too — force rebuild
+    this.strokeBindPos = null; // stroke group binds acc too — force rebuild
+  }
+
+  /** Lazily build the stroke pipeline, size prevVel to n particles and keep
+   *  the stroke bind group fresh (cached on pos/vel buffer identity, like
+   *  ensureSplatBind). A (re)allocated prevVel is zero-initialised by WebGPU —
+   *  the shader's |a| <= 1.5|v| clamp absorbs that one odd frame. */
+  private ensureStroke(posBuf: GPUBuffer, velBuf: GPUBuffer, n: number): void {
+    if (!this.strokePipe) {
+      this.strokePipe = computePipeline(this.device, STROKE_WGSL);
+    }
+    if (!this.prevVel || this.prevVelCount !== n) {
+      this.prevVel?.destroy();
+      this.prevVel = this.device.createBuffer({
+        // interleaved-xy vec2f per particle, same layout as the vel buffer
+        // (max(1,n): zero-size buffers can't be bound)
+        size: Math.max(1, n) * 8,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      });
+      this.prevVelCount = n;
+      this.strokeBindPos = null; // group binds prevVel — force rebuild
+    }
+    if (
+      this.strokeBind &&
+      this.strokeBindPos === posBuf &&
+      this.strokeBindVel === velBuf
+    ) {
+      return;
+    }
+    this.strokeBind = this.device.createBindGroup({
+      layout: this.strokePipe.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.uni } },
+        { binding: 1, resource: { buffer: posBuf } },
+        { binding: 2, resource: { buffer: velBuf } },
+        { binding: 3, resource: { buffer: this.accBuf! } },
+        { binding: 4, resource: { buffer: this.prevVel! } },
+      ],
+    });
+    this.strokeBindPos = posBuf;
+    this.strokeBindVel = velBuf;
   }
 
   // Cached on buffer identity like points.ts: the fused advect kernel's
@@ -560,6 +868,9 @@ export class SplatRenderer {
     } catch (_) {}
     try {
       this.accBuf?.destroy();
+    } catch (_) {}
+    try {
+      this.prevVel?.destroy();
     } catch (_) {}
     this.target.destroy();
   }
