@@ -139,6 +139,83 @@ function vjp(g: Graph, n: Node, gr: Node): Node[] {
   }
 }
 
+// --- forward-mode (JVP) rules ------------------------------------------------
+// One tangent rule per op: given the node and its inputs' tangents, build the
+// tangent node. Same derivative-from-value reuse as vjp (tanh'=1−a², exp'=y…),
+// and the SAME tie conventions for min/max, so forward and reverse agree at
+// kinks. Rules build IR — a JVP of a graph is a graph, so reverse-mode over a
+// JVP output (reverse-over-forward) works with no extra machinery.
+function jvpOp(g: Graph, n: Node, t: (x: Node) => Node): Node {
+  const c = (v: number) => g.const(v);
+  switch (n.op) {
+    case "const": return c(0);
+    case "input": return c(0);                       // unseeded leaf
+    case "add": return g.add(t(n.inputs[0]), t(n.inputs[1]));
+    case "sub": return g.sub(t(n.inputs[0]), t(n.inputs[1]));
+    case "mul": {
+      const [a, b] = n.inputs;
+      return g.add(g.mul(t(a), b), g.mul(a, t(b)));
+    }
+    case "div": {
+      // d(a/b) = (ta − n·tb)/b, reusing the quotient node n = a/b
+      const b = n.inputs[1];
+      return g.div(g.sub(t(n.inputs[0]), g.mul(n, t(b))), b);
+    }
+    case "min": {
+      const [a, b] = n.inputs;
+      return g.select(g.gt(a, b), t(b), t(a));       // ties (a≤b) route to a
+    }
+    case "max": {
+      const [a, b] = n.inputs;
+      return g.select(g.gt(b, a), t(b), t(a));       // ties (a≥b) route to a
+    }
+    case "gt": return c(0);
+    case "atan2": {
+      // d atan2(y,x) = (x·ty − y·tx)/(x²+y²)
+      const [y, x] = n.inputs;
+      const r2 = g.add(g.mul(y, y), g.mul(x, x));
+      return g.div(g.sub(g.mul(x, t(y)), g.mul(y, t(x))), r2);
+    }
+    case "mod": return t(n.inputs[0]);               // floored mod: d/d dividend = 1
+    case "neg": return g.neg(t(n.inputs[0]));
+    case "sin": return g.mul(t(n.inputs[0]), g.cos(n.inputs[0]));
+    case "cos": return g.neg(g.mul(t(n.inputs[0]), g.sin(n.inputs[0])));
+    case "tanh": return g.mul(t(n.inputs[0]), g.sub(c(1), g.mul(n, n)));
+    case "sigmoid": return g.mul(t(n.inputs[0]), g.mul(n, g.sub(c(1), n)));
+    case "selu": {
+      const a = n.inputs[0];
+      const d = g.select(g.gt(a, c(0)), c(SELU_SCALE), g.add(n, c(SELU_SCALE * SELU_ALPHA)));
+      return g.mul(t(n.inputs[0]), d);
+    }
+    case "exp": return g.mul(t(n.inputs[0]), n);
+    case "log": return g.div(t(n.inputs[0]), n.inputs[0]);
+    case "sqrt": return g.div(t(n.inputs[0]), g.mul(c(2), n));
+    case "abs": return g.mul(t(n.inputs[0]), g.select(g.gt(n.inputs[0], c(0)), c(1), c(-1)));
+    case "select": return g.select(n.inputs[0], t(n.inputs[1]), t(n.inputs[2]));
+  }
+}
+
+/**
+ * Forward-mode JVP: tangent graphs for `roots`, given seed tangents keyed by
+ * NODE ID. Seeding by id (not name) is deliberate — it allows seeding DERIVED
+ * nodes, e.g. the probe position pn = pos_K/res, which yields the spatial
+ * jacobian ∂F/∂pn at the probe point (the exact replacement for the finite-
+ * diff chaos/divergence probes — docs/PLAN_AD_IR_BACKWARD_CODEGEN.md §5.1).
+ * A seed OVERRIDES the node's propagated tangent; unseeded leaves get 0.
+ */
+export function jvp(g: Graph, roots: Node[], seeds: Map<number, Node>): Node[] {
+  const tan = new Map<number, Node>();
+  const visit = (n: Node): Node => {
+    const hit = tan.get(n.id);
+    if (hit) return hit;
+    const seeded = seeds.get(n.id);
+    const tn = seeded ?? jvpOp(g, n, visit);
+    tan.set(n.id, tn);
+    return tn;
+  };
+  return roots.map(visit);
+}
+
 /**
  * Reverse-mode: ∂output/∂name for each requested input name, as gradient GRAPHS.
  * `seed` is ∂L/∂output (default 1 for a scalar-loss output).

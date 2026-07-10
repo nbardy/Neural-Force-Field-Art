@@ -29,6 +29,26 @@ export function divergenceTerm(g: Graph, f0: V2, fx: V2, fy: V2, hh: number): No
   return g.mul(gd, gd);
 }
 
+/**
+ * EXACT-probe chaos (plan §5.1): the h→0 limit of {@link chaosTerm}, with the
+ * finite-diff columns replaced by the true jacobian columns Jx=∂F/∂x, Jy=∂F/∂y
+ * (from forward-mode `jvp`). In the FD version dxv ≈ h·Jx, so
+ * sep = √(|dxv|²+|dyv|²)/(h·√2) → √(|Jx|²+|Jy|²)/√2 — no h, no truncation
+ * error, and 2 fewer field evals. NOT the shipped loss (flipping changes
+ * training semantics); selectable via RolloutCfg.probes.
+ */
+export function chaosTermExact(g: Graph, Jx: V2, Jy: V2): Node {
+  const sq = g.sqrt(g.add(g.add(dot2(g, Jx, Jx), dot2(g, Jy, Jy)), g.const(1e-12)));
+  const sep = g.div(sq, g.const(1.4142));
+  return g.neg(g.log(g.add(sep, g.const(1e-6))));
+}
+
+/** EXACT-probe divergence: (∇·F)² = (Jx.x + Jy.y)² — the FD term's h→0 limit. */
+export function divergenceTermExact(g: Graph, Jx: V2, Jy: V2): Node {
+  const gd = g.add(Jx[0], Jy[1]);
+  return g.mul(gd, gd);
+}
+
 /** isotropy on the batch covariance: Liso = (D²+4C01²)/S², D=C00−C11, S=C00+C11+1e-6. */
 export function isotropyTerm(g: Graph, C00: Node, C11: Node, C01: Node): Node {
   const S = g.add(g.add(C00, C11), g.const(1e-6));

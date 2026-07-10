@@ -309,7 +309,21 @@ green" → each refactor is *proven equivalent* to the hand-written version.
   HashGrid (bilinear-interp node + atomic-scatter backward). Each verified
   against its existing tfjs training run.
 - **M5 (stretch) — forward-mode JVP** to replace the finite-diff chaos/div
-  probes (§5.1).
+  probes (§5.1). **DONE (IR layer, 2026-07-10):** `ad/autodiff.ts` gained
+  `jvp(g, roots, seeds)` — seeds keyed by NODE ID so derived nodes (the probe
+  position `pn`) can be seeded directly, which is exactly the spatial-jacobian
+  use case. `ad/losses.ts` gained `chaosTermExact`/`divergenceTermExact` (the
+  h→0 limits of the FD terms) and `RolloutCfg.probes: "fd" | "jvp"` selects
+  them in `buildSample` (default stays "fd" — the SHIPPED loss semantics;
+  flipping changes what the art trains toward, so it is opt-in).
+  Verified (tools/ad_jvp_test.ts): per-op JVP ≈ central FD; JVP columns ≡
+  reverse-mode rows to 2e-16 on standard AND SIREN heads; the FD probe terms
+  and their full training gradients converge to the exact-probe ones as h→0
+  (grad cos 0.99997 → 0.999999978 across h=1e-2→1e-4) — reverse-over-forward
+  composes with zero extra machinery because jvp rules BUILD IR.
+  Not yet done: emitting the JVP probes in the WGSL trainer (would change the
+  shipped loss; do it behind a trainer option + fresh fixtures if the exact
+  probes prove artistically better).
 
 **Non-goals for v1:** replacing the hand-written harness (bindings, reduction,
 Adam, atomic scatter); a general WGSL compiler; Lean. **Lean's** only role would

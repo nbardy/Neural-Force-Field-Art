@@ -12,7 +12,16 @@
  */
 import { Graph, type Node } from "./ir";
 import { buildHead, type HeadDim } from "./head";
-import { chaosTerm, divergenceTerm, spiralTerm, isotropyFold, type V2 } from "./losses";
+import { jvp } from "./autodiff";
+import {
+  chaosTerm,
+  chaosTermExact,
+  divergenceTerm,
+  divergenceTermExact,
+  spiralTerm,
+  isotropyFold,
+  type V2,
+} from "./losses";
 
 export interface RolloutCfg {
   K: number;
@@ -39,6 +48,16 @@ export interface RolloutCfg {
    * (tools/train_types_test.ts).
    */
   encoding?: { kind: "raw" } | { kind: "fourier"; octaves: number };
+  /**
+   * Chaos/divergence probe mode (default "fd" — the SHIPPED loss semantics,
+   * matching main.ts and the WGSL trainer). "jvp" replaces the two offset
+   * field evals with the exact spatial jacobian via forward-mode (plan §5.1):
+   * no h, no truncation error, one field eval instead of three. Changes the
+   * loss definition (and so the trained art) — opt-in, not the default.
+   * Training gradients through it are reverse-over-forward: `grad` of a graph
+   * containing jvp nodes needs no extra machinery.
+   */
+  probes?: "fd" | "jvp";
 }
 
 /** γ(p) in the IR — [x, y, sin(ωk x), sin(ωk y), cos(ωk x), cos(ωk y)]·k,
@@ -119,12 +138,26 @@ export function buildSample(g: Graph, cfg: RolloutCfg, dimsG: HeadDim[], dimsR: 
 
   // probes at pn = pos_K/[W,H] (raw field output — matches the fixture)
   const pn: V2 = [g.div(posK[0], W), g.div(posK[1], H)];
-  const hh = g.const(cfg.hh);
-  const f0 = blendRaw(g, cfg, dimsG, dimsR, pn, cfg.alpha);
-  const fx = blendRaw(g, cfg, dimsG, dimsR, [g.add(pn[0], hh), pn[1]], cfg.alpha);
-  const fy = blendRaw(g, cfg, dimsG, dimsR, [pn[0], g.add(pn[1], hh)], cfg.alpha);
-  const chaos = chaosTerm(g, f0, fx, fy, cfg.hh);
-  const div = divergenceTerm(g, f0, fx, fy, cfg.hh);
+  let chaos: Node, div: Node;
+  if ((cfg.probes ?? "fd") === "fd") {
+    const hh = g.const(cfg.hh);
+    const f0 = blendRaw(g, cfg, dimsG, dimsR, pn, cfg.alpha);
+    const fx = blendRaw(g, cfg, dimsG, dimsR, [g.add(pn[0], hh), pn[1]], cfg.alpha);
+    const fy = blendRaw(g, cfg, dimsG, dimsR, [pn[0], g.add(pn[1], hh)], cfg.alpha);
+    chaos = chaosTerm(g, f0, fx, fy, cfg.hh);
+    div = divergenceTerm(g, f0, fx, fy, cfg.hh);
+  } else {
+    // exact probes: seed the pn NODES (by id) to get the spatial jacobian at
+    // the probe point — one field eval, no finite-diff offsets (plan §5.1)
+    const f0 = blendRaw(g, cfg, dimsG, dimsR, pn, cfg.alpha);
+    const one = g.const(1), zero = g.const(0);
+    const [Jxx, Jyx] = jvp(g, [f0[0], f0[1]], new Map([[pn[0].id, one], [pn[1].id, zero]]));
+    const [Jxy, Jyy] = jvp(g, [f0[0], f0[1]], new Map([[pn[0].id, zero], [pn[1].id, one]]));
+    const Jx: V2 = [Jxx, Jyx];
+    const Jy: V2 = [Jxy, Jyy];
+    chaos = chaosTermExact(g, Jx, Jy);
+    div = divergenceTermExact(g, Jx, Jy);
+  }
 
   // spiral on pos_K in PIXEL coords
   const cx = cfg.W / 2, cy = cfg.H / 2;
