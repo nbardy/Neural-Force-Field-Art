@@ -318,9 +318,12 @@ The second convergence pack is now implemented behind browser controls:
   the old 0.25 px hard footprint exactly.
 - `staged rates`: appearance learning ramps up during the first 250 steps;
   geometry learning then decays to 20% over 1000 steps without resetting Adam.
-- `adapt splats`: every 200 profiled steps, dead low-opacity splats are
-  deterministically relocated by splitting high-gradient parents. Splat count
-  stays fixed and only changed Adam moment slices are reset.
+- `adapt splats`: every 200 steps, a single sampled raster backward records
+  AbsGS-style absolute per-pixel screen-centre gradients and visible-pixel
+  counts. Dead low-opacity splats are then deterministically relocated by
+  splitting the highest pixel-aware parents. Splat count stays fixed and only
+  changed Adam moment slices are reset; normal backward passes retain no
+  adaptation-stat atomics.
 - Procedural background modes: blurred noise, checkerboard, and low-frequency
   Fourier textures. Training uses the texture; display renders remain black.
 - Centering now uses an opacity-weighted centroid while retaining one broadcast

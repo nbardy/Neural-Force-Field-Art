@@ -268,6 +268,12 @@ function renderTimings(): void {
   const adaptation = opt?.adaptationDiagnostics;
   if (adaptation) {
     lines.push(`adapt splats ${adaptation.relocationCount} moved · ${adaptation.eligibleDestinations} dead`);
+    if (adaptation.densityStatsSampled) {
+      lines.push(
+        `density sample ${adaptation.densityVisiblePixels ?? 0} px · ` +
+          `abs grad ${(adaptation.densityMaxScreenGradient ?? 0).toExponential(2)}`
+      );
+    }
   }
   timingsEl.textContent = lines.join("\n");
 }

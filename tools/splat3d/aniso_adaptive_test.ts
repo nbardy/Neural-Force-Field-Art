@@ -44,6 +44,22 @@ assert.equal(first.relocations[0].parentIndex, 5, "largest position gradient mus
 assert.equal(first.relocations[0].destinationIndex, 0, "lowest-opacity destination must rank first");
 assert.ok(first.diagnostics.coverageMassRelativeError < 2e-6, "coverage mass must be conserved");
 
+const absScreenNeed = new Float32Array(G);
+absScreenNeed[4] = 40;
+absScreenNeed[6] = 120;
+const pixelConfidence = Float32Array.from({ length: G }, () => 1);
+pixelConfidence[6] = 0.5;
+const densitySelected = planFixedBudgetAnisotropicSplatAdaptation(params, gradients, {
+  ...options,
+  selectionNeed: absScreenNeed,
+  coverage: pixelConfidence,
+});
+assert.equal(
+  densitySelected.relocations[0].parentIndex,
+  6,
+  "AbsGS selection need must override the signed accumulated position gradient"
+);
+
 for (const value of first.params) assert.ok(Number.isFinite(value), "all output parameters must be finite");
 for (const relocation of first.relocations) {
   const parent = relocation.parentIndex;

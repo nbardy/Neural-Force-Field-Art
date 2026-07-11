@@ -114,6 +114,7 @@ for (const variant of variants) {
       `min=${result.minCos.toFixed(5)} opacity=${cloud.opacityMean.toFixed(3)} ` +
       `radius=${cloud.radiusMean.toFixed(4)} ratio=${cloud.axisRatioMean.toFixed(2)} ` +
       `spread=${cloud.spreadRms.toFixed(3)} adapt=${optimizer.adaptationDiagnostics?.relocationCount ?? 0} ` +
+      `density=${optimizer.adaptationDiagnostics?.densityVisiblePixels ?? 0}px ` +
       `tile=${tile.maxCount}/${tile.cap} overflow=${tile.overflowTiles}`
   );
   if (tile.overflowTiles > 0) throw new Error(`${variant.name}: tile overflow in ${tile.overflowTiles} tiles`);

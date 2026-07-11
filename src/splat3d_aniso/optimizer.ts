@@ -23,6 +23,7 @@ import {
   AnisotropicRaster3DEngine,
   DEFAULT_ANISOTROPIC_3D_LRS,
   type AnisotropicAdamLRs3D,
+  type AnisotropicDensityStats3D,
   type AnisotropicRaster3DRegularizerOptions,
 } from "./raster_engine";
 
@@ -87,6 +88,7 @@ export class Splat3DAnisotropicOptimizer {
   private viewCursor = 0;
   private rng: number;
   private lastAdaptationStep = -1;
+  private hasDensityStats = false;
   private adaptationDiagnostics_: SplatAdaptationDiagnostics | null = null;
 
   static async create(
@@ -178,14 +180,16 @@ export class Splat3DAnisotropicOptimizer {
   step(displayView = 0, viewsPerStep = this.cameras.length): void {
     if (!this.hasPrompts) throw new Error("splat3d aniso: setViewPrompts before step");
     const views = this.sampleViews(viewsPerStep);
+    const collectDensityStats = this.shouldCaptureDensityStats();
     const encoder = this.device.createCommandEncoder();
     this.raster.recordClearRawGrad(encoder);
-    this.recordTrainingViews(encoder, views);
+    this.recordTrainingViews(encoder, views, collectDensityStats);
     this.recordConvergenceRegularizer(encoder);
     this.step_++;
     this.raster.recordAdam(encoder, this.step_, this.lrsForStep());
     this.raster.recordForward(encoder, displayView);
     this.device.queue.submit([encoder.finish()]);
+    this.hasDensityStats ||= collectDensityStats;
   }
 
   async profileStep(displayView = 0, viewsPerStep = this.cameras.length): Promise<Splat3DStepTimings> {
@@ -203,6 +207,7 @@ export class Splat3DAnisotropicOptimizer {
 
     const start = performance.now();
     const timings = this.emptyTimings(views.length, 0);
+    const collectDensityStats = this.shouldCaptureDensityStats();
     timings.clear = await this.submitTimed((encoder) => this.raster.recordClearRawGrad(encoder));
     timings.rasterFwd = await this.submitTimed((encoder) => this.recordBatchInputs(encoder, views));
     timings.clipBatch = await this.submitTimed((encoder) => batch.encode(encoder, { backward: true }));
@@ -218,10 +223,13 @@ export class Splat3DAnisotropicOptimizer {
         );
         this.raster.recordForward(encoder, view);
       });
-      timings.rasterBwd += await this.submitTimed((encoder) => this.raster.recordBackwardAdd(encoder, view));
+      timings.rasterBwd += await this.submitTimed((encoder) =>
+        this.raster.recordBackwardAdd(encoder, view, collectDensityStats)
+      );
     }
     timings.regularizer = await this.submitTimed((encoder) => this.recordConvergenceRegularizer(encoder));
     this.step_++;
+    this.hasDensityStats ||= collectDensityStats;
     timings.adam = await this.submitTimed((encoder) => this.raster.recordAdam(encoder, this.step_, this.lrsForStep()));
     timings.display = await this.submitTimed((encoder) => this.raster.recordForward(encoder, displayView));
     await this.adaptSplatsIfDue();
@@ -268,10 +276,12 @@ export class Splat3DAnisotropicOptimizer {
     }
     if (!force && this.lastAdaptationStep === this.step_) return this.adaptationDiagnostics_;
     await this.device.queue.onSubmittedWorkDone();
+    const densityStats = this.hasDensityStats ? await this.raster.readDensityStats() : null;
     const [params, gradients] = await Promise.all([
       this.raster.readParams(),
       this.raster.readRawGrad(),
     ]);
+    const densityControl = densityStats === null ? null : densityControlInputs(densityStats);
     const plan = planFixedBudgetAnisotropicSplatAdaptation(params, gradients, {
       maxRelocations: Math.max(1, Math.floor(this.raster.dims.G * this.convergence.adaptationFraction)),
       seed: (this.rng ^ this.step_) >>> 0,
@@ -280,12 +290,23 @@ export class Splat3DAnisotropicOptimizer {
       minRadius: this.convergence.minRadius,
       maxRadius: this.convergence.maxRadius,
       splitOffsetScale: 0.55,
+      selectionNeed: densityControl?.selectionNeed,
+      coverage: densityControl?.coverage,
     });
+    if (densityStats !== null) {
+      plan.diagnostics.densityStatsSampled = true;
+      plan.diagnostics.densityVisiblePixels = densityStats.visiblePixels.reduce((sum, value) => sum + value, 0);
+      plan.diagnostics.densityMaxScreenGradient = Math.max(...densityStats.absScreenGradient);
+    }
     if (plan.changedIndices.length > 0) {
       this.raster.setParams(plan.params);
       this.raster.resetAdamForSplats(plan.changedIndices);
     }
     this.lastAdaptationStep = this.step_;
+    if (densityStats !== null) {
+      this.raster.clearDensityStats();
+      this.hasDensityStats = false;
+    }
     this.adaptationDiagnostics_ = plan.diagnostics;
     return plan.diagnostics;
   }
@@ -317,7 +338,13 @@ export class Splat3DAnisotropicOptimizer {
     for (const buffer of this.textBuffers) buffer.destroy();
   }
 
-  private recordTrainingView(encoder: GPUCommandEncoder, view: number): void {
+  private shouldCaptureDensityStats(): boolean {
+    if (!this.convergence.adaptiveRelocation) return false;
+    const interval = Math.max(1, Math.round(this.convergence.adaptationInterval));
+    return this.step_ + 1 >= interval && (this.step_ + 1) % interval === 0;
+  }
+
+  private recordTrainingView(encoder: GPUCommandEncoder, view: number, collectDensityStats = false): void {
     const index = Math.max(0, Math.min(this.cameras.length - 1, view | 0));
     encoder.copyBufferToBuffer(
       this.textBuffers[index],
@@ -330,30 +357,30 @@ export class Splat3DAnisotropicOptimizer {
     encoder.copyBufferToBuffer(this.raster.image, 0, this.trainer.inputBuffer, 0, IMAGE_BYTES);
     this.trainer.encode(encoder, { backward: true });
     encoder.copyBufferToBuffer(this.trainer.inputGradBuffer, 0, this.raster.gradImage, 0, IMAGE_BYTES);
-    this.raster.recordBackwardAdd(encoder, index);
+    this.raster.recordBackwardAdd(encoder, index, collectDensityStats);
   }
 
-  private recordTrainingViews(encoder: GPUCommandEncoder, views: number[]): void {
+  private recordTrainingViews(encoder: GPUCommandEncoder, views: number[], collectDensityStats = false): void {
     const batch = this.batchTrainer;
     if (!batch || views.length < batch.batch) {
-      for (const view of views) this.recordTrainingView(encoder, view);
+      for (const view of views) this.recordTrainingView(encoder, view, collectDensityStats);
       return;
     }
     for (let start = 0; start < views.length; start += batch.batch) {
       const chunk = views.slice(start, start + batch.batch);
       if (chunk.length < batch.batch) {
-        for (const view of chunk) this.recordTrainingView(encoder, view);
+        for (const view of chunk) this.recordTrainingView(encoder, view, collectDensityStats);
         continue;
       }
-      this.recordBatchTrainingViews(encoder, chunk);
+      this.recordBatchTrainingViews(encoder, chunk, collectDensityStats);
     }
   }
 
-  private recordBatchTrainingViews(encoder: GPUCommandEncoder, views: number[]): void {
+  private recordBatchTrainingViews(encoder: GPUCommandEncoder, views: number[], collectDensityStats = false): void {
     const batch = this.batchTrainer!;
     this.recordBatchInputs(encoder, views);
     batch.encode(encoder, { backward: true });
-    this.recordBatchBackward(encoder, views);
+    this.recordBatchBackward(encoder, views, collectDensityStats);
   }
 
   private recordBatchInputs(encoder: GPUCommandEncoder, views: number[]): void {
@@ -373,14 +400,14 @@ export class Splat3DAnisotropicOptimizer {
     }
   }
 
-  private recordBatchBackward(encoder: GPUCommandEncoder, views: number[]): void {
+  private recordBatchBackward(encoder: GPUCommandEncoder, views: number[], collectDensityStats = false): void {
     const batch = this.batchTrainer!;
     for (let lane = 0; lane < views.length; lane++) {
       const view = Math.max(0, Math.min(this.cameras.length - 1, views[lane] | 0));
       encoder.copyBufferToBuffer(batch.inputGradBuffer, batch.inputGradOffsetBytes(lane), this.raster.gradImage, 0, IMAGE_BYTES);
       // Shared tile/conic state belongs to the last forward, so replay this lane.
       this.raster.recordForward(encoder, view);
-      this.raster.recordBackwardAdd(encoder, view);
+      this.raster.recordBackwardAdd(encoder, view, collectDensityStats);
     }
   }
 
@@ -547,6 +574,22 @@ function normalizeAnisotropicConvergence(
     adaptationInterval: finitePositive(cfg?.adaptationInterval, 200),
     adaptationFraction: clamp01(cfg?.adaptationFraction, 0.01),
   };
+}
+
+function densityControlInputs(stats: AnisotropicDensityStats3D): {
+  selectionNeed: Float32Array;
+  coverage: Float32Array;
+} {
+  const selectionNeed = stats.absScreenGradient.slice();
+  const coverage = new Float32Array(selectionNeed.length);
+  for (let g = 0; g < coverage.length; g++) {
+    const pixels = stats.visiblePixels[g];
+    // The AbsGS statistic already sums pixel-level magnitudes, so it already
+    // carries Pixel-GS's coverage weighting. This confidence term only rejects
+    // one-pixel noise and gently discounts weakly visible candidates.
+    coverage[g] = pixels < 4 ? 0 : Math.min(1, Math.sqrt(pixels / 64));
+  }
+  return { selectionNeed, coverage };
 }
 
 function finiteNonNegative(value: number | undefined, fallback: number): number {

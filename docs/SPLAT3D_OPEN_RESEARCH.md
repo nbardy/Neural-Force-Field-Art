@@ -149,8 +149,27 @@ contact sheets and JSON are under `docs/assets/splat3d_full3d_2026-07-11/`.
    - Add only after geometry stabilizes; the extra appearance capacity creates
      another route for CLIP cheating.
 
-4. `OPEN APPROX` Adaptive densification beyond fixed-budget relocation.
-   - Compare current relocation against gradient and screen-radius split/prune.
+4. `IMPLEMENTED` AbsGS/Pixel-GS fixed-budget parent ranking.
+   - Every 200-step adaptation sample, raster backward records absolute
+     per-pixel screen-centre gradients before pixel reduction plus visible-pixel
+     counts. This is used only to rank relocation parents; Adam keeps the exact
+     signed gradient.
+   - The per-pixel accumulation already makes the AbsGS score pixel-aware, so
+     coverage is used as a capped confidence term rather than multiplied twice.
+   - The stats shader runs only on the sampled adaptation step, preserving
+     normal raster-backward speed. The implementation is exact for the sampled
+     views but remains a CLIP-guided approximation of reconstruction papers.
+   - Primary references: [AbsGS](https://arxiv.org/abs/2404.10484) and
+     [Pixel-GS](https://arxiv.org/abs/2403.15530).
+   - Initial 200-step smoke gates at 64 and 1024 splats recorded `201,528` and
+     `2,914,414` visible-pixel contributions respectively, with zero tile
+     overflow. Neither moved splats because no opacity-qualified destination
+     existed; do not mistake signal collection for a demonstrated quality win.
+
+5. `OPEN APPROX` Adaptive densification beyond fixed-budget relocation.
+   - Compare current relocation against gradient and screen-radius split/prune,
+     [MCMC-style stochastic relocation](https://arxiv.org/abs/2404.09591), and
+     full count-changing densification.
    - Track count, memory, opacity pruning, tile occupancy, overflow, worst-view
      cosine, and equal-CLIP-pass convergence.
 

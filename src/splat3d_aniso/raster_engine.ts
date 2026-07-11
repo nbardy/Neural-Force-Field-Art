@@ -3,6 +3,7 @@ import type { PreparedCamera3D } from "../splat3d/cameras";
 import { ANISO_PARAM_STRIDE_3D, anisotropicParamSegments3D } from "./layout";
 import {
   ANISO_DERIVED_STRIDE_3D,
+  ANISO_DENSITY_STAT_SCALE_3D,
   ANISO_REGULARIZER_UNIFORM_BYTES_3D,
   anisotropicBackwardShader3D,
   anisotropicCenterReduceShader3D,
@@ -56,6 +57,14 @@ export interface AnisotropicTileTelemetry3D {
   totalPairs: number;
 }
 
+/** Adaptation-only statistics collected by a sampled raster backward pass. */
+export interface AnisotropicDensityStats3D {
+  /** Sum of per-pixel absolute screen-centre gradients, restored to f32 units. */
+  absScreenGradient: Float32Array;
+  /** Visible alpha-contributing pixels per splat. */
+  visiblePixels: Uint32Array;
+}
+
 export const DEFAULT_ANISOTROPIC_3D_LRS: AnisotropicAdamLRs3D = {
   position: 0.025,
   logScale: 0.01,
@@ -93,6 +102,7 @@ export class AnisotropicRaster3DEngine {
   readonly tileCounts: GPUBuffer;
   readonly binnedIds: GPUBuffer;
   readonly tileStop: GPUBuffer;
+  readonly densityStats: GPUBuffer;
   readonly image: GPUBuffer;
   readonly gradImage: GPUBuffer;
 
@@ -104,9 +114,11 @@ export class AnisotropicRaster3DEngine {
   private emitPipe!: GPUComputePipeline;
   private forwardPipe!: GPUComputePipeline;
   private backwardPipe!: GPUComputePipeline;
+  private densityBackwardPipe!: GPUComputePipeline;
   private clearBinsPipe!: GPUComputePipeline;
   private clearAccGradPipe!: GPUComputePipeline;
   private clearRawGradPipe!: GPUComputePipeline;
+  private clearDensityStatsPipe!: GPUComputePipeline;
   private adamPipe!: GPUComputePipeline;
   private centerReducePipe!: GPUComputePipeline;
   private regularizerPipe!: GPUComputePipeline;
@@ -115,9 +127,11 @@ export class AnisotropicRaster3DEngine {
   private emitBind!: GPUBindGroup;
   private forwardBind!: GPUBindGroup;
   private backwardBind!: GPUBindGroup;
+  private densityBackwardBind!: GPUBindGroup;
   private clearBinsBind!: GPUBindGroup;
   private clearAccGradBind!: GPUBindGroup;
   private clearRawGradBind!: GPUBindGroup;
+  private clearDensityStatsBind!: GPUBindGroup;
   private adamUniforms: GPUBuffer[] = [];
   private adamBinds: GPUBindGroup[] = [];
   private centerSum!: GPUBuffer;
@@ -145,6 +159,7 @@ export class AnisotropicRaster3DEngine {
     this.tileCounts = this.storage(this.dims.numTiles, U.COPY_DST | U.COPY_SRC, "aniso-tile-counts");
     this.binnedIds = this.storage(this.dims.numTiles * this.dims.cap, 0, "aniso-binned-ids");
     this.tileStop = this.storage(this.dims.numTiles, U.COPY_SRC, "aniso-tile-stop");
+    this.densityStats = this.storage(3 * this.dims.G, U.COPY_SRC, "aniso-density-stats");
     this.image = this.storage(3 * this.dims.H * this.dims.W, U.COPY_SRC, "aniso-image");
     this.gradImage = this.storage(3 * this.dims.H * this.dims.W, U.COPY_DST, "aniso-grad-image");
   }
@@ -152,6 +167,7 @@ export class AnisotropicRaster3DEngine {
   static async create(device: GPUDevice, cfg: AnisotropicRaster3DEngineConfig): Promise<AnisotropicRaster3DEngine> {
     const engine = new AnisotropicRaster3DEngine(device, cfg);
     await engine.build(cfg);
+    engine.clearDensityStats();
     return engine;
   }
 
@@ -177,6 +193,11 @@ export class AnisotropicRaster3DEngine {
     this.emitPipe = await makeCompute(this.device, anisotropicEmitShader3D(cfg), "aniso-emit");
     this.forwardPipe = await makeCompute(this.device, anisotropicForwardShader3D(cfg), "aniso-forward");
     this.backwardPipe = await makeCompute(this.device, anisotropicBackwardShader3D(cfg), "aniso-backward");
+    this.densityBackwardPipe = await makeCompute(
+      this.device,
+      anisotropicBackwardShader3D(cfg, true),
+      "aniso-density-backward"
+    );
     this.clearBinsPipe = await makeCompute(this.device, anisotropicClearShader3D(d.numTiles), "aniso-clear-bins");
     this.clearAccGradPipe = await makeCompute(
       this.device,
@@ -187,6 +208,11 @@ export class AnisotropicRaster3DEngine {
       this.device,
       anisotropicClearShader3D(d.G * ANISO_PARAM_STRIDE_3D),
       "aniso-clear-raw-grad"
+    );
+    this.clearDensityStatsPipe = await makeCompute(
+      this.device,
+      anisotropicClearShader3D(3 * d.G),
+      "aniso-clear-density-stats"
     );
     this.adamPipe = await makeCompute(this.device, adamShader(), "aniso-adam");
     this.centerReducePipe = await makeCompute(
@@ -220,9 +246,19 @@ export class AnisotropicRaster3DEngine {
       this.derived,
       this.accGrad,
     ]);
+    this.densityBackwardBind = this.bindGroup(this.densityBackwardPipe, [
+      this.gradImage,
+      this.tileCounts,
+      this.binnedIds,
+      this.tileStop,
+      this.derived,
+      this.accGrad,
+      this.densityStats,
+    ]);
     this.clearBinsBind = this.bindGroup(this.clearBinsPipe, [this.tileCounts]);
     this.clearAccGradBind = this.bindGroup(this.clearAccGradPipe, [this.accGrad]);
     this.clearRawGradBind = this.bindGroup(this.clearRawGradPipe, [this.gradRaw]);
+    this.clearDensityStatsBind = this.bindGroup(this.clearDensityStatsPipe, [this.densityStats]);
     this.centerSum = this.storage(4, U.COPY_DST, "aniso-center-sum");
     this.centerReduceBind = this.bindGroup(this.centerReducePipe, [this.params, this.centerSum]);
     this.regularizerUniform = this.device.createBuffer({
@@ -313,19 +349,29 @@ export class AnisotropicRaster3DEngine {
     pass.end();
   }
 
-  recordBackwardAdd(enc: GPUCommandEncoder, view = 0): void {
+  recordBackwardAdd(enc: GPUCommandEncoder, view = 0, collectDensityStats = false): void {
     const index = this.viewIndex(view);
     const pass = enc.beginComputePass();
     pass.setPipeline(this.clearAccGradPipe);
     pass.setBindGroup(0, this.clearAccGradBind);
     pass.dispatchWorkgroups(ceilGroups(this.dims.G * ANISO_DERIVED_STRIDE_3D));
-    pass.setPipeline(this.backwardPipe);
-    pass.setBindGroup(0, this.backwardBind);
+    pass.setPipeline(collectDensityStats ? this.densityBackwardPipe : this.backwardPipe);
+    pass.setBindGroup(0, collectDensityStats ? this.densityBackwardBind : this.backwardBind);
     pass.dispatchWorkgroups(this.dims.numTiles);
     pass.setPipeline(this.chainPipes[index]);
     pass.setBindGroup(0, this.chainBinds[index]);
     pass.dispatchWorkgroups(ceilGroups(this.dims.G));
     pass.end();
+  }
+
+  clearDensityStats(): void {
+    const enc = this.device.createCommandEncoder();
+    const pass = enc.beginComputePass();
+    pass.setPipeline(this.clearDensityStatsPipe);
+    pass.setBindGroup(0, this.clearDensityStatsBind);
+    pass.dispatchWorkgroups(ceilGroups(3 * this.dims.G));
+    pass.end();
+    this.device.queue.submit([enc.finish()]);
   }
 
   recordRegularizerAdd(enc: GPUCommandEncoder, opts: AnisotropicRaster3DRegularizerOptions): void {
@@ -412,6 +458,18 @@ export class AnisotropicRaster3DEngine {
     return this.readFloats(this.gradRaw, this.dims.G * ANISO_PARAM_STRIDE_3D);
   }
 
+  async readDensityStats(): Promise<AnisotropicDensityStats3D> {
+    const values = await this.readU32(this.densityStats, 3 * this.dims.G);
+    const absScreenGradient = new Float32Array(this.dims.G);
+    const visiblePixels = new Uint32Array(this.dims.G);
+    for (let g = 0; g < this.dims.G; g++) {
+      const base = 3 * g;
+      absScreenGradient[g] = Math.hypot(values[base], values[base + 1]) / ANISO_DENSITY_STAT_SCALE_3D;
+      visiblePixels[g] = values[base + 2];
+    }
+    return { absScreenGradient, visiblePixels };
+  }
+
   async readTileTelemetry(): Promise<AnisotropicTileTelemetry3D> {
     const words = this.dims.numTiles;
     const bytes = words * 4;
@@ -454,6 +512,7 @@ export class AnisotropicRaster3DEngine {
       this.tileCounts,
       this.binnedIds,
       this.tileStop,
+      this.densityStats,
       this.image,
       this.gradImage,
       this.centerSum,
@@ -476,6 +535,18 @@ export class AnisotropicRaster3DEngine {
     this.device.queue.submit([enc.finish()]);
     await staging.mapAsync(1);
     const values = new Float32Array(staging.getMappedRange().slice(0));
+    staging.unmap();
+    staging.destroy();
+    return values;
+  }
+
+  private async readU32(buffer: GPUBuffer, words: number): Promise<Uint32Array> {
+    const staging = this.device.createBuffer({ size: words * 4, usage: U.MAP_READ | U.COPY_DST });
+    const enc = this.device.createCommandEncoder();
+    enc.copyBufferToBuffer(buffer, 0, staging, 0, words * 4);
+    this.device.queue.submit([enc.finish()]);
+    await staging.mapAsync(1);
+    const values = new Uint32Array(staging.getMappedRange().slice(0));
     staging.unmap();
     staging.destroy();
     return values;

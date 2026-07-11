@@ -9,6 +9,8 @@ export const ANISO_MAX_ALPHA_3D = 0.99;
 export const ANISO_TRANSMITTANCE_CUTOFF_3D = 1e-4;
 export const ANISO_REGULARIZER_UNIFORM_BYTES_3D = 64;
 export const ANISO_CENTER_SUM_SCALE_3D = 16384;
+/** Fixed-point scale for adaptation-only AbsGS screen-gradient statistics. */
+export const ANISO_DENSITY_STAT_SCALE_3D = 65536;
 
 export interface AnisotropicRaster3DConfig {
   H: number;
@@ -310,7 +312,10 @@ fn main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_index) tid 
 `;
 }
 
-export function anisotropicBackwardShader3D(cfg: AnisotropicRaster3DConfig): string {
+export function anisotropicBackwardShader3D(
+  cfg: AnisotropicRaster3DConfig,
+  collectDensityStats = false
+): string {
   const d = resolveAnisotropicRaster3DDims(cfg);
   const hw = d.H * d.W;
   return /* wgsl */ `
@@ -320,10 +325,21 @@ export function anisotropicBackwardShader3D(cfg: AnisotropicRaster3DConfig): str
 @group(0) @binding(3) var<storage, read> tileStop : array<u32>;
 @group(0) @binding(4) var<storage, read> derived : array<f32>;
 @group(0) @binding(5) var<storage, read_write> accGrad : array<atomic<i32>>;
+${collectDensityStats ? "@group(0) @binding(6) var<storage, read_write> densityStats : array<atomic<u32>>;" : ""}
 var<workgroup> shIds : array<u32, ${d.cap}>;
 fn fixadd(base : u32, slot : u32, value : f32) {
   atomicAdd(&accGrad[base + slot], i32(clamp(round(value * ${fl(d.gradScale)}), -2.14e9, 2.14e9)));
 }
+${collectDensityStats ? /* wgsl */ `
+fn densityadd(g : u32, gx : f32, gy : f32) {
+  let base = 3u * g;
+  let sx = u32(clamp(round(abs(gx) * ${fl(ANISO_DENSITY_STAT_SCALE_3D)}), 0.0, 1048576.0));
+  let sy = u32(clamp(round(abs(gy) * ${fl(ANISO_DENSITY_STAT_SCALE_3D)}), 0.0, 1048576.0));
+  atomicAdd(&densityStats[base + 0u], sx);
+  atomicAdd(&densityStats[base + 1u], sy);
+  atomicAdd(&densityStats[base + 2u], 1u);
+}
+` : ""}
 
 @compute @workgroup_size(256)
 fn main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_index) tid : u32) {
@@ -378,8 +394,11 @@ fn main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_index) tid 
     let gate = select(0.0, 1.0, raw < ${fl(ANISO_MAX_ALPHA_3D)});
     let gRaw = gAlpha * gate;
     let gPower = gRaw * raw;
-    fixadd(base, 0u, gPower * (a * dx + cross * dy));
-    fixadd(base, 1u, gPower * (cross * dx + c * dy));
+    let gCenterX = gPower * (a * dx + cross * dy);
+    let gCenterY = gPower * (cross * dx + c * dy);
+    fixadd(base, 0u, gCenterX);
+    fixadd(base, 1u, gCenterY);
+    ${collectDensityStats ? "densityadd(shIds[u32(ii)], gCenterX, gCenterY);" : ""}
     fixadd(base, 2u, gPower * (-0.5 * dx * dx));
     fixadd(base, 3u, gPower * (-dx * dy));
     fixadd(base, 4u, gPower * (-0.5 * dy * dy));

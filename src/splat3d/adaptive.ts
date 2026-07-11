@@ -3,6 +3,11 @@ import { MAX_ALPHA, PARAM_STRIDE_3D, RADIUS_MAX, RADIUS_MIN } from "./raster_wgs
 export interface SplatAdaptationOptions {
   /** Maximum number of dead destinations to replace. The splat count never changes. */
   maxRelocations?: number;
+  /**
+   * Optional non-negative parent-ranking signal. It is separate from Adam's
+   * signed gradient so density-control statistics cannot alter normal updates.
+   */
+  selectionNeed?: ArrayLike<number>;
   /** Per-splat non-negative multiplier for the absolute position-gradient magnitude. */
   coverage?: ArrayLike<number>;
   /** Splats at or below this sigmoid opacity are eligible destinations. */
@@ -55,6 +60,10 @@ export interface SplatAdaptationDiagnostics {
   coverageMassBefore: number;
   coverageMassAfter: number;
   coverageMassRelativeError: number;
+  /** Present when the parent ranking used sampled AbsGS/Pixel-GS statistics. */
+  densityStatsSampled?: boolean;
+  densityVisiblePixels?: number;
+  densityMaxScreenGradient?: number;
 }
 
 export interface SplatAdaptationPlan {
@@ -75,6 +84,7 @@ interface Candidate {
 
 interface NormalizedOptions {
   maxRelocations: number;
+  selectionNeed?: ArrayLike<number>;
   coverage?: ArrayLike<number>;
   deadOpacityThreshold: number;
   minParentOpacity: number;
@@ -115,6 +125,11 @@ export function planFixedBudgetSplatAdaptation(
       `splat3d adaptive: coverage length ${cfg.coverage.length} != splat count ${splatCount}`
     );
   }
+  if (cfg.selectionNeed !== undefined && cfg.selectionNeed.length !== splatCount) {
+    throw new Error(
+      `splat3d adaptive: selectionNeed length ${cfg.selectionNeed.length} != splat count ${splatCount}`
+    );
+  }
 
   const nextParams = params.slice();
   const changed = new Set<number>();
@@ -148,7 +163,10 @@ export function planFixedBudgetSplatAdaptation(
     const gx = finiteOrZero(rawGradients[index * 3 + 0]);
     const gy = finiteOrZero(rawGradients[index * 3 + 1]);
     const gz = finiteOrZero(rawGradients[index * 3 + 2]);
-    const gradientMagnitude = Math.hypot(Math.abs(gx), Math.abs(gy), Math.abs(gz));
+    const gradientMagnitude =
+      cfg.selectionNeed === undefined
+        ? Math.hypot(Math.abs(gx), Math.abs(gy), Math.abs(gz))
+        : nonNegativeFiniteOrZero(cfg.selectionNeed[index]);
     const coverageWeight = cfg.coverage === undefined ? 1 : nonNegativeFiniteOrZero(cfg.coverage[index]);
     const need = finiteProduct(gradientMagnitude, coverageWeight);
     candidates.push({
@@ -339,6 +357,7 @@ function normalizeOptions(options: SplatAdaptationOptions, splatCount: number): 
 
   return {
     maxRelocations: Math.min(splatCount, Math.floor(maxRelocations)),
+    selectionNeed: options.selectionNeed,
     coverage: options.coverage,
     deadOpacityThreshold,
     minParentOpacity,

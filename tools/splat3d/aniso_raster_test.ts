@@ -164,6 +164,29 @@ if (
   throw new Error("GATE FAIL: anisotropic raster does not reproduce the isotropic raster");
 }
 
+aniso.clearDensityStats();
+await device.queue.onSubmittedWorkDone();
+{
+  const enc = device.createCommandEncoder();
+  aniso.recordClearRawGrad(enc);
+  aniso.recordForward(enc, 0);
+  aniso.recordBackwardAdd(enc, 0, true);
+  device.queue.submit([enc.finish()]);
+  await device.queue.onSubmittedWorkDone();
+}
+const densityStats = await aniso.readDensityStats();
+const densityGrad = await aniso.readRawGrad();
+const densityParity = diffStats(anisoGrad, densityGrad);
+const totalVisiblePixels = densityStats.visiblePixels.reduce((sum, value) => sum + value, 0);
+const maxAbsScreenGradient = Math.max(...densityStats.absScreenGradient);
+console.log(
+  `density stats: visible=${totalVisiblePixels} maxAbsScreenGrad=${maxAbsScreenGradient.toExponential(3)} ` +
+    `rawGradMaxDiff=${densityParity.max.toExponential(3)}`
+);
+if (totalVisiblePixels === 0 || maxAbsScreenGradient === 0 || densityParity.max > 1e-7) {
+  throw new Error("GATE FAIL: density-control statistics are missing or alter the real gradient");
+}
+
 function makeAnisotropicParams(): Float32Array {
   const params = liftIsotropicParams(isoParams);
   params[3 * G + 0] = Math.log(0.16);
