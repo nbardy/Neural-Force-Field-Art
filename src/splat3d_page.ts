@@ -1309,15 +1309,17 @@ async function boot(): Promise<void> {
   status.gridDirectRaster = selectedGridDirectRaster();
   status.gridRasterSide = selectedGridRasterSide();
   status.gridStrength = selectedGridStrength();
-  populateViews();
-  rebuildBlitBind();
-  gridDirty = true;
 
   // Preload the text encoder at boot (with its own progress bar) so the first
   // Optimize is instant instead of stalling on an 84 MB download (× the 9 views).
   status.phase = "textmodel";
   await loadTextModel((msg) => { readoutEl.textContent = msg; });
 
+  // Do not create black WebGPU canvases while the text encoder is downloading.
+  // The view grid only appears once the page can immediately render into it.
+  populateViews();
+  rebuildBlitBind();
+  gridDirty = true;
   status.ready = true;
   status.phase = "idle";
   setControlsDisabled(false);
