@@ -2,6 +2,9 @@
 
 Date: 2026-07-08
 
+> Historical checkpoint. The July 11 active default is documented in
+> `docs/SPLAT3D_OPEN_RESEARCH.md` and `docs/BLOG_PROGRESS_NOTES.md`.
+
 Scope: inspection note only. No source changes are made here.
 
 ## Current 3D page surface

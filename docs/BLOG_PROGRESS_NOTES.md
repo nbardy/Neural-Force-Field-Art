@@ -113,3 +113,115 @@ Run these as screenshot-friendly toggles, one at a time:
    - later surfel/2DGS-style flattening once the object exists.
    Do not start here; this is a later geometry upgrade if volumetric blobs stay
    incoherent.
+
+## July 10: Square Fixed, Then The Ball Collapse
+
+- The sharp center square was tile-bin overflow, not a CLIP grid paste. A
+  concentrated scene dropped 32.6% of splat/tile pairs at cap 2048; cap 4096
+  drops none.
+- Fixing overflow exposed the true cost of a collapsed scene: nearly all 4096
+  splats were being sorted and differentiated in the same central tiles.
+- The first centering prior was wrong. It pulled every splat toward zero and
+  has been replaced by a centroid translation gradient that preserves spread.
+- The stronger remaining collapse came from `coverage weak`: its symmetric
+  per-pixel alpha target made overlapping splats centrally an easy solution.
+  Dream-ish now defaults to coverage off, while the toggle remains for screenshots.
+- Keeping each 80px grid cell's raster scratch removes nine redundant forward
+  replays per optimizer step for about 5.2 MB of extra GPU memory. Replay and
+  retained modes produce bit-identical optimized parameters.
+- The next screenshot exposed a second regularizer mismatch: `alpha weak`
+  drives mean per-splat opacity from `0.574` to `0.0039` by step 800 when
+  isolated. Dream-ish now defaults to alpha off and displays opacity telemetry.
+- Feature splatting remains a separate fork proposal: 32D features, RGB
+  residual skip, zero-initialized 1x1 colorizer, and no direct CLIP feature
+  injection in the first version.
+
+## July 10: Paper Priors Become Real Toggles
+
+- The old `coverage` control was removed conceptually: it was a symmetric
+  per-pixel alpha target, not Dream Fields, and it caused collapse.
+- `transmit paper` now implements Dream Fields' clipped global mean
+  transmittance with the published `0.40 -> 0.88` 500-step schedule.
+- `ray compact` pulls separated contributions on one camera ray toward a common
+  depth; `ray entropy` is available as a slower alternative.
+- `coarse-to-fine` starts with a 2 px screen-space covariance floor and anneals
+  to the old quarter-pixel footprint.
+- GPU procedural backgrounds now include blurred noise, checkerboard, and
+  Fourier textures while the displayed result stays black.
+- `adapt splats` recycles low-opacity splats into high-gradient regions without
+  changing the 4096-splat budget.
+- The Dream preset keeps the renderer black and leaves all new ray/mip/staging/
+  relocation priors off. A 40-step real-prompt cat gate found no default-worthy
+  win yet; they remain explicit screenshot ablations.
+- Same-layout paired timestamp sample: `47.64 ms -> 48.43 ms` with background
+  curriculum + ray compactness + mip curriculum + staged rates (`+1.7%` GPU;
+  `+4.3%` in the normal-step wall sample).
+- The anisotropic fork now has a complete tiled conic raster/backward/Adam path.
+  It is available in the representation menu through conservative single-CLIP
+  per-view training.
+  Feature32 now has a complete correctness-reference raster -> colorizer ->
+  backward chain. Neither representation has production batch/grid IO yet,
+  which should be
+  stated plainly rather than presenting isolated fork tests as live results.
+
+## July 10: Why The "Anisotropic" Splats Still Looked Round
+
+- The first anisotropic live initializer copied one scalar radius into all
+  three axes and used identity quaternions. It was an anisotropic parameter
+  layout initialized as exact spheres, so the screenshots correctly looked
+  circular and rotation initially had no useful gradient.
+- The fix preserves each splat's geometric-mean radius while applying shuffled
+  zero-mean log-axis offsets and a uniform random 3D orientation. The resulting
+  initial mean axis ratio is about `2.5:1` in the Metal integration gate. The
+  actual projected ratio averages `1.74-1.76:1` across all nine cameras, with a
+  p90 around `2.3:1`.
+- The profiler now prints both 3D axis ratio and projected screen ratio. A 3D
+  ellipsoid can still look circular from a camera aligned with its long axis;
+  the two numbers make that distinction visible.
+- Random three-view batches now favor the common front-on, side-on, and directly
+  overhead cameras about `2.5x` over rear/oblique cameras, without replacement.
+  Epoch mode remains uniformly covering.
+- Canonical prompts are now natural prefixes such as `a front-on view of a cat`
+  rather than internal camera labels appended to the subject.
+
+## July 11: Full 3D Becomes The Default
+
+- The old `dream-ish` preset was conservative in the wrong places: it booted
+  isotropic, used coarse text that bypassed the new canonical captions, and
+  requested all nine views so weighted random sampling did nothing.
+- The selected `full 3D` preset now boots the live anisotropic conic renderer
+  with random orientations, natural camera-prefix prompts, centered black
+  background text/rendering, zoomed-out framing, a biased random 3-of-9 view
+  subset, and batch-3 CLIP.
+- The anisotropic optimizer now supports batch-major CLIP with shared raster
+  replay. Parameter parity against three single CLIP passes is byte exact.
+  A stable 4,096-splat ten-step sample measured `81.63 ms -> 61.28 ms`
+  (`1.33x`); shorter samples ranged more widely under GPU contention, so the
+  phase profile is the more useful number.
+- The 4,096-splat phase profile measured `41.08 ms` CLIP, `2.16 ms` initial
+  raster, `4.15 ms` replay, `15.87 ms` raster backward, `0.15 ms`
+  regularization, `0.30 ms` Adam, and `0.87 ms` display.
+- Opacity-weighted centroid bounds and anti-tiny regularization now operate on
+  anisotropic splats using geometric-mean radius. The gradient is split equally
+  over all three log-scale axes, so the regularizer does not erase learned
+  anisotropy.
+- Fixed-budget adaptation now works for anisotropic splats: dead destinations
+  clone a high-gradient parent's color, quaternion, and axis ratios; both
+  children shrink uniformly and preserve coverage mass. A 240-step quality run
+  had no genuinely dead destinations, so the default correctly performed zero
+  relocations rather than changing healthy splats.
+- The first 240-step adaptation run caught a crash when an elongated trained
+  splat could not fit every axis inside a scalar radius band. Adaptation now
+  clamps geometric-mean scale with a shared log shift and never rejects a splat
+  merely for having a wide learned axis ratio.
+- On the 1,024-splat, 240-step real-cat gate, full 3D beat the same anisotropic
+  setup without geometry safeguards by `+0.00754` mean CLIP cosine and
+  `+0.04074` worst-view cosine while reducing RMS cloud spread by `11.3%` at
+  essentially identical throughput (`18.94` vs `19.01` steps/s).
+- At 4,096 splats and 60 steps, full 3D improved mean cosine by `+0.00840` and
+  reduced spread by `5.4%`. A separate production-size occupancy gate reached
+  `1,231/4,096` splats in the busiest tile with zero overflow.
+- Transmittance, ray entropy/compactness, mip smoothing, and random training
+  backgrounds remain explicit experiments. They are not enabled simply to make
+  the preset look busy; previous controlled runs showed fading or no quality
+  win. The work remains available without weakening the evidence-backed default.

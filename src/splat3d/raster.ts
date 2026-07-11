@@ -1,6 +1,10 @@
 import { DEFAULT_HYPER, type AdamHyper, adamShader, ADAM_UNIFORM_BYTES } from "../splat/adam_wgsl";
 import type { PreparedCamera3D } from "./cameras";
 import {
+  BackgroundTextureGenerator,
+  type BackgroundTextureMode,
+} from "./background_textures";
+import {
   Raster3DConfig,
   Raster3DDims,
   resolveDims3D,
@@ -10,10 +14,12 @@ import {
   emitBatchShader3D,
   forwardShader3D,
   forwardBatchShader3D,
+  transmittanceReduceShader3D,
   backwardShader3D,
   backwardBatchShader3D,
   chainAddShader3D,
   clearShader3D,
+  centerReduceShader3D,
   regularizerShader3D,
   paramSegments3D,
   PARAM_STRIDE_3D,
@@ -38,6 +44,8 @@ export interface Raster3DEngineConfig extends Raster3DConfig {
   cameras: PreparedCamera3D[];
   sharedParams?: GPUBuffer;
   sharedGradRaw?: GPUBuffer;
+  backgroundTextureMode?: BackgroundTextureMode;
+  backgroundSeed?: number;
 }
 
 export interface Raster3DIOState {
@@ -47,6 +55,7 @@ export interface Raster3DIOState {
   clearBinsBind: GPUBindGroup;
   clearGradsBind: GPUBindGroup;
   fwdBind: GPUBindGroup;
+  transmittanceBind: GPUBindGroup | null;
   bwdBind: GPUBindGroup;
 }
 
@@ -83,13 +92,16 @@ export interface Raster3DBatchForwardState {
   emitPipe: GPUComputePipeline;
   fwdPipe: GPUComputePipeline;
   clearGradsPipe: GPUComputePipeline;
+  transmittancePipe: GPUComputePipeline | null;
   bwdPipe: GPUComputePipeline;
   prepBind: GPUBindGroup;
   clearBinsBind: GPUBindGroup;
   emitBind: GPUBindGroup;
   fwdBind: GPUBindGroup;
   clearGradsBind: GPUBindGroup;
+  transmittanceBind: GPUBindGroup | null;
   bwdBind: GPUBindGroup;
+  transmittanceSum: GPUBuffer | null;
 }
 
 export interface Raster3DBatchForwardOptions {
@@ -120,8 +132,20 @@ export interface Raster3DRegularizerOptions {
 }
 
 export interface Raster3DCoverageOptions {
-  weight: number;
-  targetAlpha: number;
+  transmittanceWeight: number;
+  targetTransmittance: number;
+  rayDistortionWeight: number;
+  rayEntropyWeight: number;
+  rayEntropyMask: number;
+}
+
+export interface Raster3DTileTelemetry {
+  cap: number;
+  maxCount: number;
+  maxStop: number;
+  overflowTiles: number;
+  overflowPairs: number;
+  totalPairs: number;
 }
 
 export const DEFAULT_3D_LRS: AdamLRs3D = {
@@ -160,11 +184,13 @@ export class Raster3DEngine {
   private chainPipe: GPUComputePipeline[] = [];
   private emitPipe!: GPUComputePipeline;
   private fwdPipe!: GPUComputePipeline;
+  private transmittancePipe: GPUComputePipeline | null = null;
   private bwdPipe!: GPUComputePipeline;
   private clearBinsPipe!: GPUComputePipeline;
   private clearGradsPipe!: GPUComputePipeline;
   private clearRawPipe!: GPUComputePipeline;
   private adamPipe!: GPUComputePipeline;
+  private centerReducePipe!: GPUComputePipeline;
   private regularizerPipe!: GPUComputePipeline;
 
   params!: GPUBuffer;
@@ -180,18 +206,24 @@ export class Raster3DEngine {
   gradImage!: GPUBuffer;
   private cameraBuffer!: GPUBuffer;
   private bgUni: GPUBuffer | null = null;
+  private backgroundTextureGenerator: BackgroundTextureGenerator | null = null;
   private coverageUni: GPUBuffer | null = null;
+  private transmittanceSum: GPUBuffer | null = null;
+  private footprintUni: GPUBuffer | null = null;
 
   private prepBind: GPUBindGroup[] = [];
   private chainBind: GPUBindGroup[] = [];
   private emitBind!: GPUBindGroup;
   private fwdBind!: GPUBindGroup;
+  private transmittanceBind: GPUBindGroup | null = null;
   private bwdBind!: GPUBindGroup;
   private clearBinsBind!: GPUBindGroup;
   private clearGradsBind!: GPUBindGroup;
   private clearRawBind!: GPUBindGroup;
   private adamUni: GPUBuffer[] = [];
   private adamBind: GPUBindGroup[] = [];
+  private centerSum!: GPUBuffer;
+  private centerReduceBind!: GPUBindGroup;
   private regularizerUni!: GPUBuffer;
   private regularizerBind!: GPUBindGroup;
   private extraBuffers: GPUBuffer[] = [];
@@ -247,7 +279,14 @@ export class Raster3DEngine {
       usage: U.STORAGE | U.COPY_DST,
     });
     this.device.queue.writeBuffer(this.cameraBuffer, 0, serializeCameras3D(this.cameras) as unknown as BufferSource);
-    if (d.dynamicBg) {
+    if (cfg.backgroundTextureMode) {
+      this.backgroundTextureGenerator = await BackgroundTextureGenerator.create(this.device, {
+        H: d.H,
+        W: d.W,
+        mode: cfg.backgroundTextureMode,
+        seed: cfg.backgroundSeed ?? 0,
+      });
+    } else if (d.dynamicBg) {
       this.bgUni = this.device.createBuffer({
         label: "splat3d-background",
         size: 16,
@@ -261,7 +300,22 @@ export class Raster3DEngine {
         size: COVERAGE_UNIFORM_BYTES_3D,
         usage: U.UNIFORM | U.COPY_DST,
       });
-      this.setCoverageRegularizer({ weight: 0, targetAlpha: 0.18 });
+      if (d.dynamicTransmittance) this.transmittanceSum = this.storage(1, U.COPY_DST);
+      this.setCoverageRegularizer({
+        transmittanceWeight: 0,
+        targetTransmittance: 0.6,
+        rayDistortionWeight: 0,
+        rayEntropyWeight: 0,
+        rayEntropyMask: 0.05,
+      });
+    }
+    if (d.dynamicFootprint) {
+      this.footprintUni = this.device.createBuffer({
+        label: "splat3d-footprint",
+        size: 16,
+        usage: U.UNIFORM | U.COPY_DST,
+      });
+      this.setScreenVariance(0.0625);
     }
 
     this.prepPipe = await Promise.all(this.cameras.map((cam, i) => makeCompute(this.device, prepShader3D(cfg, cam), `prep-${i}`)));
@@ -270,27 +324,43 @@ export class Raster3DEngine {
     );
     this.emitPipe = await makeCompute(this.device, emitShader3D(cfg), "emit");
     this.fwdPipe = await makeCompute(this.device, forwardShader3D(cfg), "forward");
+    this.transmittancePipe = d.dynamicTransmittance
+      ? await makeCompute(this.device, transmittanceReduceShader3D(cfg), "transmittance-reduce")
+      : null;
     this.bwdPipe = await makeCompute(this.device, backwardShader3D(cfg), "backward");
     this.clearBinsPipe = await makeCompute(this.device, clearShader3D(d.numTiles), "clearBins");
     this.clearGradsPipe = await makeCompute(this.device, clearShader3D(GD), "clearGrads");
     this.clearRawPipe = await makeCompute(this.device, clearShader3D(GP), "clearRawGrad");
     this.adamPipe = await makeCompute(this.device, adamShader(), "adam");
+    this.centerReducePipe = await makeCompute(this.device, centerReduceShader3D(cfg), "center-reduce");
     this.regularizerPipe = await makeCompute(this.device, regularizerShader3D(cfg), "regularizer");
 
-    this.prepBind = this.prepPipe.map((pipe) => this.bindGroup(pipe, [this.params, this.derived]));
+    this.prepBind = this.prepPipe.map((pipe) => {
+      const bindings: BufferBindingInput[] = [this.params, this.derived];
+      if (this.footprintUni) bindings.push(this.footprintUni);
+      return this.bindGroup(pipe, bindings);
+    });
     this.chainBind = this.chainPipe.map((pipe) => this.bindGroup(pipe, [this.accGrad, this.derived, this.params, this.gradRaw]));
     this.emitBind = this.bindGroup(this.emitPipe, [this.derived, this.tileCounts, this.binnedIds]);
     this.clearBinsBind = this.bindGroup(this.clearBinsPipe, [this.tileCounts]);
     this.clearGradsBind = this.bindGroup(this.clearGradsPipe, [this.accGrad]);
     this.clearRawBind = this.bindGroup(this.clearRawPipe, [this.gradRaw]);
+    this.centerSum = this.storage(4, U.COPY_DST);
+    this.centerReduceBind = this.bindGroup(this.centerReducePipe, [this.params, this.centerSum]);
     this.regularizerUni = this.device.createBuffer({
       label: "splat3d-regularizer-uniform",
       size: REGULARIZER_UNIFORM_BYTES_3D,
       usage: U.UNIFORM | U.COPY_DST,
     });
-    this.regularizerBind = this.bindGroup(this.regularizerPipe, [this.regularizerUni, this.params, this.gradRaw]);
+    this.regularizerBind = this.bindGroup(this.regularizerPipe, [
+      this.regularizerUni,
+      this.params,
+      this.gradRaw,
+      this.centerSum,
+    ]);
     const shared = this.sharedScratchState();
     this.fwdBind = this.makeForwardBind(shared, this.image, 0);
+    this.transmittanceBind = this.makeTransmittanceBind(shared);
     this.bwdBind = this.makeBackwardBind(shared, this.gradImage, 0);
 
     for (const _ of paramSegments3D(d.G)) {
@@ -328,10 +398,33 @@ export class Raster3DEngine {
     this.device.queue.writeBuffer(this.bgUni, 0, data as unknown as BufferSource);
   }
 
+  recordBackgroundGenerate(enc: GPUCommandEncoder, step: number, strength: number, slot = 0): void {
+    this.backgroundTextureGenerator?.recordGenerate(enc, step, strength, slot);
+  }
+
+  get usesTexturedBackground(): boolean {
+    return this.backgroundTextureGenerator !== null;
+  }
+
   setCoverageRegularizer(opts: Raster3DCoverageOptions): void {
     if (!this.coverageUni) return;
-    const data = new Float32Array([opts.weight, opts.targetAlpha, 0, 0]);
+    const data = new Float32Array([
+      opts.transmittanceWeight,
+      opts.targetTransmittance,
+      opts.rayDistortionWeight,
+      opts.rayEntropyWeight,
+      opts.rayEntropyMask,
+      0,
+      0,
+      0,
+    ]);
     this.device.queue.writeBuffer(this.coverageUni, 0, data as unknown as BufferSource);
+  }
+
+  setScreenVariance(variancePx2: number): void {
+    if (!this.footprintUni) return;
+    const data = new Float32Array([Math.max(0, variancePx2), 0, 0, 0]);
+    this.device.queue.writeBuffer(this.footprintUni, 0, data);
   }
 
   private async readFloats(buf: GPUBuffer, floats: number): Promise<Float32Array> {
@@ -352,6 +445,59 @@ export class Raster3DEngine {
 
   readParams(): Promise<Float32Array> {
     return this.readFloats(this.params, this.dims.G * PARAM_STRIDE_3D);
+  }
+
+  readRawGrad(): Promise<Float32Array> {
+    return this.readFloats(this.gradRaw, this.dims.G * PARAM_STRIDE_3D);
+  }
+
+  resetAdamForSplats(indices: ArrayLike<number>): void {
+    const G = this.dims.G;
+    const zero1 = new Float32Array(1);
+    const zero3 = new Float32Array(3);
+    for (let i = 0; i < indices.length; i++) {
+      const g = indices[i] | 0;
+      if (g < 0 || g >= G) continue;
+      for (const buffer of [this.mBuf, this.vBuf]) {
+        this.device.queue.writeBuffer(buffer, g * 3 * 4, zero3);
+        this.device.queue.writeBuffer(buffer, (3 * G + g) * 4, zero1);
+        this.device.queue.writeBuffer(buffer, (4 * G + g * 3) * 4, zero3);
+        this.device.queue.writeBuffer(buffer, (7 * G + g) * 4, zero1);
+      }
+    }
+  }
+
+  async readTileTelemetry(): Promise<Raster3DTileTelemetry> {
+    const words = this.dims.numTiles;
+    const bytes = words * 4;
+    const staging = this.device.createBuffer({ size: bytes * 2, usage: U.MAP_READ | U.COPY_DST });
+    const enc = this.device.createCommandEncoder();
+    enc.copyBufferToBuffer(this.tileCounts, 0, staging, 0, bytes);
+    enc.copyBufferToBuffer(this.tileStop, 0, staging, bytes, bytes);
+    this.device.queue.submit([enc.finish()]);
+    await staging.mapAsync(1);
+    const mapped = staging.getMappedRange();
+    const counts = new Uint32Array(mapped.slice(0, bytes));
+    const stops = new Uint32Array(mapped.slice(bytes, bytes * 2));
+    staging.unmap();
+    staging.destroy();
+
+    let maxCount = 0;
+    let maxStop = 0;
+    let overflowTiles = 0;
+    let overflowPairs = 0;
+    let totalPairs = 0;
+    for (let i = 0; i < words; i++) {
+      const count = counts[i];
+      maxCount = Math.max(maxCount, count);
+      maxStop = Math.max(maxStop, stops[i]);
+      totalPairs += count;
+      if (count > this.dims.cap) {
+        overflowTiles += 1;
+        overflowPairs += count - this.dims.cap;
+      }
+    }
+    return { cap: this.dims.cap, maxCount, maxStop, overflowTiles, overflowPairs, totalPairs };
   }
 
   createIOState(
@@ -386,17 +532,24 @@ export class Raster3DEngine {
       size: lanes * 4,
       usage: U.STORAGE | U.COPY_DST,
     });
+    const transmittanceSum = d.dynamicTransmittance ? this.storage(lanes, U.COPY_DST) : null;
     this.extraBuffers.push(raw.derived, raw.tileCounts, raw.binnedIds, raw.tileStop, batchAccGrad, activeViews);
+    if (transmittanceSum) this.extraBuffers.push(transmittanceSum);
 
     const prepPipe = await makeCompute(this.device, prepBatchShader3D(d), "prep-batch");
     const clearBinsPipe = await makeCompute(this.device, clearShader3D(d.numTiles * lanes), "clearBins-batch");
     const emitPipe = await makeCompute(this.device, emitBatchShader3D(d), "emit-batch");
     const fwdPipe = await makeCompute(this.device, forwardBatchShader3D(d), "forward-batch");
+    const transmittancePipe = d.dynamicTransmittance
+      ? await makeCompute(this.device, transmittanceReduceShader3D(d, true), "transmittance-reduce-batch")
+      : null;
     const clearGradsPipe = await makeCompute(this.device, clearShader3D(d.G * DERIVED_STRIDE_3D * lanes), "clearGrads-batch");
     const bwdPipe = await makeCompute(this.device, backwardBatchShader3D(d), "backward-batch");
     const imageOffset = opts.imageOffsets[0];
     const gradOffset = opts.gradOffsets[0];
-    const prepBind = this.bindGroup(prepPipe, [this.params, this.cameraBuffer, activeViews, raw.derived]);
+    const prepBindings: BufferBindingInput[] = [this.params, this.cameraBuffer, activeViews, raw.derived];
+    if (this.footprintUni) prepBindings.push(this.footprintUni);
+    const prepBind = this.bindGroup(prepPipe, prepBindings);
     const clearBinsBind = this.bindGroup(clearBinsPipe, [raw.tileCounts]);
     const emitBind = this.bindGroup(emitPipe, [raw.derived, raw.tileCounts, raw.binnedIds]);
     const fwdBindings: BufferBindingInput[] = [
@@ -406,9 +559,20 @@ export class Raster3DEngine {
       { buffer: opts.imageBuffer, offset: imageOffset, size: this.imageByteSize() * lanes },
       raw.tileStop,
     ];
-    if (this.bgUni) fwdBindings.push(this.bgUni);
+    const batchBackground = this.backgroundBinding();
+    if (batchBackground) fwdBindings.push(batchBackground);
     const fwdBind = this.bindGroup(fwdPipe, fwdBindings);
     const clearGradsBind = this.bindGroup(clearGradsPipe, [batchAccGrad]);
+    const transmittanceBind =
+      transmittancePipe && transmittanceSum
+        ? this.bindGroup(transmittancePipe, [
+            raw.tileCounts,
+            raw.binnedIds,
+            raw.tileStop,
+            raw.derived,
+            transmittanceSum,
+          ])
+        : null;
     const bwdBindings: BufferBindingInput[] = [
       { buffer: opts.gradBuffer, offset: gradOffset, size: this.imageByteSize() * lanes },
       raw.tileCounts,
@@ -417,8 +581,9 @@ export class Raster3DEngine {
       raw.derived,
       batchAccGrad,
     ];
-    if (this.bgUni) bwdBindings.push(this.bgUni);
+    if (batchBackground) bwdBindings.push(batchBackground);
     if (this.coverageUni) bwdBindings.push(this.coverageUni);
+    if (transmittanceSum) bwdBindings.push(transmittanceSum);
     const bwdBind = this.bindGroup(bwdPipe, bwdBindings);
     const ios = Array.from({ length: lanes }, (_unused, lane) =>
       this.createIOStateForScratch(
@@ -438,13 +603,16 @@ export class Raster3DEngine {
       emitPipe,
       fwdPipe,
       clearGradsPipe,
+      transmittancePipe,
       bwdPipe,
       prepBind,
       clearBinsBind,
       emitBind,
       fwdBind,
       clearGradsBind,
+      transmittanceBind,
       bwdBind,
+      transmittanceSum,
     };
   }
 
@@ -473,7 +641,13 @@ export class Raster3DEngine {
     data[7] = opts.minRadius;
     data[8] = opts.maxRadius;
     this.device.queue.writeBuffer(this.regularizerUni, 0, data as unknown as BufferSource);
+    if (opts.centerWeight !== 0) enc.clearBuffer(this.centerSum, 0, 16);
     const p = beginComputePass(enc, timestampWrites);
+    if (opts.centerWeight !== 0) {
+      p.setPipeline(this.centerReducePipe);
+      p.setBindGroup(0, this.centerReduceBind);
+      p.dispatchWorkgroups(ceil(this.dims.G));
+    }
     p.setPipeline(this.regularizerPipe);
     p.setBindGroup(0, this.regularizerBind);
     p.dispatchWorkgroups(ceil(this.dims.G));
@@ -541,7 +715,13 @@ export class Raster3DEngine {
       throw new Error(`raster3d: ${views.length} batch-backward views for ${state.lanes} lanes`);
     }
     const d = this.dims;
+    if (state.transmittanceSum) enc.clearBuffer(state.transmittanceSum, 0, views.length * 4);
     const p = beginComputePass(enc, timestampWrites);
+    if (state.transmittancePipe && state.transmittanceBind) {
+      p.setPipeline(state.transmittancePipe);
+      p.setBindGroup(0, state.transmittanceBind);
+      p.dispatchWorkgroups(d.numTiles, 1, views.length);
+    }
     p.setPipeline(state.clearGradsPipe);
     p.setBindGroup(0, state.clearGradsBind);
     p.dispatchWorkgroups(ceil(d.G * DERIVED_STRIDE_3D * views.length));
@@ -577,7 +757,14 @@ export class Raster3DEngine {
   recordBackwardAdd(enc: GPUCommandEncoder, view = 0, io?: Raster3DIOState, timestampWrites?: PassTimestampWrites): void {
     const d = this.dims;
     const v = this.viewIndex(view);
+    if (this.transmittanceSum) enc.clearBuffer(this.transmittanceSum, 0, 4);
     const p = beginComputePass(enc, timestampWrites);
+    const transmittanceBind = io?.transmittanceBind ?? this.transmittanceBind;
+    if (this.transmittancePipe && transmittanceBind) {
+      p.setPipeline(this.transmittancePipe);
+      p.setBindGroup(0, transmittanceBind);
+      p.dispatchWorkgroups(d.numTiles);
+    }
     p.setPipeline(this.clearGradsPipe);
     p.setBindGroup(0, io?.clearGradsBind ?? this.clearGradsBind);
     p.dispatchWorkgroups(ceil(d.G * DERIVED_STRIDE_3D));
@@ -650,10 +837,13 @@ export class Raster3DEngine {
       this.cameraBuffer,
       ...this.extraBuffers,
       ...this.adamUni,
+      this.centerSum,
       this.regularizerUni,
     ];
     if (this.bgUni) buffers.push(this.bgUni);
     if (this.coverageUni) buffers.push(this.coverageUni);
+    if (this.transmittanceSum) buffers.push(this.transmittanceSum);
+    if (this.footprintUni) buffers.push(this.footprintUni);
     if (this.ownsParams) buffers.push(this.params);
     if (this.ownsGradRaw) buffers.push(this.gradRaw);
     for (const b of buffers) {
@@ -661,6 +851,7 @@ export class Raster3DEngine {
         b.destroy();
       } catch (_) {}
     }
+    this.backgroundTextureGenerator?.destroy();
   }
 
   private viewIndex(view: number): number {
@@ -695,7 +886,11 @@ export class Raster3DEngine {
       tileCounts,
       binnedIds,
       tileStop,
-      prepBind: this.prepPipe.map((pipe) => this.bindGroup(pipe, [this.params, derived])),
+      prepBind: this.prepPipe.map((pipe) => {
+        const bindings: BufferBindingInput[] = [this.params, derived];
+        if (this.footprintUni) bindings.push(this.footprintUni);
+        return this.bindGroup(pipe, bindings);
+      }),
       chainBind: this.chainPipe.map((pipe) => this.bindGroup(pipe, [this.accGrad, derived, this.params, this.gradRaw])),
       emitBind: this.bindGroup(this.emitPipe, [derived, tileCounts, binnedIds]),
       clearBinsBind: this.bindGroup(this.clearBinsPipe, [tileCounts]),
@@ -729,7 +924,11 @@ export class Raster3DEngine {
       tileCounts,
       binnedIds,
       tileStop,
-      prepBind: this.prepPipe.map((pipe) => this.bindGroup(pipe, [this.params, derived])),
+      prepBind: this.prepPipe.map((pipe) => {
+        const bindings: BufferBindingInput[] = [this.params, derived];
+        if (this.footprintUni) bindings.push(this.footprintUni);
+        return this.bindGroup(pipe, bindings);
+      }),
       chainBind: this.chainPipe.map((pipe) => this.bindGroup(pipe, [accGrad, derived, this.params, this.gradRaw])),
       emitBind: this.bindGroup(this.emitPipe, [derived, tileCounts, binnedIds]),
       clearBinsBind: this.bindGroup(this.clearBinsPipe, [tileCounts]),
@@ -751,6 +950,7 @@ export class Raster3DEngine {
       clearBinsBind: scratch.clearBinsBind,
       clearGradsBind: scratch.clearGradsBind,
       fwdBind: this.makeForwardBind(scratch, imageBuffer, imageOffset),
+      transmittanceBind: this.makeTransmittanceBind(scratch),
       bwdBind: this.makeBackwardBind(scratch, gradBuffer, gradOffset),
     };
   }
@@ -763,8 +963,20 @@ export class Raster3DEngine {
       { buffer: imageBuffer, offset: imageOffset, size: this.imageByteSize() },
       scratch.tileStop,
     ];
-    if (this.bgUni) bindings.push(this.bgUni);
+    const background = this.backgroundBinding();
+    if (background) bindings.push(background);
     return this.bindGroup(this.fwdPipe, bindings);
+  }
+
+  private makeTransmittanceBind(scratch: Raster3DScratchState): GPUBindGroup | null {
+    if (!this.transmittancePipe || !this.transmittanceSum) return null;
+    return this.bindGroup(this.transmittancePipe, [
+      scratch.tileCounts,
+      scratch.binnedIds,
+      scratch.tileStop,
+      scratch.derived,
+      this.transmittanceSum,
+    ]);
   }
 
   private makeBackwardBind(scratch: Raster3DScratchState, gradBuffer: GPUBuffer, gradOffset: number): GPUBindGroup {
@@ -776,9 +988,15 @@ export class Raster3DEngine {
       scratch.derived,
       scratch.accGrad,
     ];
-    if (this.bgUni) bindings.push(this.bgUni);
+    const background = this.backgroundBinding();
+    if (background) bindings.push(background);
     if (this.coverageUni) bindings.push(this.coverageUni);
+    if (this.transmittanceSum) bindings.push(this.transmittanceSum);
     return this.bindGroup(this.bwdPipe, bindings);
+  }
+
+  private backgroundBinding(): GPUBuffer | null {
+    return this.backgroundTextureGenerator?.buffer ?? this.bgUni;
   }
 
   private checkIOBinding(name: string, offset: number): void {

@@ -136,6 +136,9 @@ Use the gate-specific env vars in addition to the commands above.
 
 ## Related Notes
 
+- `docs/SPLAT3D_OPEN_RESEARCH.md`
+- `agent_notes/optimization_session/agent_1.md` (AlphaGoJS source audit)
+- `agent_notes/optimization_session/agent_2.md` (FUSED source audit)
 - `docs/SPLAT3D_ABLATION_QUEUE.md`
 - `docs/SPLAT3D_PERF_NOTES.md`
 - `docs/CLIP_BATCHING_NOTES.md`

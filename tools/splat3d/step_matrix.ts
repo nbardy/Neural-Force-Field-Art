@@ -27,7 +27,7 @@ interface Config {
   label: string;
   views: number;
   clipBatch: number;
-  clipLayout: "per_view" | "grid9_close2";
+  clipLayout: "per_view" | "grid9_close2" | "dual_grid4";
   viewSampler: "epoch" | "random";
   spatialBwdVariant: "default" | "generic" | "depthwise4";
   fuseGeluBwdIntoPw: boolean | null;
@@ -36,6 +36,9 @@ interface Config {
   viewLaneRasterForward: boolean | null;
   viewLaneRasterBackward: boolean | null;
   gridDirectRaster: boolean;
+  gridRasterSide: number;
+  gridGradScale: number;
+  randomGridGradScale: number;
   sharedWForwardSteps: string;
   pointwiseTileVariant: "default" | "rect8x16";
   pointwiseTileSteps: string;
@@ -90,7 +93,11 @@ function parseConfigs(src: string): Config[] {
       if (!Number.isFinite(views) || !Number.isFinite(clipBatch)) {
         throw new Error(`step_matrix: bad config '${part}', expected views:clipBatch`);
       }
-      const clipLayout = tokens.includes("grid9") || tokens.includes("grid9_close2") ? "grid9_close2" : "per_view";
+      const clipLayout = tokens.includes("dualgrid") || tokens.includes("dual_grid4") || tokens.includes("grid2x")
+        ? "dual_grid4"
+        : tokens.includes("grid9") || tokens.includes("grid9_close2")
+          ? "grid9_close2"
+          : "per_view";
       const viewSampler = tokens.includes("random") ? "random" : "epoch";
       const spatialBwdVariant =
         tokens.includes("dw4") || tokens.includes("depthwise4")
@@ -124,7 +131,25 @@ function parseConfigs(src: string): Config[] {
         : tokens.includes("noviewbwd")
           ? false
           : null;
-      const gridDirectRaster = tokens.includes("directgrid") || tokens.includes("grid80");
+      const gridRasterSide = tokens.includes("grid512") || tokens.includes("hi512")
+        ? 512
+        : tokens.includes("grid256") || tokens.includes("scratch256")
+          ? 256
+          : 80;
+      const gridDirectRaster = gridRasterSide !== 256 || tokens.includes("directgrid") || tokens.includes("grid80");
+      const gridStrength = tokens.includes("gridoff")
+        ? "off"
+        : tokens.includes("gridweak")
+          ? "weak"
+          : tokens.includes("gridmed") || tokens.includes("gridmedium")
+            ? "medium"
+            : tokens.includes("gridfull")
+              ? "full"
+              : "full";
+      const gridGradScale =
+        gridStrength === "off" ? 0 : gridStrength === "weak" ? 0.25 : gridStrength === "medium" ? 0.5 : 1;
+      const randomGridGradScale =
+        gridStrength === "off" ? 0 : gridStrength === "weak" ? 0.15 : gridStrength === "medium" ? 0.35 : 1;
       const sharedWToken = tokens.find((token) => /^sw\d+(?:-\d+)*$/.test(token));
       const sharedWForwardSteps = sharedWToken ? sharedWToken.slice(2).split("-").join(",") : "";
       const pointwiseTileVariant = tokens.includes("pwrect") || tokens.includes("rect8x16") ? "rect8x16" : "default";
@@ -178,6 +203,9 @@ function parseConfigs(src: string): Config[] {
         viewLaneRasterForward,
         viewLaneRasterBackward,
         gridDirectRaster,
+        gridRasterSide,
+        gridGradScale,
+        randomGridGradScale,
         sharedWForwardSteps,
         pointwiseTileVariant,
         pointwiseTileSteps,
@@ -197,11 +225,19 @@ function parseConfigs(src: string): Config[] {
 
 function configSpec(config: Config): string {
   const tokens = [
-    config.clipLayout === "grid9_close2" ? "grid9" : "",
+    config.clipLayout === "dual_grid4" ? "dualgrid" : config.clipLayout === "grid9_close2" ? "grid9" : "",
     config.viewSampler === "random" ? "random" : "",
     config.spatialBwdVariant === "depthwise4" ? "dw4" : "",
     config.spatialBwdVariant === "generic" ? "generic" : "",
     config.gridDirectRaster ? "directgrid" : "",
+    config.gridRasterSide === 512 ? "grid512" : config.gridRasterSide === 256 ? "grid256" : "",
+    config.gridGradScale === 0
+      ? "gridoff"
+      : config.gridGradScale === 0.25
+        ? "gridweak"
+        : config.gridGradScale === 0.5
+          ? "gridmed"
+          : "",
     config.sharedWForwardSteps ? `sw${config.sharedWForwardSteps.split(",").join("-")}` : "",
     config.pointwiseTileVariant === "rect8x16" ? "pwrect" : "",
     config.pointwiseTileSteps ? `pwsteps${config.pointwiseTileSteps.split(",").join("-")}` : "",
@@ -266,6 +302,9 @@ function runTrial(config: Config, trial: number): TrialResult {
     VIEW_SAMPLER: config.viewSampler,
     SPATIAL_BWD_VARIANT: config.spatialBwdVariant === "default" ? "" : config.spatialBwdVariant,
     GRID_DIRECT_RASTER: config.gridDirectRaster ? "1" : "0",
+    GRID_RASTER_SIDE: String(config.gridRasterSide),
+    GRID_GRAD_SCALE: String(config.gridGradScale),
+    RANDOM_GRID_GRAD_SCALE: String(config.randomGridGradScale),
     SHARED_W_FWD_STEPS: config.sharedWForwardSteps,
     PW_TILE_VARIANT: config.pointwiseTileVariant === "rect8x16" ? "rect8x16" : "",
     PW_TILE_STEPS: config.pointwiseTileSteps,
@@ -355,11 +394,13 @@ for (let trial = 0; trial < TRIALS; trial++) {
       const flags = [
         config.fuseGeluBwdIntoPw === true ? "gelubwd=1" : "",
         config.fuseGeluBwdIntoPw === false ? "gelubwd=0" : "",
+        config.clipLayout === "dual_grid4" ? "dualgrid=1" : "",
         config.clipLayout === "grid9_close2" ? "grid9=1" : "",
         config.viewSampler === "random" ? "random=1" : "",
         config.spatialBwdVariant === "depthwise4" ? "dw4=1" : "",
         config.spatialBwdVariant === "generic" ? "generic=1" : "",
         config.gridDirectRaster ? "directgrid=1" : "",
+        config.gridGradScale !== 1 ? `gridGrad=${config.gridGradScale}/${config.randomGridGradScale}` : "",
         config.sharedWForwardSteps ? `sw=${config.sharedWForwardSteps}` : "",
         config.pointwiseTileVariant === "rect8x16" ? "pwrect=1" : "",
         config.pointwiseTileSteps ? `pwsteps=${config.pointwiseTileSteps}` : "",
@@ -374,6 +415,7 @@ for (let trial = 0; trial < TRIALS; trial++) {
         config.viewLaneRasterBackward === true ? "viewbwd=1" : "",
         config.viewLaneRasterBackward === false ? "viewbwd=0" : "",
         config.backgroundMode !== "black" ? `bg=${config.backgroundMode}` : "",
+        config.gridRasterSide !== 80 ? `gridSide=${config.gridRasterSide}` : "",
         config.alphaReg !== "off" ? `alpha=${config.alphaReg}` : "",
         config.boundsReg !== "off" ? `bounds=${config.boundsReg}` : "",
         config.coverageReg !== "off" ? `coverage=${config.coverageReg}` : "",
@@ -406,7 +448,7 @@ if (JSON_OUT) {
     const regularizer = rows.map((r) => r.regularizer);
     console.log(
       `${config.label.padEnd(16).slice(0, 16)} ${String(config.views).padStart(5)} ${String(config.clipBatch).padStart(5)} ` +
-        `${(config.clipLayout === "grid9_close2" ? "grid9" : "view").padStart(7)} ` +
+        `${(config.clipLayout === "dual_grid4" ? "dual" : config.clipLayout === "grid9_close2" ? "grid9" : "view").padStart(7)} ` +
         `${config.viewSampler.padStart(7)} ` +
         `${(config.spatialBwdVariant === "depthwise4" ? "dw4" : config.spatialBwdVariant === "generic" ? "gen" : "def").padStart(5)} ` +
         `${(config.gridDirectRaster ? "yes" : "no").padStart(5)} ` +

@@ -57,8 +57,10 @@
 	      #clipLayout { max-width: 178px; }
 	      #gridPromptMode { max-width: 156px; }
 	      #gridRasterMode { max-width: 166px; }
+	      #gridStrength { max-width: 136px; }
 	      #viewSampler { max-width: 148px; }
 	      #qualityPreset { max-width: 142px; }
+	      #representation { max-width: 152px; }
 	      #backgroundMode { max-width: 142px; }
 	      #alphaReg { max-width: 132px; }
 	      #boundsReg { max-width: 132px; }
@@ -96,14 +98,18 @@
         <input id="prompt" type="text" placeholder="a photo of a cat"
                value="a photo of a cat" autocomplete="off" />
         <select id="qualityPreset">
-          <option value="dream" selected>dream-ish</option>
+          <option value="full3d" selected>full 3D</option>
           <option value="fast">fast base</option>
           <option value="manual">manual</option>
         </select>
+        <select id="representation">
+          <option value="isotropic">isotropic splats</option>
+          <option value="anisotropic" selected>anisotropic splats</option>
+        </select>
         <select id="view"></select>
         <select id="promptMode">
-          <option value="camera">camera text</option>
-          <option value="coarse" selected>coarse text</option>
+          <option value="camera" selected>camera text</option>
+          <option value="coarse">coarse text</option>
           <option value="same">same text</option>
         </select>
         <select id="bgTextMode">
@@ -112,13 +118,16 @@
           <option value="none">no bg text</option>
         </select>
         <select id="backgroundMode">
-          <option value="black">black render</option>
+          <option value="black" selected>black render</option>
           <option value="dark_random">dark random</option>
-          <option value="curriculum" selected>bg curriculum</option>
+          <option value="curriculum">bg curriculum</option>
+          <option value="blurred_noise">blurred noise bg</option>
+          <option value="checkerboard">checker bg</option>
+          <option value="fourier">fourier bg</option>
         </select>
         <select id="alphaReg">
-          <option value="off">alpha off</option>
-          <option value="weak" selected>alpha weak</option>
+          <option value="off" selected>alpha off</option>
+          <option value="weak">alpha weak</option>
           <option value="medium">alpha med</option>
         </select>
         <select id="boundsReg">
@@ -127,9 +136,31 @@
           <option value="medium">bounds med</option>
         </select>
         <select id="coverageReg">
-          <option value="off">coverage off</option>
-          <option value="weak" selected>coverage weak</option>
-          <option value="medium">coverage med</option>
+          <option value="off" selected>transmit off</option>
+          <option value="weak">transmit weak</option>
+          <option value="medium">transmit paper</option>
+        </select>
+        <select id="rayReg">
+          <option value="off" selected>ray compact off</option>
+          <option value="weak">ray compact weak</option>
+          <option value="medium">ray compact med</option>
+        </select>
+        <select id="entropyReg">
+          <option value="off" selected>ray entropy off</option>
+          <option value="weak">ray entropy weak</option>
+          <option value="medium">ray entropy med</option>
+        </select>
+        <select id="stageMode">
+          <option value="joint" selected>joint rates</option>
+          <option value="staged">staged rates</option>
+        </select>
+        <select id="adaptiveSplats" title="Fixed keeps every splat identity; adapt periodically recycles dead splats into high-gradient regions.">
+          <option value="off">fixed splats</option>
+          <option value="on" selected>adapt splats</option>
+        </select>
+        <select id="mipSmoothing">
+          <option value="off" selected>mip smooth off</option>
+          <option value="on">coarse-to-fine</option>
         </select>
         <select id="splatReg">
           <option value="off">splat reg off</option>
@@ -143,23 +174,25 @@
         <select id="viewBatch">
           <option value="1">1/9 view</option>
           <option value="2">2/9 views</option>
-          <option value="3">3/9 views</option>
+          <option value="3" selected>3/9 views</option>
           <option value="5">5/9 views</option>
-          <option value="9" selected>9/9 views</option>
+          <option value="9">9/9 views</option>
         </select>
         <select id="viewSampler">
           <option value="epoch">epoch views</option>
-          <option value="random" selected>random views</option>
+          <option value="random" selected>biased random views</option>
         </select>
 	        <select id="clipMode">
 	          <option value="1">single CLIP</option>
 	          <option value="2">batch CLIP x2</option>
 	          <option value="3" selected>batch CLIP x3</option>
+	          <option value="6">batch CLIP x6</option>
 	          <option value="9">batch CLIP x9</option>
 	        </select>
 	        <select id="clipLayout">
-	          <option value="per_view">per-view CLIP</option>
-	          <option value="grid9_close2" selected>3x3 grid + 2</option>
+	          <option value="per_view" selected>per-view CLIP</option>
+	          <option value="grid9_close2">3x3 grid + 2</option>
+	          <option value="dual_grid4">2 grids + 4</option>
 	        </select>
 	        <select id="gridPromptMode">
 	          <option value="contact_sheet">grid prompt</option>
@@ -170,6 +203,13 @@
 	        <select id="gridRasterMode">
 	          <option value="scratch256">grid raster 256</option>
 	          <option value="direct80" selected>grid raster 80</option>
+	          <option value="hi512">grid raster 512</option>
+	        </select>
+	        <select id="gridStrength">
+	          <option value="off">grid off</option>
+	          <option value="weak" selected>grid weak</option>
+	          <option value="medium">grid med</option>
+	          <option value="full">grid full</option>
 	        </select>
 	        <button id="optimize">Optimize</button>
         <button id="reset">Reset</button>

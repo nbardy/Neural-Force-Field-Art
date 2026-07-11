@@ -299,6 +299,81 @@ Landed first browser-toggleable convergence pack:
 - `promptMode`: `camera`, `coarse`, `same`.
 - `gridPromptMode`: added `literal_v2` / `object grid` wording:
 
+## July 10 Implementation Update
+
+The second convergence pack is now implemented behind browser controls:
+
+- `transmit off/weak/paper`: the actual Dream Fields one-sided global mean
+  transmittance loss, with `tau=0.40 -> 0.88` over 500 steps. This replaces
+  the old symmetric per-pixel coverage target that caused the tiny-ball/fog
+  collapse.
+- `ray compact off/weak/med`: mip-NeRF 360-style pairwise depth distortion for
+  point splats, evaluated in O(N) per ray using prefix/suffix moments inside
+  the existing reverse compositing traversal.
+- `ray entropy off/weak/med`: an InfoNeRF-inspired normalized alpha entropy
+  alternative. It is off in the Dream preset because it adds logarithms and
+  needs a quality ablation against depth distortion.
+- `coarse-to-fine`: a Mip-Splatting-inspired screen-space covariance floor,
+  annealed from `4.0 px^2` to `0.0625 px^2` over 500 steps. The off path keeps
+  the old 0.25 px hard footprint exactly.
+- `staged rates`: appearance learning ramps up during the first 250 steps;
+  geometry learning then decays to 20% over 1000 steps without resetting Adam.
+- `adapt splats`: every 200 profiled steps, dead low-opacity splats are
+  deterministically relocated by splitting high-gradient parents. Splat count
+  stays fixed and only changed Adam moment slices are reset.
+- Procedural background modes: blurred noise, checkerboard, and low-frequency
+  Fourier textures. Training uses the texture; display renders remain black.
+- Centering now uses an opacity-weighted centroid while retaining one broadcast
+  translation gradient, so transparent outliers are ignored without contracting
+  pairwise splat offsets.
+
+The anisotropic and feature32 paths began as standalone forks in
+`src/splat3d_aniso/` and `src/splat3d_feature/`. As of July 11, anisotropic is
+the live `full 3D` default: tiled conic RGB forward/backward/Adam, batch-major
+CLIP x3 with exact parity, biased 3-of-9 views, opacity-weighted bounds,
+geometric anti-tiny regularization, fixed-budget relocation, and phase
+profiling. Anisotropic contact-sheet/grid IO, continuous dynamic camera poses,
+and sampling-rate-aware mip filtering remain open. Feature32 still has a
+correctness-reference 32-channel compositing raster, residual colorizer, and
+complete backward chain, but is not a live mode; it needs a tiled anisotropic
+3D-camera raster, batch views, and production optimizer state.
+
+Correctness gates:
+
+```bash
+bun tools/splat3d/transmittance_distortion_test.ts
+RAY_REG=1 bun tools/splat3d/raster_batch_forward_test.ts
+bun tools/splat3d/grid_retain_parity.ts
+bun tools/splat3d/regularizer_test.ts
+bun tools/splat3d/background_textures_test.ts
+bun tools/splat3d/adaptive_test.ts
+bun tools/splat3d/aniso_projection_test.ts
+bun tools/splat3d/aniso_raster_test.ts
+bun tools/splat3d/aniso_optimizer_test.ts
+bun tools/splat3d/aniso_batch_test.ts
+bun tools/splat3d/aniso_regularizer_test.ts
+bun tools/splat3d/aniso_adaptive_test.ts
+bun tools/splat3d/feature_colorizer_test.ts
+bun tools/splat3d/feature_raster_test.ts
+bun tools/splat3d/feature_pipeline_test.ts
+```
+
+On the local Apple Metal adapter, the same 9-view direct80 grid step measured:
+
+| Configuration | Total GPU | Raster Fwd+Bwd | Note |
+| --- | ---: | ---: | ---: |
+| base | `47.64 ms` | `15.20 ms` | paired baseline |
+| ray compact weak | `46.40 ms` | `15.07 ms` | within run noise |
+| coarse-to-fine only | `49.87 ms` | `17.18 ms` | earlier isolated sample |
+| background curriculum + ray + mip + staged rates | `48.43 ms` | `16.98 ms` | `+1.7%` total |
+
+These are sequential timestamp runs. The paired normal-step average was
+`47.95 -> 50.03 ms` (`+4.3%`). Ray-only mode no longer runs the global
+transmittance reduction; that replay is compiled only when `transmit` is on.
+The transmittance prior is deliberately
+off in the Dream preset: it is faithful to Dream Fields, but its purpose is to
+reserve background area, not to cure low foreground opacity.
+
 ```text
 a grid of 9 different camera angles of the same object, the object is centered, and the object is {prompt}
 ```
@@ -363,7 +438,7 @@ quality and still looks far behind Dream Fields. The page now opens in a
 - coarse view prompts;
 - `centered on a black background` prompt suffix;
 - background curriculum;
-- weak alpha and bounds regularization;
+- alpha off and weak bounds regularization;
 - zoomed-out framing;
 - 5 random views per step;
 - a geometry-biased LR profile: higher position/radius LR and lower color LR.
@@ -387,27 +462,33 @@ The Dream Fields ideas that directly fit this splat optimizer are:
 4. scene bounds around the object;
 5. CLIP image-space augmentation, still not implemented here.
 
-Existing toggles covered the first, second, and fourth items. The missing
-portable Dream Fields piece was rendered transmittance: the old `alphaReg`
-only penalized per-splat opacity, which does not directly constrain the final
-image coverage or transmittance. The browser now has a separate `coverageReg`
-toggle:
+Existing toggles covered the first, second, and fourth items. An earlier
+checkpoint attempted the missing rendered-transmittance piece with a
+`coverageReg` toggle:
 
 - `coverage off`: no coverage uniform, old backward shader layout;
 - `coverage weak`: coverage target `0.18`, weight `8`;
 - `coverage med`: coverage target `0.24`, weight `24`.
 
-Coverage is applied inside raster backward as a rendered-alpha target:
+That retired implementation applied a rendered-alpha target inside backward:
 
 ```text
 coverage = 1 - final_transmittance
 loss ~= mean((coverage - target)^2)
 ```
 
-This fits splats because the raster backward pass already reconstructs final
-transmittance `T` per pixel before walking splats in reverse. When coverage is
-off, the raster compiles without the coverage uniform, so this is not a hot
-branch in the fast baseline.
+It was an approximation, not a faithful Dream Fields transmittance prior. A
+controlled 4096-splat run showed that
+`coverage weak` contracts RMS cloud spread from `0.9031` to `0.3352` in 40
+steps and raises the hottest tile from the non-coverage control's `830` splats
+to `2665`. The symmetric per-pixel target rewards overlapping splats in a
+small central region. That implementation has now been replaced by the clipped
+global mean-transmittance objective; the UI label is `transmit`, not coverage.
+
+The replacement fits splats because raster backward already reconstructs final
+transmittance `T` per pixel before walking splats in reverse. `transmit` now
+uses a clipped global mean-transmittance reduction; when all ray priors are off,
+their uniforms, reductions, and branches are absent from the fast baseline.
 
 Splat-specific regularization now has its own `splatReg` toggle:
 
@@ -425,9 +506,12 @@ adversarial texture instead of object structure.
 - `grid9_close2`;
 - `grid raster 80`;
 - `object grid` prompt;
+- weak grid gradient scale;
 - random full-resolution closeups;
-- background curriculum;
-- weak alpha, bounds, coverage, and anti-tiny splat regularization;
+- black renderer background;
+- alpha and transmittance off, corrected weak bounds, and anti-tiny splat regularization;
+- ray compactness, entropy, staged rates, adaptive relocation, and mip smoothing
+  off until quality gates establish a win;
 - zoomed-out framing.
 
 This makes `grid + 2 random` the default candidate. It is probably the best
@@ -442,3 +526,194 @@ Prompt wording remains an ablation. `coarse` means broad suffixes like
 camera-angle descriptions. The evidence only says nine unrelated prompts can
 create semantic inconsistency. It does not prove `coarse` wins in this app.
 Use `same`, `coarse`, `camera`, and `object grid` as screenshot gates.
+
+A real-prompt 40-step cat gate justified keeping the new priors out of the
+default: ray compactness was mean-neutral but reduced the minimum view
+(`+0.00016/-0.01648` mean/min cosine), mip smoothing was
+`-0.00828/-0.03455`, and staged rates were `-0.01713/-0.01363`. These are
+short-budget, one-prompt results rather than final rejections, but they are
+enough to require explicit opt-in.
+
+## Dual Grid Plus Zoom Objective
+
+The next convergence branch adds a heavier CLIP layout called `dual_grid4`.
+It is exposed in the browser as `2 grids + 4` and uses six CLIP lanes:
+
+- lane 0: a 3x3 grid of the canonical nine fixed cameras;
+- lane 1: a 3x3 grid of nine varied orbit cameras;
+- lanes 2-3: two full-resolution varied camera views;
+- lanes 4-5: two full-resolution zoomed-in camera views.
+
+The fixed grid prompt still uses the selected grid prompt mode. The random grid
+uses:
+
+```text
+a 3x3 grid of nine varied camera views of the same object, the object is centered, and the object is {prompt}
+```
+
+The zoom lanes use:
+
+```text
+a zoomed-in close-up view of {prompt}
+```
+
+with the selected black-background wording appended by the same prompt helper.
+
+This is the closest browser-side version of the current Dream-Fields-ish idea
+without changing the splat primitive: many views, explicit same-object grid
+supervision, extra full-resolution views, and close-up pressure. It is not true
+image-space CLIP augmentation. A crop/resize augmentation pass would render once
+and feed CLIP transformed crops of that render, then scatter image gradients
+back through the crop transform.
+
+Early browser screenshots showed a sharp black square in the middle of every
+camera view. Pixel inspection put its edges on the raster's `16x16` tile
+boundaries. A concentrated 4096-splat reproduction then proved the cause:
+`cap=2048` overflowed 16 central tiles and dropped 21,387 of 65,659 splat-tile
+pairs. `cap=4096` dropped zero. This was raster tile-bin overflow, not the CLIP
+grid being pasted into the object.
+
+The default tile cap now scales to the scene splat count up to `4096`, which
+guarantees no tile overflow for the default 4096-splat scene. The forward
+kernel reuses its ID workgroup array for the final `tileStop` reduction so a
+4096-entry tile fits the WebGPU-minimum 16KB workgroup-storage limit. The page
+also samples tile counts in the timing overlay and reports any overflow.
+
+Grid strength remains a useful convergence ablation, independent of the square:
+
+- `grid off`: grid lanes still run through CLIP but do not backprop to splats;
+- `grid weak`: fixed grid `0.25x`, random grid `0.15x`;
+- `grid med`: fixed grid `0.5x`, random grid `0.35x`;
+- `grid full`: old full-strength grid gradients.
+
+The page also exposes `grid raster 512`. The original fast path rendered each
+contact-sheet view directly at `80x80`, then pasted it into the `256x256` CLIP
+image. The high-res path renders each contact-sheet view at `512x512` and
+bilinearly downsamples a packed, no-gutter 3x3 contact sheet into the same
+`256x256` CLIP input, with gradients scattered back through the resize. This is
+closer to "render high, concatenate, resize for CLIP" and should reduce
+scale/aliasing mismatch, but CLIP still ultimately sees each grid view as a
+small panel inside a `256x256` image.
+
+Representation branch status: surfels remain deferred. Anisotropic splats are
+available as an experimental live toggle with conic rasterization, 14G Adam,
+and CLIP forward/backward. The first integration intentionally uses single-CLIP
+per-view training; batch/grid IO and the isotropic convergence controls remain
+disabled in that mode.
+
+## Tiny-Ball Collapse Diagnosis
+
+Two independent convergence bugs were identified on 2026-07-10:
+
+1. The old `centerWeight` gradient was `2 * weight * position` for every
+   splat. That is per-splat L2 shrinkage, not object centering. It now reduces
+   the cloud centroid on GPU and applies one identical translation gradient to
+   every splat. `tools/splat3d/regularizer_test.ts` verifies zero pairwise
+   gradient delta.
+2. The rendered coverage target independently causes central collapse. With
+   all convergence regularizers off, spread remains `0.9031 -> 0.8733` over
+   40 steps. With `coverage weak` alone it becomes `0.9031 -> 0.3352`.
+
+The corrected Dream-ish preset keeps coverage off. A 40-step diagnostic run
+with dark background curriculum, the then-enabled weak alpha term, corrected
+weak bounds, anti-tiny splats, and coverage off retained spread at `0.8601`
+with a near-zero centroid. The opacity probe below subsequently showed why the
+alpha term also had to leave the default.
+
+## Opacity Fade Diagnosis
+
+The old `alpha weak` toggle is also not the Dream Fields transmittance loss. It
+adds the gradient of `weight * sum(per_splat_opacity)` every step and never
+stops. With Adam's opacity learning rate of `0.03`, even a small regularizer
+weight produces a persistent downward update.
+
+`tools/splat3d/opacity_decay_probe.ts` isolates this term from CLIP:
+
+| Step | Mean per-splat opacity |
+| ---: | ---: |
+| 0 | `0.574443` |
+| 100 | `0.097784` |
+| 500 | `0.008264` |
+| 800 | `0.003901` |
+
+Dream-ish now defaults to `alpha off`. The timing overlay reports mean opacity,
+p10/p90 opacity, mean world-space splat radius, and RMS cloud spread.
+
+The faithful Dream Fields replacement is a clipped global mean-transmittance
+loss, not a per-splat opacity sum and not the current per-pixel coverage target:
+
+```text
+L_T = -min(tau, mean(final_transmittance))
+tau: 0.40 -> 0.88 over the first 500 iterations
+```
+
+This is now implemented with a per-view GPU reduction of final transmittance.
+It stops contributing gradients after the target is reached and is exposed as
+`transmit off/weak/paper`. It remains off in the Dream preset until screenshot
+tests establish that reserving 88% mean transmittance fits the desired framing.
+
+## Feature Splat Fork
+
+Feature splatting is a reasonable representation ablation, but it should be a
+forked renderer mode rather than an in-place expansion of the RGB hot path.
+DynaWorld's relevant lessons are:
+
+- raster arbitrary `F`-channel features, then colorize at the loss boundary;
+- keep the first three channels as an RGB skip connection;
+- initialize the decoder residual to zero so feature mode starts at RGB parity;
+- cache a pixel's feature gradient in registers and reduce per-splat feature
+  gradients in SIMD/threadgroup memory before global atomics;
+- use power-of-two/vector-aligned dimensions in the hot path.
+
+Use `F=32`, not `F=22`. Thirty-two channels are eight `vec4` groups and match
+the dimensions exercised by DynaWorld's feature raster variants. For 4096
+splats, the feature parameters are only about `0.5 MB`, but a 256x256 feature
+image is `8 MB` per lane and feature-gradient work grows from 3 to 32 channels.
+
+### Version 1
+
+1. Add a rebuild-time `RGB | feature32` representation toggle.
+2. Fork `raster_wgsl.ts` into a feature-specific shader module; keep RGB code
+   unchanged as the reference and rollback path.
+3. Initialize feature channels 0-2 from current RGB logits and channels 3-31
+   near zero.
+4. Alpha-composite 32D features plus a separate alpha output.
+5. Decode with an identity-safe residual colorizer:
+
+```text
+rgb = sigmoid(feature[0:3] + 0.1 * (W[3x32] * feature + bias))
+```
+
+Initialize `W` and `bias` to zero. Start with this linear 1x1 decoder before a
+hidden MLP. It is cheap, exactly preserves the RGB baseline at initialization,
+and gives the extra channels a route to affect color.
+6. Backpropagate CLIP RGB gradients through the colorizer into the 32D rendered
+   feature image, then through the feature raster backward.
+
+Do not add view direction to version 1. View-conditioned color can let CLIP
+paint a different object from each camera and weaken the shared-3D constraint.
+
+### Feature Loss
+
+Keep decoded-RGB CLIP as the primary objective. A direct loss on arbitrary
+rendered features is unsafe without a well-defined teacher target: it lets the
+optimizer bypass CLIP's natural-image input distribution and can improve the
+embedding while making RGB worse.
+
+The first auxiliary losses should only stabilize the representation:
+
+- small L2 penalty on non-RGB feature channels;
+- feature variance floor to prevent all extra channels collapsing;
+- optional consistency between augmented renders of the same view.
+
+A later experimental lane can learn a `32 -> CLIP stem channels` adapter and
+inject after CLIP's stem, but it must retain the RGB CLIP loss and stay at a
+small auxiliary weight.
+
+### Gates
+
+- exact RGB parity at feature-mode initialization;
+- finite-difference forward/backward gate for feature and decoder gradients;
+- equal-CLIP-pass cat prompt screenshots at 500/1000/2000 steps;
+- total-step slowdown target below `1.5x`;
+- kill the lane if it raises CLIP score without visibly improving decoded RGB.

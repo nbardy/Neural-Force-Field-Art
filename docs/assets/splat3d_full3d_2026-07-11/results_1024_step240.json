@@ -1,0 +1,95 @@
+{
+  "prompt": "a photo of a cat",
+  "G": 1024,
+  "steps": 240,
+  "promptTexts": [
+    "a directly overhead view of a photo of a cat, centered on a black background",
+    "a front-on view of a photo of a cat, centered on a black background",
+    "a right-side view of a photo of a cat, centered on a black background",
+    "a rear view of a photo of a cat, centered on a black background",
+    "a left-side view of a photo of a cat, centered on a black background",
+    "a photo of a cat, an elevated 45 degree camera angle from the front left looking down, centered on a black background",
+    "a photo of a cat, an elevated 45 degree camera angle from the front right looking down, centered on a black background",
+    "a photo of a cat, a low 45 degree camera angle from the rear right looking up, centered on a black background",
+    "a photo of a cat, a low 45 degree camera angle from the rear left looking up, centered on a black background"
+  ],
+  "results": [
+    {
+      "name": "aniso_base",
+      "steps": 240,
+      "trainMs": 12625.469542,
+      "stepsPerSecond": 19.009194010695115,
+      "meanCos": 0.31087066289135457,
+      "minCos": 0.25748473246011555,
+      "viewCos": [
+        0.32442519654973795,
+        0.36510529638579814,
+        0.32772308996492244,
+        0.28612161396356606,
+        0.33334800561235167,
+        0.31657600926674384,
+        0.29977382094238003,
+        0.25748473246011555,
+        0.2872782008765753
+      ],
+      "cloud": {
+        "opacityMean": 0.527707374733301,
+        "radiusMean": 0.08097742544732868,
+        "axisRatioMean": 3.1112348952715014,
+        "spreadRms": 1.0605020263657345,
+        "center": [
+          -0.019800480277126553,
+          0.029480098341991834,
+          0.01844768295677568
+        ]
+      },
+      "adaptation": null,
+      "sheetPath": "/tmp/nffa_aniso_quality_240b/aniso_base.png"
+    },
+    {
+      "name": "full3d",
+      "steps": 240,
+      "trainMs": 12671.231334000004,
+      "stepsPerSecond": 18.94054284653627,
+      "meanCos": 0.31841508265123813,
+      "minCos": 0.2982268993237675,
+      "viewCos": [
+        0.3107291449671709,
+        0.33893152560527495,
+        0.3409545788350563,
+        0.30147004653718007,
+        0.3309700442731582,
+        0.32323356302349265,
+        0.31598997795962225,
+        0.2982268993237675,
+        0.30522996333642066
+      ],
+      "cloud": {
+        "opacityMean": 0.5206956883577435,
+        "radiusMean": 0.07848758070824441,
+        "axisRatioMean": 3.0712501649063038,
+        "spreadRms": 0.9407532600445917,
+        "center": [
+          0.006055522569255345,
+          0.0018447333155791057,
+          -0.0067419919988083166
+        ]
+      },
+      "adaptation": {
+        "splatCount": 1024,
+        "requestedRelocations": 10,
+        "eligibleDestinations": 0,
+        "eligibleParents": 1024,
+        "relocationCount": 0,
+        "radiusClampCount": 27,
+        "opacityClampCount": 0,
+        "maxNeed": 0.08503997991297711,
+        "minSelectedNeed": 0,
+        "coverageMassBefore": 5.641480138899628,
+        "coverageMassAfter": 5.641480138899628,
+        "coverageMassRelativeError": 0
+      },
+      "sheetPath": "/tmp/nffa_aniso_quality_240b/full3d.png"
+    }
+  ]
+}

@@ -2,6 +2,10 @@
 
 Date: 2026-07-08
 
+> Historical chronology. The active default and authoritative unfinished-work
+> index are in `docs/SPLAT3D_OPEN_RESEARCH.md`. In particular, single CLIP is no
+> longer the default; full 3D uses anisotropic splats and batch-major CLIP x3.
+
 ## Current Baseline
 
 - 4096 splats, 256px render, 9 cameras.

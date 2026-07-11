@@ -3,7 +3,7 @@
   "source": ["src/index.html", "src/splat.html", "src/splat3d.html"],
   "scripts": {
     "start": "parcel src/index.html src/splat.html src/splat3d.html",
-    "build": "parcel build --no-scope-hoist src/index.html src/splat.html src/splat3d.html"
+    "build": "parcel build --no-scope-hoist --no-cache src/index.html src/splat.html src/splat3d.html"
   },
   "devDependencies": {
     "@huggingface/transformers": "^4.2.0",

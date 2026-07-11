@@ -23,6 +23,7 @@ const U = { MAP_READ: 1, COPY_SRC: 4, COPY_DST: 8, STORAGE: 128 };
 const SIDE = 256;
 const G = Number(process.env.G ?? 1024);
 const LANES = Number(process.env.LANES ?? 3);
+const RAY_REG = process.env.RAY_REG === "1";
 const VIEWS = Array.from({ length: LANES }, (_unused, i) => i);
 const IMG_FLOATS = 3 * SIDE * SIDE;
 
@@ -105,6 +106,15 @@ const raster = await Raster3DEngine.create(device, {
   cap: 2048,
   cameras,
   bg: [0, 0, 0],
+  dynamicCoverage: RAY_REG,
+  dynamicTransmittance: RAY_REG,
+});
+raster.setCoverageRegularizer({
+  transmittanceWeight: RAY_REG ? 0.05 : 0,
+  targetTransmittance: 0.88,
+  rayDistortionWeight: RAY_REG ? 0.1 : 0,
+  rayEntropyWeight: 0,
+  rayEntropyMask: 0.05,
 });
 raster.setParams(randomSplats3D(G, 7, LEGIBLE_3D_INIT));
 

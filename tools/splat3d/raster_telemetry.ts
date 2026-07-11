@@ -21,6 +21,8 @@ const SIDE = 256;
 const G = Number(process.env.G ?? LEGIBLE_3D_G);
 const CAP = Number(process.env.CAP ?? 2048);
 const SEED = Number(process.env.SEED ?? 1);
+const POSITION_SPREAD = Number(process.env.POSITION_SPREAD ?? LEGIBLE_3D_INIT.positionSpread);
+const RADIUS = Number(process.env.RADIUS ?? LEGIBLE_3D_INIT.radius);
 const JSON_OUT = process.env.JSON === "1";
 const VIEWS = parseViews(process.env.VIEWS, DEFAULT_3D_CAMERAS.length);
 
@@ -69,7 +71,13 @@ const raster = await Raster3DEngine.create(device, {
   cameras,
   bg: [0, 0, 0],
 });
-raster.setParams(randomSplats3D(G, SEED, LEGIBLE_3D_INIT));
+raster.setParams(
+  randomSplats3D(G, SEED, {
+    ...LEGIBLE_3D_INIT,
+    positionSpread: POSITION_SPREAD,
+    radius: RADIUS,
+  })
+);
 
 const rows: ViewTelemetry[] = [];
 for (const view of VIEWS) {
@@ -84,7 +92,10 @@ raster.destroy();
 if (JSON_OUT) {
   console.log(JSON.stringify({ G, cap: CAP, seed: SEED, side: SIDE, views: rows }, null, 2));
 } else {
-  console.log(`splat3d raster telemetry: G=${G} cap=${CAP} seed=${SEED} side=${SIDE} views=${VIEWS.join(",")}`);
+  console.log(
+    `splat3d raster telemetry: G=${G} cap=${CAP} seed=${SEED} side=${SIDE} ` +
+      `positionSpread=${POSITION_SPREAD} radius=${RADIUS} views=${VIEWS.join(",")}`
+  );
   console.log(
     "view              active overflow dropped pairs  count p50/p90/p99/max      stop p50/p90/p99/max       stop/count"
   );

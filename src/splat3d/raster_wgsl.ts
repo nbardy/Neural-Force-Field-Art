@@ -4,7 +4,8 @@ export const TILE = 16;
 export const PARAM_STRIDE_3D = 8;
 export const DERIVED_STRIDE_3D = 11;
 export const CAMERA_STRIDE_3D = 16;
-export const COVERAGE_UNIFORM_BYTES_3D = 16;
+export const COVERAGE_UNIFORM_BYTES_3D = 32;
+export const TRANSMITTANCE_SUM_SCALE_3D = 4096;
 export const ALPHA_THRESHOLD = 1.0 / 255.0;
 export const MAX_ALPHA = 0.99;
 export const TRANSMITTANCE_CUTOFF = 1e-4;
@@ -19,7 +20,11 @@ export interface Raster3DConfig {
   cap: number;
   bg?: [number, number, number];
   dynamicBg?: boolean;
+  dynamicBgTexture?: boolean;
   dynamicCoverage?: boolean;
+  dynamicTransmittance?: boolean;
+  dynamicEntropy?: boolean;
+  dynamicFootprint?: boolean;
   near?: number;
   far?: number;
   gradScale?: number;
@@ -35,7 +40,11 @@ export interface Raster3DDims {
   numTiles: number;
   bg: [number, number, number];
   dynamicBg: boolean;
+  dynamicBgTexture: boolean;
   dynamicCoverage: boolean;
+  dynamicTransmittance: boolean;
+  dynamicEntropy: boolean;
+  dynamicFootprint: boolean;
   near: number;
   far: number;
   gradScale: number;
@@ -59,6 +68,7 @@ export function resolveDims3D(cfg: Raster3DConfig): Raster3DDims {
   assert(cfg.H > 0 && cfg.W > 0 && cfg.G > 0, "H,W,G must be positive");
   assert(cfg.H % TILE === 0 && cfg.W % TILE === 0, `H,W must be multiples of ${TILE}`);
   assert((cfg.cap & (cfg.cap - 1)) === 0 && cfg.cap > 0, "cap must be a power of two");
+  assert(cfg.cap >= 256, "cap must be at least one 256-thread tile");
   assert(cfg.cap * 4 <= 16384, `cap*4 (${cfg.cap * 4}B) exceeds 16KB workgroup storage`);
   return {
     H: cfg.H,
@@ -69,8 +79,15 @@ export function resolveDims3D(cfg: Raster3DConfig): Raster3DDims {
     tilesY: cfg.H / TILE,
     numTiles: (cfg.W / TILE) * (cfg.H / TILE),
     bg: cfg.bg ?? [0, 0, 0],
-    dynamicBg: cfg.dynamicBg ?? false,
-    dynamicCoverage: cfg.dynamicCoverage ?? false,
+    dynamicBg: (cfg.dynamicBg ?? false) || (cfg.dynamicBgTexture ?? false),
+    dynamicBgTexture: cfg.dynamicBgTexture ?? false,
+    dynamicCoverage:
+      (cfg.dynamicCoverage ?? false) ||
+      (cfg.dynamicTransmittance ?? false) ||
+      (cfg.dynamicEntropy ?? false),
+    dynamicTransmittance: cfg.dynamicTransmittance ?? false,
+    dynamicEntropy: cfg.dynamicEntropy ?? false,
+    dynamicFootprint: cfg.dynamicFootprint ?? false,
     near: cfg.near ?? 0.2,
     far: cfg.far ?? 12,
     gradScale: cfg.gradScale ?? 65536,
@@ -98,13 +115,37 @@ struct BgU {
 `;
 }
 
+function footprintDecl(d: Raster3DDims, binding: number): string {
+  if (!d.dynamicFootprint) return "";
+  return `
+struct FootprintU { variancePx2 : f32, _pad0 : f32, _pad1 : f32, _pad2 : f32 };
+@group(0) @binding(${binding}) var<uniform> footprintU : FootprintU;
+`;
+}
+
+function footprintRadiusSquaredExpr(d: Raster3DDims, raw: string): string {
+  return d.dynamicFootprint
+    ? `${raw} * ${raw} + max(footprintU.variancePx2, 0.0)`
+    : `max(${raw}, 0.25) * max(${raw}, 0.25)`;
+}
+
+function bgDecl(d: Raster3DDims, binding: number): string {
+  if (!d.dynamicBg) return "";
+  if (!d.dynamicBgTexture) return bgUniformDecl(binding);
+  return `@group(0) @binding(${binding}) var<storage, read> backgroundImage : array<f32>;`;
+}
+
 function coverageUniformDecl(binding: number): string {
   return /* wgsl */ `
 struct CoverageU {
-  weight      : f32,
-  targetAlpha : f32,
+  transmittanceWeight : f32,
+  targetTransmittance : f32,
+  rayDistortionWeight : f32,
+  rayEntropyWeight    : f32,
+  rayEntropyMask      : f32,
   _pad0       : f32,
   _pad1       : f32,
+  _pad2       : f32,
 };
 @group(0) @binding(${binding}) var<uniform> coverageU : CoverageU;
 `;
@@ -112,20 +153,64 @@ struct CoverageU {
 
 function bgExpr(d: Raster3DDims, channel: 0 | 1 | 2): string {
   if (!d.dynamicBg) return fl(d.bg[channel]);
+  if (d.dynamicBgTexture) return `backgroundImage[${channel}u * ${uu(d.H * d.W)} + pix]`;
   return channel === 0 ? "bgU.rgb.x" : channel === 1 ? "bgU.rgb.y" : "bgU.rgb.z";
 }
 
 function coverageDecl(d: Raster3DDims): string {
   if (!d.dynamicCoverage) return "";
-  return coverageUniformDecl(d.dynamicBg ? 7 : 6);
+  const binding = d.dynamicBg ? 7 : 6;
+  const transmittance = d.dynamicTransmittance
+    ? `@group(0) @binding(${binding + 1}) var<storage, read_write> transmittanceSum : array<atomic<u32>>;`
+    : "";
+  return `${coverageUniformDecl(binding)}\n${transmittance}`;
 }
 
-function coverageGradExpr(d: Raster3DDims, hw: number): string {
-  if (!d.dynamicCoverage) return "";
+function coverageGradExpr(d: Raster3DDims, hw: number, laneExpr = "0u"): string {
+  if (!d.dynamicTransmittance) return "";
   return /* wgsl */ `
-  let targetT = 1.0 - clamp(coverageU.targetAlpha, 0.0, 1.0);
-  gT = gT + coverageU.weight * ${fl(2 / hw)} * (T - targetT);
+  let meanT = f32(atomicLoad(&transmittanceSum[${laneExpr}])) * ${fl(1 / (TRANSMITTANCE_SUM_SCALE_3D * hw))};
+  if (meanT < clamp(coverageU.targetTransmittance, 0.0, 1.0)) {
+    gT = gT - coverageU.transmittanceWeight * ${fl(1 / hw)};
+  }
 `;
+}
+
+function distortionWeightExpr(d: Raster3DDims, hw: number): string {
+  if (!d.dynamicCoverage) return "0.0";
+  return `coverageU.rayDistortionWeight * ${fl(2 / hw)}`;
+}
+
+function entropyGradExpr(d: Raster3DDims, hw: number): string {
+  if (!d.dynamicEntropy) return "";
+  return `
+    if (totalAlpha > coverageU.rayEntropyMask) {
+      let probability = alpha / max(totalAlpha, ${fl(EPS)});
+      gAlpha = gAlpha - coverageU.rayEntropyWeight * ${fl(1 / hw)} *
+        (log(max(probability, ${fl(EPS)})) + rayEntropy) / max(totalAlpha, ${fl(EPS)});
+    }
+`;
+}
+
+function entropyStateDecl(d: Raster3DDims): string {
+  if (!d.dynamicEntropy) return "";
+  return `
+  var totalAlpha = 0.0;
+  var totalAlphaLogAlpha = 0.0;`;
+}
+
+function entropyAccumExpr(d: Raster3DDims): string {
+  if (!d.dynamicEntropy) return "";
+  return `
+    totalAlpha = totalAlpha + alpha;
+    totalAlphaLogAlpha = totalAlphaLogAlpha + alpha * log(max(alpha, ${fl(EPS)}));`;
+}
+
+function entropyFinalizeExpr(d: Raster3DDims): string {
+  if (!d.dynamicEntropy) return "";
+  return `
+  let rayEntropy = log(max(totalAlpha, ${fl(EPS)})) -
+    totalAlphaLogAlpha / max(totalAlpha, ${fl(EPS)});`;
 }
 
 function cameraBlock(cam: PreparedCamera3D): string {
@@ -178,6 +263,7 @@ ${SIGMOID}
 ${cameraBlock(cam)}
 @group(0) @binding(0) var<storage, read>       params  : array<f32>;
 @group(0) @binding(1) var<storage, read_write> derived : array<f32>;
+${footprintDecl(d, 2)}
 
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
@@ -195,8 +281,8 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let vz = dot(w, CAM_FWD);
   let safeZ = max(vz, ${fl(d.near)});
   let radiusWorld = clamp(exp(params[${uu(s.logRadius)} + g]), ${fl(RADIUS_MIN)}, ${fl(RADIUS_MAX)});
-  let radiusPx = max(FOCAL_PX * radiusWorld / safeZ, 0.25);
-  let invR2 = 1.0 / max(radiusPx * radiusPx, ${fl(EPS)});
+  let radiusPx = FOCAL_PX * radiusWorld / safeZ;
+  let invR2 = 1.0 / max(${footprintRadiusSquaredExpr(d, "radiusPx")}, ${fl(EPS)});
   let sx = ${fl(d.W * 0.5)} + FOCAL_PX * (vx / safeZ);
   let sy = ${fl(d.H * 0.5)} - FOCAL_PX * (vy / safeZ);
 
@@ -225,6 +311,7 @@ ${SIGMOID}
 @group(0) @binding(1) var<storage, read>       cameras     : array<f32>;
 @group(0) @binding(2) var<storage, read>       activeViews : array<u32>;
 @group(0) @binding(3) var<storage, read_write> derived     : array<f32>;
+${footprintDecl(d, 4)}
 
 ${cameraLoadBlock()}
 
@@ -251,8 +338,8 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let vz = dot(w, fwd);
   let safeZ = max(vz, ${fl(d.near)});
   let radiusWorld = clamp(exp(params[${uu(s.logRadius)} + g]), ${fl(RADIUS_MIN)}, ${fl(RADIUS_MAX)});
-  let radiusPx = max(focalPx * radiusWorld / safeZ, 0.25);
-  let invR2 = 1.0 / max(radiusPx * radiusPx, ${fl(EPS)});
+  let radiusPx = focalPx * radiusWorld / safeZ;
+  let invR2 = 1.0 / max(${footprintRadiusSquaredExpr(d, "radiusPx")}, ${fl(EPS)});
   let sx = ${fl(d.W * 0.5)} + focalPx * (vx / safeZ);
   let sy = ${fl(d.H * 0.5)} - focalPx * (vy / safeZ);
 
@@ -370,10 +457,9 @@ export function forwardShader3D(cfg: Raster3DConfig): string {
 @group(0) @binding(2) var<storage, read>       derived    : array<f32>;
 @group(0) @binding(3) var<storage, read_write> image      : array<f32>;
 @group(0) @binding(4) var<storage, read_write> tileStop   : array<u32>;
-${d.dynamicBg ? bgUniformDecl(5) : ""}
+${bgDecl(d, 5)}
 
-var<workgroup> sh_ids     : array<u32, ${d.cap}>;
-var<workgroup> sh_maxstop : atomic<u32>;
+var<workgroup> sh_ids : array<u32, ${d.cap}>;
 
 fn nextPow2(x : u32) -> u32 {
   var v = max(x, 1u); v = v - 1u;
@@ -402,7 +488,6 @@ fn main(@builtin(workgroup_id) wg : vec3u,
   for (var i = tid; i < sortN; i = i + 256u) {
     sh_ids[i] = select(0xffffffffu, binnedIds[start + i], i < count);
   }
-  if (tid == 0u) { atomicStore(&sh_maxstop, 0u); }
   workgroupBarrier();
 
   var k = 2u;
@@ -464,9 +549,17 @@ fn main(@builtin(workgroup_id) wg : vec3u,
     image[1u * ${uu(HW)} + pix] = accG + T * ${bgExpr(d, 1)};
     image[2u * ${uu(HW)} + pix] = accB + T * ${bgExpr(d, 2)};
   }
-  atomicMax(&sh_maxstop, localStop);
   workgroupBarrier();
-  if (tid == 0u) { tileStop[tileId] = atomicLoad(&sh_maxstop); }
+  sh_ids[tid] = localStop;
+  workgroupBarrier();
+  var reduceOffset = 128u;
+  loop {
+    if (reduceOffset == 0u) { break; }
+    if (tid < reduceOffset) { sh_ids[tid] = max(sh_ids[tid], sh_ids[tid + reduceOffset]); }
+    workgroupBarrier();
+    reduceOffset = reduceOffset >> 1u;
+  }
+  if (tid == 0u) { tileStop[tileId] = sh_ids[0]; }
 }
 `;
 }
@@ -481,10 +574,9 @@ export function forwardBatchShader3D(cfg: Raster3DConfig): string {
 @group(0) @binding(2) var<storage, read>       derived    : array<f32>;
 @group(0) @binding(3) var<storage, read_write> image      : array<f32>;
 @group(0) @binding(4) var<storage, read_write> tileStop   : array<u32>;
-${d.dynamicBg ? bgUniformDecl(5) : ""}
+${bgDecl(d, 5)}
 
-var<workgroup> sh_ids     : array<u32, ${d.cap}>;
-var<workgroup> sh_maxstop : atomic<u32>;
+var<workgroup> sh_ids : array<u32, ${d.cap}>;
 
 fn nextPow2(x : u32) -> u32 {
   var v = max(x, 1u); v = v - 1u;
@@ -522,7 +614,6 @@ fn main(@builtin(workgroup_id) wg : vec3u,
   for (var i = tid; i < sortN; i = i + 256u) {
     sh_ids[i] = select(0xffffffffu, binnedIds[start + i], i < count);
   }
-  if (tid == 0u) { atomicStore(&sh_maxstop, 0u); }
   workgroupBarrier();
 
   var k = 2u;
@@ -584,9 +675,67 @@ fn main(@builtin(workgroup_id) wg : vec3u,
     image[imageBase + 1u * ${uu(HW)} + pix] = accG + T * ${bgExpr(d, 1)};
     image[imageBase + 2u * ${uu(HW)} + pix] = accB + T * ${bgExpr(d, 2)};
   }
-  atomicMax(&sh_maxstop, localStop);
   workgroupBarrier();
-  if (tid == 0u) { tileStop[tileStopBase + tileId] = atomicLoad(&sh_maxstop); }
+  sh_ids[tid] = localStop;
+  workgroupBarrier();
+  var reduceOffset = 128u;
+  loop {
+    if (reduceOffset == 0u) { break; }
+    if (tid < reduceOffset) { sh_ids[tid] = max(sh_ids[tid], sh_ids[tid + reduceOffset]); }
+    workgroupBarrier();
+    reduceOffset = reduceOffset >> 1u;
+  }
+  if (tid == 0u) { tileStop[tileStopBase + tileId] = sh_ids[0]; }
+}
+`;
+}
+
+export function transmittanceReduceShader3D(cfg: Raster3DConfig, batch = false): string {
+  const d = resolveDims3D(cfg);
+  return /* wgsl */ `
+@group(0) @binding(0) var<storage, read>       tileCounts : array<u32>;
+@group(0) @binding(1) var<storage, read>       binnedIds  : array<u32>;
+@group(0) @binding(2) var<storage, read>       tileStop   : array<u32>;
+@group(0) @binding(3) var<storage, read>       derived    : array<f32>;
+@group(0) @binding(4) var<storage, read_write> transmittanceSum : array<atomic<u32>>;
+
+var<workgroup> sh_ids : array<u32, ${d.cap}>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wg : vec3u,
+        @builtin(local_invocation_index) tid : u32) {
+  let tileId = wg.x;
+  let lane = ${batch ? "wg.z" : "0u"};
+  if (tileId >= ${uu(d.numTiles)}) { return; }
+  let tileBase = lane * ${uu(d.numTiles)};
+  let idsBase = lane * ${uu(d.numTiles * d.cap)};
+  let derivedBase = lane * ${uu(d.G * DERIVED_STRIDE_3D)};
+  let count = min(tileCounts[tileBase + tileId], ${uu(d.cap)});
+  let stopc = min(count, tileStop[tileBase + tileId]);
+  let start = idsBase + tileId * ${uu(d.cap)};
+  for (var i = tid; i < stopc; i = i + 256u) { sh_ids[i] = binnedIds[start + i]; }
+  workgroupBarrier();
+
+  let tileX = tileId % ${uu(d.tilesX)};
+  let tileY = tileId / ${uu(d.tilesX)};
+  let x = tileX * ${TILE}u + (tid % ${TILE}u);
+  let y = tileY * ${TILE}u + (tid / ${TILE}u);
+  if (x >= ${uu(d.W)} || y >= ${uu(d.H)}) { return; }
+  let pxc = f32(x) + 0.5;
+  let pyc = f32(y) + 0.5;
+  var T = 1.0;
+  for (var i = 0u; i < stopc; i = i + 1u) {
+    let b = derivedBase + sh_ids[i] * ${uu(DERIVED_STRIDE_3D)};
+    let dx = pxc - derived[b + 0u];
+    let dy = pyc - derived[b + 1u];
+    let power = -0.5 * derived[b + 2u] * (dx * dx + dy * dy);
+    if (power > 0.0) { continue; }
+    let alpha = min(${fl(MAX_ALPHA)}, derived[b + 10u] * exp(power));
+    if (alpha < ${fl(ALPHA_THRESHOLD)}) { continue; }
+    T = T * (1.0 - alpha);
+    if (T < ${fl(TRANSMITTANCE_CUTOFF)}) { break; }
+  }
+  atomicAdd(&transmittanceSum[lane], u32(round(clamp(T, 0.0, 1.0) * ${fl(TRANSMITTANCE_SUM_SCALE_3D)})));
 }
 `;
 }
@@ -602,7 +751,7 @@ export function backwardShader3D(cfg: Raster3DConfig): string {
 @group(0) @binding(3) var<storage, read>       tileStop   : array<u32>;
 @group(0) @binding(4) var<storage, read>       derived    : array<f32>;
 @group(0) @binding(5) var<storage, read_write> accGrad    : array<atomic<i32>>;
-${d.dynamicBg ? bgUniformDecl(6) : ""}
+${bgDecl(d, 6)}
 ${coverageDecl(d)}
 
 var<workgroup> sh_ids : array<u32, ${d.cap}>;
@@ -636,6 +785,9 @@ fn main(@builtin(workgroup_id) wg : vec3u,
 
   var T = 1.0;
   var endi = stopc;
+  var totalWeight = 0.0;
+  var totalWeightDepth = 0.0;
+${entropyStateDecl(d)}
   for (var i = 0u; i < stopc; i = i + 1u) {
     let gg = sh_ids[i];
     let b = gg * ${uu(DERIVED_STRIDE_3D)};
@@ -645,6 +797,11 @@ fn main(@builtin(workgroup_id) wg : vec3u,
     if (power > 0.0) { continue; }
     let alpha = min(${fl(MAX_ALPHA)}, derived[b + 10u] * exp(power));
     if (alpha < ${fl(ALPHA_THRESHOLD)}) { continue; }
+    let weight = T * alpha;
+    let z = clamp((derived[b + 6u] - ${fl(d.near)}) / ${fl(d.far - d.near)}, 0.0, 1.0);
+    totalWeight = totalWeight + weight;
+    totalWeightDepth = totalWeightDepth + weight * z;
+${entropyAccumExpr(d)}
     T = T * (1.0 - alpha);
     if (T < ${fl(TRANSMITTANCE_CUTOFF)}) { endi = i + 1u; break; }
   }
@@ -652,6 +809,9 @@ fn main(@builtin(workgroup_id) wg : vec3u,
   var Tcur = T;
   var gT = goR * ${bgExpr(d, 0)} + goG * ${bgExpr(d, 1)} + goB * ${bgExpr(d, 2)};
 ${coverageGradExpr(d, HW)}
+  var suffixWeight = 0.0;
+  var suffixWeightDepth = 0.0;
+${entropyFinalizeExpr(d)}
   for (var ii = i32(endi) - 1; ii >= 0; ii = ii - 1) {
     let gg = sh_ids[u32(ii)];
     let b = gg * ${uu(DERIVED_STRIDE_3D)};
@@ -666,9 +826,18 @@ ${coverageGradExpr(d, HW)}
     if (alpha < ${fl(ALPHA_THRESHOLD)}) { continue; }
     let denom = max(1.0 - alpha, ${fl(EPS)});
     let Tprev = Tcur / denom;
+    let weight = Tprev * alpha;
+    let z = clamp((derived[b + 6u] - ${fl(d.near)}) / ${fl(d.far - d.near)}, 0.0, 1.0);
+    let prefixWeight = totalWeight - weight - suffixWeight;
+    let prefixWeightDepth = totalWeightDepth - weight * z - suffixWeightDepth;
+    let distortionScale = ${distortionWeightExpr(d, HW)};
+    let gWeight = distortionScale *
+      (z * prefixWeight - prefixWeightDepth + suffixWeightDepth - z * suffixWeight);
+    let gDepth = distortionScale * weight * (prefixWeight - suffixWeight) / ${fl(d.far - d.near)};
     let cR = derived[b + 7u]; let cG = derived[b + 8u]; let cB = derived[b + 9u];
-    let dotgc = goR * cR + goG * cG + goB * cB;
-    let gAlpha = Tprev * (dotgc - gT);
+    let dotgc = goR * cR + goG * cG + goB * cB + gWeight;
+    var gAlpha = Tprev * (dotgc - gT);
+${entropyGradExpr(d, HW)}
 
     fixadd(b, 7u, goR * Tprev * alpha);
     fixadd(b, 8u, goG * Tprev * alpha);
@@ -682,10 +851,13 @@ ${coverageGradExpr(d, HW)}
     fixadd(b, 0u, -gdx);
     fixadd(b, 1u, -gdy);
     fixadd(b, 2u, gPower * (-0.5) * (dx * dx + dy * dy));
+    fixadd(b, 6u, gDepth);
     fixadd(b, 10u, gRaw * (raw / max(op, ${fl(EPS)})));
 
     gT = alpha * dotgc + (1.0 - alpha) * gT;
     Tcur = Tprev;
+    suffixWeight = suffixWeight + weight;
+    suffixWeightDepth = suffixWeightDepth + weight * z;
   }
 }
 `;
@@ -703,7 +875,7 @@ export function backwardBatchShader3D(cfg: Raster3DConfig): string {
 @group(0) @binding(3) var<storage, read>       tileStop   : array<u32>;
 @group(0) @binding(4) var<storage, read>       derived    : array<f32>;
 @group(0) @binding(5) var<storage, read_write> accGrad    : array<atomic<i32>>;
-${d.dynamicBg ? bgUniformDecl(6) : ""}
+${bgDecl(d, 6)}
 ${coverageDecl(d)}
 
 var<workgroup> sh_ids : array<u32, ${d.cap}>;
@@ -746,6 +918,9 @@ fn main(@builtin(workgroup_id) wg : vec3u,
 
   var T = 1.0;
   var endi = stopc;
+  var totalWeight = 0.0;
+  var totalWeightDepth = 0.0;
+${entropyStateDecl(d)}
   for (var i = 0u; i < stopc; i = i + 1u) {
     let gg = sh_ids[i];
     let b = derivedBase(lane, gg);
@@ -755,13 +930,21 @@ fn main(@builtin(workgroup_id) wg : vec3u,
     if (power > 0.0) { continue; }
     let alpha = min(${fl(MAX_ALPHA)}, derived[b + 10u] * exp(power));
     if (alpha < ${fl(ALPHA_THRESHOLD)}) { continue; }
+    let weight = T * alpha;
+    let z = clamp((derived[b + 6u] - ${fl(d.near)}) / ${fl(d.far - d.near)}, 0.0, 1.0);
+    totalWeight = totalWeight + weight;
+    totalWeightDepth = totalWeightDepth + weight * z;
+${entropyAccumExpr(d)}
     T = T * (1.0 - alpha);
     if (T < ${fl(TRANSMITTANCE_CUTOFF)}) { endi = i + 1u; break; }
   }
 
   var Tcur = T;
   var gT = goR * ${bgExpr(d, 0)} + goG * ${bgExpr(d, 1)} + goB * ${bgExpr(d, 2)};
-${coverageGradExpr(d, HW)}
+${coverageGradExpr(d, HW, "lane")}
+  var suffixWeight = 0.0;
+  var suffixWeightDepth = 0.0;
+${entropyFinalizeExpr(d)}
   for (var ii = i32(endi) - 1; ii >= 0; ii = ii - 1) {
     let gg = sh_ids[u32(ii)];
     let b = derivedBase(lane, gg);
@@ -776,9 +959,18 @@ ${coverageGradExpr(d, HW)}
     if (alpha < ${fl(ALPHA_THRESHOLD)}) { continue; }
     let denom = max(1.0 - alpha, ${fl(EPS)});
     let Tprev = Tcur / denom;
+    let weight = Tprev * alpha;
+    let z = clamp((derived[b + 6u] - ${fl(d.near)}) / ${fl(d.far - d.near)}, 0.0, 1.0);
+    let prefixWeight = totalWeight - weight - suffixWeight;
+    let prefixWeightDepth = totalWeightDepth - weight * z - suffixWeightDepth;
+    let distortionScale = ${distortionWeightExpr(d, HW)};
+    let gWeight = distortionScale *
+      (z * prefixWeight - prefixWeightDepth + suffixWeightDepth - z * suffixWeight);
+    let gDepth = distortionScale * weight * (prefixWeight - suffixWeight) / ${fl(d.far - d.near)};
     let cR = derived[b + 7u]; let cG = derived[b + 8u]; let cB = derived[b + 9u];
-    let dotgc = goR * cR + goG * cG + goB * cB;
-    let gAlpha = Tprev * (dotgc - gT);
+    let dotgc = goR * cR + goG * cG + goB * cB + gWeight;
+    var gAlpha = Tprev * (dotgc - gT);
+${entropyGradExpr(d, HW)}
 
     fixadd(b, 7u, goR * Tprev * alpha);
     fixadd(b, 8u, goG * Tprev * alpha);
@@ -792,10 +984,13 @@ ${coverageGradExpr(d, HW)}
     fixadd(b, 0u, -gdx);
     fixadd(b, 1u, -gdy);
     fixadd(b, 2u, gPower * (-0.5) * (dx * dx + dy * dy));
+    fixadd(b, 6u, gDepth);
     fixadd(b, 10u, gRaw * (raw / max(op, ${fl(EPS)})));
 
     gT = alpha * dotgc + (1.0 - alpha) * gT;
     Tcur = Tprev;
+    suffixWeight = suffixWeight + weight;
+    suffixWeightDepth = suffixWeightDepth + weight * z;
   }
 }
 `;
@@ -821,6 +1016,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let gsx = f32(accGrad[b + 0u]) * invScale;
   let gsy = f32(accGrad[b + 1u]) * invScale;
   let gInv = f32(accGrad[b + 2u]) * invScale;
+  let gDepth = f32(accGrad[b + 6u]) * invScale;
   let gc0 = f32(accGrad[b + 7u]) * invScale;
   let gc1 = f32(accGrad[b + 8u]) * invScale;
   let gc2 = f32(accGrad[b + 9u]) * invScale;
@@ -834,7 +1030,8 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let invZ2 = invZ * invZ;
   let gvx = gsx * FOCAL_PX * invZ;
   let gvy = -gsy * FOCAL_PX * invZ;
-  let gvz = gsx * (-FOCAL_PX * vx * invZ2) + gsy * (FOCAL_PX * vy * invZ2) + gInv * (2.0 * invR2 * invZ);
+  let gvz = gsx * (-FOCAL_PX * vx * invZ2) + gsy * (FOCAL_PX * vy * invZ2) +
+    gInv * (2.0 * invR2 * invZ) + gDepth;
   let gp = CAM_RIGHT * gvx + CAM_UP * gvy + CAM_FWD * gvz;
 
   gradRaw[${uu(s.position)} + g * 3u + 0u] = gradRaw[${uu(s.position)} + g * 3u + 0u] + gp.x;
@@ -843,8 +1040,14 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 
   let lr = params[${uu(s.logRadius)} + g];
   let er = exp(lr);
-  let gateR = select(0.0, 1.0, er > ${fl(RADIUS_MIN)} && er < ${fl(RADIUS_MAX)});
-  gradRaw[${uu(s.logRadius)} + g] = gradRaw[${uu(s.logRadius)} + g] + gInv * (-2.0 * invR2) * gateR;
+  let rawRadiusPx = FOCAL_PX * er / vz;
+  let gateR = select(
+    0.0,
+    1.0,
+    er > ${fl(RADIUS_MIN)} && er < ${fl(RADIUS_MAX)}${d.dynamicFootprint ? "" : " && rawRadiusPx > 0.25"}
+  );
+  gradRaw[${uu(s.logRadius)} + g] = gradRaw[${uu(s.logRadius)} + g] +
+    gInv * (-2.0 * rawRadiusPx * rawRadiusPx * invR2 * invR2) * gateR;
 
   let col0 = derived[b + 7u]; let col1 = derived[b + 8u]; let col2 = derived[b + 9u];
   let opv = derived[b + 10u];
@@ -868,6 +1071,29 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 }
 
 export const REGULARIZER_UNIFORM_BYTES_3D = 64;
+export const CENTER_SUM_SCALE_3D = 16384;
+
+export function centerReduceShader3D(cfg: Raster3DConfig): string {
+  const d = resolveDims3D(cfg);
+  const s = seg(d);
+  return /* wgsl */ `
+${SIGMOID}
+@group(0) @binding(0) var<storage, read>       params    : array<f32>;
+@group(0) @binding(1) var<storage, read_write> centerSum : array<atomic<i32>>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid : vec3u) {
+  let g = gid.x;
+  if (g >= ${uu(d.G)}) { return; }
+  let base = ${uu(s.position)} + g * 3u;
+  let mass = sigmoid1(params[${uu(s.opacityRaw)} + g]);
+  atomicAdd(&centerSum[0], i32(round(params[base + 0u] * mass * ${fl(CENTER_SUM_SCALE_3D)})));
+  atomicAdd(&centerSum[1], i32(round(params[base + 1u] * mass * ${fl(CENTER_SUM_SCALE_3D)})));
+  atomicAdd(&centerSum[2], i32(round(params[base + 2u] * mass * ${fl(CENTER_SUM_SCALE_3D)})));
+  atomicAdd(&centerSum[3], i32(round(mass * ${fl(CENTER_SUM_SCALE_3D)})));
+}
+`;
+}
 
 export function regularizerShader3D(cfg: Raster3DConfig): string {
   const d = resolveDims3D(cfg);
@@ -891,6 +1117,7 @@ struct RegU {
 @group(0) @binding(0) var<uniform>             u       : RegU;
 @group(0) @binding(1) var<storage, read>       params  : array<f32>;
 @group(0) @binding(2) var<storage, read_write> gradRaw : array<f32>;
+@group(0) @binding(3) var<storage, read_write> centerSum : array<atomic<i32>>;
 
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
@@ -904,7 +1131,13 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let r = length(p);
   let invR = 1.0 / max(r, ${fl(EPS)});
   let outside = max(0.0, r - max(u.targetRadius, ${fl(EPS)}));
-  let gp = (2.0 * u.centerWeight) * p + (2.0 * u.radiusWeight * outside * invR) * p;
+  let centerScale = 1.0 / max(f32(atomicLoad(&centerSum[3])), 1.0);
+  let center = vec3f(
+    f32(atomicLoad(&centerSum[0])),
+    f32(atomicLoad(&centerSum[1])),
+    f32(atomicLoad(&centerSum[2]))
+  ) * centerScale;
+  let gp = (2.0 * u.centerWeight) * center + (2.0 * u.radiusWeight * outside * invR) * p;
   gradRaw[pxIdx] = gradRaw[pxIdx] + gp.x;
   gradRaw[pyIdx] = gradRaw[pyIdx] + gp.y;
   gradRaw[pzIdx] = gradRaw[pzIdx] + gp.z;

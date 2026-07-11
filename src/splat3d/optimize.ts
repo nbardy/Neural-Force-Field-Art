@@ -3,8 +3,23 @@ import { VisionTrainer, type TrainPlan, type WeightArray } from "../clip/vision"
 import type { PointwiseTileVariant, WeightPrecision } from "../clip/vision_wgsl";
 import { BatchMajorVisionTrainer } from "../clip/vision_batch";
 import { type AdamHyper, DEFAULT_HYPER } from "../splat/adam_wgsl";
-import { DEFAULT_3D_CAMERAS, type Camera3D, type PreparedCamera3D, prepareCamera } from "./cameras";
+import {
+  DEFAULT_3D_CAMERAS,
+  DUAL_GRID_CAMERA_COUNT,
+  DUAL_GRID_RANDOM_START,
+  DUAL_GRID_ZOOM_START,
+  FIXED_GRID_CAMERA_COUNT,
+  type Camera3D,
+  type PreparedCamera3D,
+  prepareCamera,
+  sampleWeightedCameraIndices,
+} from "./cameras";
 import { Grid9Close2ClipLayout } from "./grid_clip";
+import type { BackgroundTextureMode } from "./background_textures";
+import {
+  planFixedBudgetSplatAdaptation,
+  type SplatAdaptationDiagnostics,
+} from "./adaptive";
 import {
   Raster3DEngine,
   type AdamLRs3D,
@@ -52,6 +67,10 @@ export interface Splat3DOptimizerConfig {
   viewLaneBatchRasterForward?: boolean;
   viewLaneBatchRasterBackward?: boolean;
   gridDirectRaster?: boolean;
+  gridRasterSide?: number;
+  retainGridCellState?: boolean;
+  gridGradientScale?: number;
+  randomGridGradientScale?: number;
   sharedWForwardSteps?: ReadonlySet<number>;
   clipRefreshInterval?: number;
   cachedLrScale?: number;
@@ -59,10 +78,16 @@ export interface Splat3DOptimizerConfig {
 }
 
 export type Splat3DClipMode = "single" | "batch";
-export type Splat3DClipLayout = "per_view" | "grid9_close2";
+export type Splat3DClipLayout = "per_view" | "grid9_close2" | "dual_grid4";
 export type Splat3DViewSampler = "epoch" | "random";
 export type Splat3DStepTimingMode = "split-submit-wall" | "gpu-timestamp";
-export type Splat3DBackgroundMode = "black" | "dark_random" | "curriculum";
+export type Splat3DBackgroundMode =
+  | "black"
+  | "dark_random"
+  | "curriculum"
+  | "blurred_noise"
+  | "checkerboard"
+  | "fourier";
 
 export interface Splat3DConvergenceConfig {
   backgroundMode?: Splat3DBackgroundMode;
@@ -72,11 +97,29 @@ export interface Splat3DConvergenceConfig {
   opacitySparsity?: number;
   coverageWeight?: number;
   coverageTarget?: number;
+  transmittanceStart?: number;
+  transmittanceEnd?: number;
+  transmittanceAnnealSteps?: number;
+  rayDistortionWeight?: number;
+  rayEntropyWeight?: number;
+  rayEntropyMask?: number;
   smallRadiusWeight?: number;
   smallRadius?: number;
   radiusBandWeight?: number;
   minRadius?: number;
   maxRadius?: number;
+  stagedOptimization?: boolean;
+  geometryWarmupSteps?: number;
+  geometryDecaySteps?: number;
+  geometryFinalScale?: number;
+  appearanceWarmupScale?: number;
+  adaptiveRelocation?: boolean;
+  adaptationInterval?: number;
+  adaptationFraction?: number;
+  mipSmoothing?: boolean;
+  mipVarianceStart?: number;
+  mipVarianceEnd?: number;
+  mipAnnealSteps?: number;
 }
 
 export interface Splat3DProfileOptions {
@@ -102,6 +145,13 @@ export interface Splat3DStepTimings {
   display: number;
 }
 
+interface DualGrid4ViewPlan {
+  fixedGrid: number[];
+  randomGrid: number[];
+  singles: [number, number];
+  zooms: [number, number];
+}
+
 export const LEGIBLE_3D_G = 4096;
 export const LEGIBLE_3D_INIT: Required<Splat3DInit> = {
   radius: 0.075,
@@ -117,6 +167,7 @@ export class Splat3DOptimizer {
   readonly trainer: VisionTrainer;
   readonly batchTrainer: BatchMajorVisionTrainer | null;
   readonly gridClip: Grid9Close2ClipLayout | null;
+  readonly randomGridClip: Grid9Close2ClipLayout | null;
   readonly cameras: PreparedCamera3D[];
   readonly side = SIDE;
   readonly clipBatchSize: number;
@@ -125,6 +176,8 @@ export class Splat3DOptimizer {
   readonly batchRasterForward: Raster3DBatchForwardState | null;
   private readonly textBuffers: GPUBuffer[];
   private readonly gridTextBuffer: GPUBuffer | null;
+  private readonly randomGridTextBuffer: GPUBuffer | null;
+  private readonly zoomTextBuffer: GPUBuffer | null;
   private readonly singleIO: Raster3DIOState;
   private readonly batchIO: Raster3DIOState[];
   private readonly lrs: AdamLRs3D;
@@ -142,6 +195,8 @@ export class Splat3DOptimizer {
   private viewOrder: number[] = [];
   private viewCursor = 0;
   private cachedBatchViews: number[] | null = null;
+  private lastAdaptationStep = -1;
+  private adaptationDiagnostics_: SplatAdaptationDiagnostics | null = null;
 
   static async create(
     device: GPUDevice,
@@ -156,22 +211,33 @@ export class Splat3DOptimizer {
     const cameras = (cfg.cameras ?? DEFAULT_3D_CAMERAS).map((c) => prepareCamera(c, SIDE));
     const G = cfg.G ?? LEGIBLE_3D_G;
     const convergence = normalizeConvergenceConfig(cfg.convergence);
+    const backgroundTextureMode = textureModeForBackground(convergence.backgroundMode);
     const raster = await Raster3DEngine.create(device, {
       H: SIDE,
       W: SIDE,
       G,
-      cap: cfg.cap ?? 2048,
+      cap: cfg.cap ?? defaultRasterCap(G),
       bg: cfg.bg ?? [0, 0, 0],
       dynamicBg: convergence.backgroundMode !== "black",
-      dynamicCoverage: convergence.coverageWeight !== 0,
+      dynamicBgTexture: backgroundTextureMode !== undefined,
+      backgroundTextureMode,
+      backgroundSeed: cfg.seed ?? 1,
+      dynamicCoverage:
+        convergence.coverageWeight !== 0 ||
+        convergence.rayDistortionWeight !== 0 ||
+        convergence.rayEntropyWeight !== 0,
+      dynamicTransmittance: convergence.coverageWeight !== 0,
+      dynamicEntropy: convergence.rayEntropyWeight !== 0,
+      dynamicFootprint: convergence.mipSmoothing,
       cameras,
     });
     const clipBatchSize = normalizeClipBatchSize(cfg.clipBatchSize);
     const clipLayout = cfg.clipLayout ?? "per_view";
+    const gridRasterSide = normalizeGridRasterSide(cfg.gridRasterSide, cfg.gridDirectRaster);
     const promoteGrid80BackwardStack =
-      clipLayout === "grid9_close2" &&
-      clipBatchSize === 3 &&
-      (cfg.gridDirectRaster ?? false) === true &&
+      (clipLayout === "grid9_close2" || clipLayout === "dual_grid4") &&
+      (clipLayout === "grid9_close2" ? clipBatchSize === 3 : clipBatchSize === 6) &&
+      gridRasterSide === 80 &&
       (cfg.stemSpatialBwd ?? true) === true &&
       (cfg.fusePointwiseGeluForward ?? true) === true &&
       (cfg.clipWeightPrecision ?? "f32") === "f32";
@@ -200,11 +266,19 @@ export class Splat3DOptimizer {
             fuseResidualBwdIntoPw: clipDispatchOptions.fuseResidualBwdIntoPw,
           })
         : null;
-    if (clipLayout === "grid9_close2" && !batchTrainer) {
-      throw new Error("splat3d: CLIP_LAYOUT=grid9_close2 needs CLIP_BATCH=3");
+    if ((clipLayout === "grid9_close2" || clipLayout === "dual_grid4") && !batchTrainer) {
+      throw new Error(`splat3d: CLIP_LAYOUT=${clipLayout} needs batched CLIP`);
     }
     if (clipLayout === "grid9_close2" && cameras.length < 9) {
       throw new Error(`splat3d: CLIP_LAYOUT=grid9_close2 needs at least 9 cameras, got ${cameras.length}`);
+    }
+    if (clipLayout === "dual_grid4") {
+      if (clipBatchSize < 6) {
+        throw new Error(`splat3d: CLIP_LAYOUT=dual_grid4 needs CLIP_BATCH=6, got ${clipBatchSize}`);
+      }
+      if (cameras.length < DUAL_GRID_CAMERA_COUNT) {
+        throw new Error(`splat3d: CLIP_LAYOUT=dual_grid4 needs ${DUAL_GRID_CAMERA_COUNT} cameras, got ${cameras.length}`);
+      }
     }
     raster.setParams(cfg.initParams ?? randomSplats3D(G, cfg.seed ?? 1, cfg.init));
     raster.zeroAdamState();
@@ -223,10 +297,31 @@ export class Splat3DOptimizer {
           })
         : null;
     const gridClip =
-      clipLayout === "grid9_close2" && batchTrainer
-        ? await Grid9Close2ClipLayout.create(device, raster, batchTrainer, { directRaster: cfg.gridDirectRaster ?? false })
+      (clipLayout === "grid9_close2" || clipLayout === "dual_grid4") && batchTrainer
+        ? await Grid9Close2ClipLayout.create(device, raster, batchTrainer, {
+            directRaster: cfg.gridDirectRaster ?? false,
+            rasterSide: gridRasterSide,
+            gridLane: 0,
+            retainCellState: cfg.retainGridCellState,
+            gradientScale: normalizeGridGradientScale(cfg.gridGradientScale),
+            backgroundTextureMode,
+            backgroundSeed: cfg.seed ?? 1,
+          })
         : null;
-    return new Splat3DOptimizer(device, raster, trainer, batchTrainer, gridClip, batchRasterForward, cameras, cfg);
+    const randomGridClip =
+      clipLayout === "dual_grid4" && batchTrainer
+        ? await Grid9Close2ClipLayout.create(device, raster, batchTrainer, {
+            directRaster: cfg.gridDirectRaster ?? false,
+            rasterSide: gridRasterSide,
+            gridLane: 1,
+            scratchRaster: gridRasterSide !== SIDE ? gridClip?.raster : undefined,
+            retainCellState: cfg.retainGridCellState,
+            gradientScale: normalizeGridGradientScale(cfg.randomGridGradientScale ?? cfg.gridGradientScale),
+            backgroundTextureMode,
+            backgroundSeed: (cfg.seed ?? 1) ^ 0x51f15e,
+          })
+        : null;
+    return new Splat3DOptimizer(device, raster, trainer, batchTrainer, gridClip, randomGridClip, batchRasterForward, cameras, cfg);
   }
 
   private constructor(
@@ -235,6 +330,7 @@ export class Splat3DOptimizer {
     trainer: VisionTrainer,
     batchTrainer: BatchMajorVisionTrainer | null,
     gridClip: Grid9Close2ClipLayout | null,
+    randomGridClip: Grid9Close2ClipLayout | null,
     batchRasterForward: Raster3DBatchForwardState | null,
     cameras: PreparedCamera3D[],
     cfg: Splat3DOptimizerConfig
@@ -244,6 +340,7 @@ export class Splat3DOptimizer {
     this.trainer = trainer;
     this.batchTrainer = batchTrainer;
     this.gridClip = gridClip;
+    this.randomGridClip = randomGridClip;
     this.batchRasterForward = batchRasterForward;
     this.cameras = cameras;
     this.clipBatchSize = batchTrainer?.batch ?? 1;
@@ -273,6 +370,21 @@ export class Splat3DOptimizer {
           usage: U.COPY_SRC | U.COPY_DST,
         })
       : null;
+    this.randomGridTextBuffer = randomGridClip
+      ? device.createBuffer({
+          label: "splat3d-random-grid9-text",
+          size: trainer.plan.textDim * 4,
+          usage: U.COPY_SRC | U.COPY_DST,
+        })
+      : null;
+    this.zoomTextBuffer =
+      this.clipLayout === "dual_grid4"
+        ? device.createBuffer({
+            label: "splat3d-zoom-text",
+            size: trainer.plan.textDim * 4,
+            usage: U.COPY_SRC | U.COPY_DST,
+          })
+        : null;
     this.singleIO = raster.createIOState(trainer.inputBuffer, 0, trainer.inputGradBuffer, 0);
     this.batchIO =
       batchRasterForward?.ios ??
@@ -313,13 +425,31 @@ export class Splat3DOptimizer {
     this.device.queue.writeBuffer(this.gridTextBuffer, 0, embed as unknown as BufferSource);
   }
 
+  setRandomGridPrompt(embed: Float32Array): void {
+    if (!this.randomGridTextBuffer) return;
+    if (embed.length !== this.trainer.plan.textDim) {
+      throw new Error(`splat3d: random grid text ${embed.length} != ${this.trainer.plan.textDim}`);
+    }
+    this.device.queue.writeBuffer(this.randomGridTextBuffer, 0, embed as unknown as BufferSource);
+  }
+
+  setZoomPrompt(embed: Float32Array): void {
+    if (!this.zoomTextBuffer) return;
+    if (embed.length !== this.trainer.plan.textDim) {
+      throw new Error(`splat3d: zoom text ${embed.length} != ${this.trainer.plan.textDim}`);
+    }
+    this.device.queue.writeBuffer(this.zoomTextBuffer, 0, embed as unknown as BufferSource);
+  }
+
   step(displayView = 0, viewsPerStep = this.cameras.length): void {
     if (!this.hasPrompts) throw new Error("splat3d: setViewPrompts() before step()");
     this.applyTrainingBackground();
     this.applyCoverageRegularizer();
+    this.applyFootprintCurriculum();
     const useCached = this.shouldUseCachedBatchStep(viewsPerStep);
     const views = useCached ? this.cachedBatchViews!.slice() : this.sampleViews(viewsPerStep);
     const enc = this.device.createCommandEncoder();
+    this.recordBackgroundTextures(enc, this.trainingBackgroundStrength());
     this.raster.recordClearRawGrad(enc);
     if (useCached) {
       this.recordCachedBatchTrainingViews(enc, views);
@@ -330,6 +460,7 @@ export class Splat3DOptimizer {
     this.recordConvergenceRegularizer(enc);
     this.step_ += 1;
     this.raster.recordAdam(enc, this.step_, this.lrsForStep(useCached), this.hyper);
+    this.raster.recordBackgroundGenerate(enc, this.step_, 0, 1);
     this.raster.recordForward(enc, displayView);
     this.device.queue.submit([enc.finish()]);
   }
@@ -343,6 +474,7 @@ export class Splat3DOptimizer {
     await this.device.queue.onSubmittedWorkDone();
     this.applyTrainingBackground();
     this.applyCoverageRegularizer();
+    this.applyFootprintCurriculum();
     const useCached = this.shouldUseCachedBatchStep(viewsPerStep);
     const views = useCached ? this.cachedBatchViews!.slice() : this.sampleViews(viewsPerStep);
     const timer = opts.gpuTimestamps ? GpuPassTimer.create(this.device) : null;
@@ -367,6 +499,11 @@ export class Splat3DOptimizer {
     const totalStart = performance.now();
 
     try {
+      if (this.hasTexturedBackground()) {
+        const backgroundEncoder = this.device.createCommandEncoder();
+        this.recordBackgroundTextures(backgroundEncoder, this.trainingBackgroundStrength());
+        this.device.queue.submit([backgroundEncoder.finish()]);
+      }
       timings.clear += await this.submitTimed((enc, ts) => {
         this.raster.recordClearRawGrad(enc, ts);
       }, timer);
@@ -374,6 +511,17 @@ export class Splat3DOptimizer {
       if (useCached) {
         timings.rasterFwd += await this.profileCachedBatchInputs(views, timer);
         timings.rasterBwd += await this.profileCachedBatchBackward(views, timer);
+      } else if (this.useDualGrid4Layout()) {
+        const batch = this.batchTrainer!;
+        const plan = this.dualGrid4Views();
+        timings.views = plan.fixedGrid.length + plan.randomGrid.length + plan.singles.length + plan.zooms.length;
+        timings.rasterFwd += await this.profileDualGrid4Inputs(plan, timer);
+        timings.clipBatch += await this.submitTimed((enc, ts) => {
+          batch.encode(enc, { backward: true, timestampWrites: ts });
+        }, timer);
+        const bwd = await this.profileDualGrid4Backward(plan, timer);
+        timings.rasterReplay += bwd.replay;
+        timings.rasterBwd += bwd.backward;
       } else if (this.useGridLayoutFor(views)) {
         const batch = this.batchTrainer!;
         const gridViews = views.slice(0, 9);
@@ -439,8 +587,10 @@ export class Splat3DOptimizer {
       }, timer);
       this.applyDisplayBackground();
       timings.display += await this.submitTimed((enc, ts) => {
+        this.raster.recordBackgroundGenerate(enc, this.step_, 0, 1);
         this.raster.recordForward(enc, displayView, undefined, ts);
       }, timer);
+      await this.adaptSplatsIfDue();
       timings.total = timer ? timedTotal(timings) : performance.now() - totalStart;
       return timings;
     } finally {
@@ -452,20 +602,49 @@ export class Splat3DOptimizer {
     return this.step_;
   }
 
+  get adaptationDiagnostics(): SplatAdaptationDiagnostics | null {
+    return this.adaptationDiagnostics_;
+  }
+
+  async adaptSplatsIfDue(force = false): Promise<SplatAdaptationDiagnostics | null> {
+    if (!this.convergence.adaptiveRelocation) return null;
+    const interval = Math.max(1, Math.round(this.convergence.adaptationInterval));
+    if (!force && this.step_ < interval) return null;
+    if (!force && this.lastAdaptationStep >= 0 && this.step_ - this.lastAdaptationStep < interval) return null;
+    if (!force && this.lastAdaptationStep === this.step_) return this.adaptationDiagnostics_;
+    await this.device.queue.onSubmittedWorkDone();
+    const [params, gradients] = await Promise.all([this.raster.readParams(), this.raster.readRawGrad()]);
+    const plan = planFixedBudgetSplatAdaptation(params, gradients, {
+      maxRelocations: Math.max(1, Math.floor(this.raster.dims.G * this.convergence.adaptationFraction)),
+      seed: (this.rngState ^ this.step_) >>> 0,
+      deadOpacityThreshold: 0.04,
+      minParentOpacity: 0.12,
+      splitOffsetScale: 0.55,
+    });
+    if (plan.changedIndices.length > 0) {
+      this.raster.setParams(plan.params);
+      this.raster.resetAdamForSplats(plan.changedIndices);
+    }
+    this.lastAdaptationStep = this.step_;
+    this.adaptationDiagnostics_ = plan.diagnostics;
+    return plan.diagnostics;
+  }
+
   async renderView(view = 0): Promise<Float32Array> {
     this.applyDisplayBackground();
-    this.raster.runForward(view);
+    this.renderBlackView(view);
     return this.raster.readImage();
   }
 
   renderViewToImage(view = 0): void {
     this.applyDisplayBackground();
-    this.raster.runForward(view);
+    this.renderBlackView(view);
   }
 
   async currentEmbedding(view = 0): Promise<Float32Array> {
     this.applyDisplayBackground();
     const enc = this.device.createCommandEncoder();
+    this.raster.recordBackgroundGenerate(enc, this.step_, 0, 1);
     this.raster.recordForward(enc, view, this.singleIO);
     this.trainer.encode(enc, { backward: false });
     this.device.queue.submit([enc.finish()]);
@@ -477,7 +656,10 @@ export class Splat3DOptimizer {
     this.trainer.destroy();
     this.batchTrainer?.destroy();
     this.gridClip?.destroy();
+    this.randomGridClip?.destroy();
     this.gridTextBuffer?.destroy();
+    this.randomGridTextBuffer?.destroy();
+    this.zoomTextBuffer?.destroy();
     for (const b of this.textBuffers) {
       try {
         b.destroy();
@@ -493,6 +675,13 @@ export class Splat3DOptimizer {
     return !!this.batchTrainer && views.length >= this.batchTrainer.batch;
   }
 
+  private renderBlackView(view: number): void {
+    const enc = this.device.createCommandEncoder();
+    this.raster.recordBackgroundGenerate(enc, this.step_, 0, 1);
+    this.raster.recordForward(enc, view);
+    this.device.queue.submit([enc.finish()]);
+  }
+
   private useGridLayoutFor(views: number[]): boolean {
     if (this.clipLayout !== "grid9_close2") return false;
     if (!this.batchTrainer || !this.gridClip || !this.gridTextBuffer) {
@@ -503,6 +692,27 @@ export class Splat3DOptimizer {
     }
     if (this.batchTrainer.batch < 3) {
       throw new Error(`splat3d: grid9_close2 needs CLIP_BATCH=3, got ${this.batchTrainer.batch}`);
+    }
+    return true;
+  }
+
+  private useDualGrid4Layout(): boolean {
+    if (this.clipLayout !== "dual_grid4") return false;
+    if (
+      !this.batchTrainer ||
+      !this.gridClip ||
+      !this.randomGridClip ||
+      !this.gridTextBuffer ||
+      !this.randomGridTextBuffer ||
+      !this.zoomTextBuffer
+    ) {
+      throw new Error("splat3d: dual_grid4 layout was not initialized");
+    }
+    if (this.batchTrainer.batch < 6) {
+      throw new Error(`splat3d: dual_grid4 needs CLIP_BATCH=6, got ${this.batchTrainer.batch}`);
+    }
+    if (this.cameras.length < DUAL_GRID_CAMERA_COUNT) {
+      throw new Error(`splat3d: dual_grid4 needs ${DUAL_GRID_CAMERA_COUNT} cameras, got ${this.cameras.length}`);
     }
     return true;
   }
@@ -520,6 +730,10 @@ export class Splat3DOptimizer {
   }
 
   private recordTrainingViews(enc: GPUCommandEncoder, views: number[]): void {
+    if (this.useDualGrid4Layout()) {
+      this.recordDualGrid4Training(enc, this.dualGrid4Views());
+      return;
+    }
     if (this.useGridLayoutFor(views)) {
       this.recordGrid9Close2Training(enc, views.slice(0, 9));
       return;
@@ -582,6 +796,66 @@ export class Splat3DOptimizer {
     }
   }
 
+  private recordDualGrid4Training(enc: GPUCommandEncoder, plan: DualGrid4ViewPlan): void {
+    const batch = this.batchTrainer!;
+    this.recordDualGrid4Inputs(enc, plan);
+    batch.encode(enc, { backward: true });
+    this.recordDualGrid4Backward(enc, plan);
+  }
+
+  private recordDualGrid4Inputs(enc: GPUCommandEncoder, plan: DualGrid4ViewPlan): void {
+    const batch = this.batchTrainer!;
+    const fixedGrid = this.gridClip!;
+    const randomGrid = this.randomGridClip!;
+    this.recordDualGrid4TextCopies(enc, plan);
+    fixedGrid.clearGridImage(enc);
+    randomGrid.clearGridImage(enc);
+    for (let cell = 0; cell < FIXED_GRID_CAMERA_COUNT; cell++) {
+      fixedGrid.raster.recordForward(enc, plan.fixedGrid[cell], fixedGrid.scratchIOForCell(cell));
+      fixedGrid.recordCopyCell(enc, cell);
+      randomGrid.raster.recordForward(enc, plan.randomGrid[cell], randomGrid.scratchIOForCell(cell));
+      randomGrid.recordCopyCell(enc, cell);
+    }
+    this.raster.recordForward(enc, plan.singles[0], this.batchIO[2]);
+    this.raster.recordForward(enc, plan.singles[1], this.batchIO[3]);
+    this.raster.recordForward(enc, plan.zooms[0], this.batchIO[4]);
+    this.raster.recordForward(enc, plan.zooms[1], this.batchIO[5]);
+    if (batch.batch < 6) throw new Error("splat3d: dual_grid4 lost its CLIP batch");
+  }
+
+  private recordDualGrid4Backward(enc: GPUCommandEncoder, plan: DualGrid4ViewPlan): void {
+    const fixedGrid = this.gridClip!;
+    const randomGrid = this.randomGridClip!;
+    for (let cell = 0; cell < FIXED_GRID_CAMERA_COUNT; cell++) {
+      fixedGrid.clearScratchGrad(enc);
+      fixedGrid.recordScatterCell(enc, cell);
+      const fixedIO = fixedGrid.scratchIOForCell(cell);
+      if (!fixedGrid.retainsCellState) fixedGrid.raster.recordForward(enc, plan.fixedGrid[cell], fixedIO);
+      fixedGrid.raster.recordBackwardAdd(enc, plan.fixedGrid[cell], fixedIO);
+
+      randomGrid.clearScratchGrad(enc);
+      randomGrid.recordScatterCell(enc, cell);
+      const randomIO = randomGrid.scratchIOForCell(cell);
+      if (!randomGrid.retainsCellState) randomGrid.raster.recordForward(enc, plan.randomGrid[cell], randomIO);
+      randomGrid.raster.recordBackwardAdd(enc, plan.randomGrid[cell], randomIO);
+    }
+    this.raster.recordBackwardAdd(enc, plan.singles[0], this.batchIO[2]);
+    this.raster.recordBackwardAdd(enc, plan.singles[1], this.batchIO[3]);
+    this.raster.recordBackwardAdd(enc, plan.zooms[0], this.batchIO[4]);
+    this.raster.recordBackwardAdd(enc, plan.zooms[1], this.batchIO[5]);
+  }
+
+  private recordDualGrid4TextCopies(enc: GPUCommandEncoder, plan: DualGrid4ViewPlan): void {
+    const batch = this.batchTrainer!;
+    const bytes = batch.plan.textDim * 4;
+    enc.copyBufferToBuffer(this.gridTextBuffer!, 0, batch.textBuffer, batch.textOffsetBytes(0), bytes);
+    enc.copyBufferToBuffer(this.randomGridTextBuffer!, 0, batch.textBuffer, batch.textOffsetBytes(1), bytes);
+    enc.copyBufferToBuffer(this.textBuffers[plan.singles[0]], 0, batch.textBuffer, batch.textOffsetBytes(2), bytes);
+    enc.copyBufferToBuffer(this.textBuffers[plan.singles[1]], 0, batch.textBuffer, batch.textOffsetBytes(3), bytes);
+    enc.copyBufferToBuffer(this.zoomTextBuffer!, 0, batch.textBuffer, batch.textOffsetBytes(4), bytes);
+    enc.copyBufferToBuffer(this.zoomTextBuffer!, 0, batch.textBuffer, batch.textOffsetBytes(5), bytes);
+  }
+
   private recordGrid9Close2Training(enc: GPUCommandEncoder, gridViews: number[]): void {
     const batch = this.batchTrainer!;
     const closeups = this.grid9CloseupViews(gridViews);
@@ -596,7 +870,7 @@ export class Splat3DOptimizer {
     this.recordGrid9Close2TextCopies(enc, closeups);
     grid.clearGridImage(enc);
     for (let cell = 0; cell < 9; cell++) {
-      grid.raster.recordForward(enc, gridViews[cell], grid.scratchIO);
+      grid.raster.recordForward(enc, gridViews[cell], grid.scratchIOForCell(cell));
       grid.recordCopyCell(enc, cell);
     }
     for (let lane = 0; lane < 2; lane++) {
@@ -612,8 +886,9 @@ export class Splat3DOptimizer {
     for (let cell = 0; cell < 9; cell++) {
       grid.clearScratchGrad(enc);
       grid.recordScatterCell(enc, cell);
-      grid.raster.recordForward(enc, gridViews[cell], grid.scratchIO);
-      grid.raster.recordBackwardAdd(enc, gridViews[cell], grid.scratchIO);
+      const io = grid.scratchIOForCell(cell);
+      if (!grid.retainsCellState) grid.raster.recordForward(enc, gridViews[cell], io);
+      grid.raster.recordBackwardAdd(enc, gridViews[cell], io);
     }
     for (let lane = 0; lane < 2; lane++) {
       this.raster.recordBackwardAdd(enc, closeups[lane], this.batchIO[lane + 1]);
@@ -721,6 +996,107 @@ export class Splat3DOptimizer {
     return ms;
   }
 
+  private async profileDualGrid4Inputs(plan: DualGrid4ViewPlan, timer: GpuPassTimer | null): Promise<number> {
+    if (!timer) {
+      return this.submitTimed((enc) => this.recordDualGrid4Inputs(enc, plan));
+    }
+    const fixedGrid = this.gridClip!;
+    const randomGrid = this.randomGridClip!;
+    const setup = this.device.createCommandEncoder();
+    this.recordDualGrid4TextCopies(setup, plan);
+    fixedGrid.clearGridImage(setup);
+    randomGrid.clearGridImage(setup);
+    this.device.queue.submit([setup.finish()]);
+    await this.device.queue.onSubmittedWorkDone();
+
+    let ms = 0;
+    for (let cell = 0; cell < FIXED_GRID_CAMERA_COUNT; cell++) {
+      ms += await this.submitTimed((enc, ts) => {
+        fixedGrid.raster.recordForward(enc, plan.fixedGrid[cell], fixedGrid.scratchIOForCell(cell), ts);
+      }, timer);
+      ms += await this.submitTimed((enc, ts) => {
+        fixedGrid.recordCopyCell(enc, cell, ts);
+      }, timer);
+      ms += await this.submitTimed((enc, ts) => {
+        randomGrid.raster.recordForward(enc, plan.randomGrid[cell], randomGrid.scratchIOForCell(cell), ts);
+      }, timer);
+      ms += await this.submitTimed((enc, ts) => {
+        randomGrid.recordCopyCell(enc, cell, ts);
+      }, timer);
+    }
+    ms += await this.submitTimed((enc, ts) => {
+      this.raster.recordForward(enc, plan.singles[0], this.batchIO[2], ts);
+    }, timer);
+    ms += await this.submitTimed((enc, ts) => {
+      this.raster.recordForward(enc, plan.singles[1], this.batchIO[3], ts);
+    }, timer);
+    ms += await this.submitTimed((enc, ts) => {
+      this.raster.recordForward(enc, plan.zooms[0], this.batchIO[4], ts);
+    }, timer);
+    ms += await this.submitTimed((enc, ts) => {
+      this.raster.recordForward(enc, plan.zooms[1], this.batchIO[5], ts);
+    }, timer);
+    return ms;
+  }
+
+  private async profileDualGrid4Backward(
+    plan: DualGrid4ViewPlan,
+    timer: GpuPassTimer | null
+  ): Promise<{ replay: number; backward: number }> {
+    if (!timer) {
+      return {
+        replay: 0,
+        backward: await this.submitTimed((enc) => this.recordDualGrid4Backward(enc, plan)),
+      };
+    }
+    const fixedGrid = this.gridClip!;
+    const randomGrid = this.randomGridClip!;
+    let replay = 0;
+    let backward = 0;
+    for (let cell = 0; cell < FIXED_GRID_CAMERA_COUNT; cell++) {
+      backward += await this.submitTimed((enc, ts) => {
+        fixedGrid.clearScratchGrad(enc);
+        fixedGrid.recordScatterCell(enc, cell, ts);
+      }, timer);
+      const fixedIO = fixedGrid.scratchIOForCell(cell);
+      if (!fixedGrid.retainsCellState) {
+        replay += await this.submitTimed((enc, ts) => {
+          fixedGrid.raster.recordForward(enc, plan.fixedGrid[cell], fixedIO, ts);
+        }, timer);
+      }
+      backward += await this.submitTimed((enc, ts) => {
+        fixedGrid.raster.recordBackwardAdd(enc, plan.fixedGrid[cell], fixedIO, ts);
+      }, timer);
+
+      backward += await this.submitTimed((enc, ts) => {
+        randomGrid.clearScratchGrad(enc);
+        randomGrid.recordScatterCell(enc, cell, ts);
+      }, timer);
+      const randomIO = randomGrid.scratchIOForCell(cell);
+      if (!randomGrid.retainsCellState) {
+        replay += await this.submitTimed((enc, ts) => {
+          randomGrid.raster.recordForward(enc, plan.randomGrid[cell], randomIO, ts);
+        }, timer);
+      }
+      backward += await this.submitTimed((enc, ts) => {
+        randomGrid.raster.recordBackwardAdd(enc, plan.randomGrid[cell], randomIO, ts);
+      }, timer);
+    }
+    backward += await this.submitTimed((enc, ts) => {
+      this.raster.recordBackwardAdd(enc, plan.singles[0], this.batchIO[2], ts);
+    }, timer);
+    backward += await this.submitTimed((enc, ts) => {
+      this.raster.recordBackwardAdd(enc, plan.singles[1], this.batchIO[3], ts);
+    }, timer);
+    backward += await this.submitTimed((enc, ts) => {
+      this.raster.recordBackwardAdd(enc, plan.zooms[0], this.batchIO[4], ts);
+    }, timer);
+    backward += await this.submitTimed((enc, ts) => {
+      this.raster.recordBackwardAdd(enc, plan.zooms[1], this.batchIO[5], ts);
+    }, timer);
+    return { replay, backward };
+  }
+
   private async profileGrid9Close2Inputs(
     gridViews: number[],
     closeups: [number, number],
@@ -739,7 +1115,7 @@ export class Splat3DOptimizer {
     let ms = 0;
     for (let cell = 0; cell < 9; cell++) {
       ms += await this.submitTimed((enc, ts) => {
-        grid.raster.recordForward(enc, gridViews[cell], grid.scratchIO, ts);
+        grid.raster.recordForward(enc, gridViews[cell], grid.scratchIOForCell(cell), ts);
       }, timer);
       ms += await this.submitTimed((enc, ts) => {
         grid.recordCopyCell(enc, cell, ts);
@@ -772,11 +1148,14 @@ export class Splat3DOptimizer {
         grid.clearScratchGrad(enc);
         grid.recordScatterCell(enc, cell, ts);
       }, timer);
-      replay += await this.submitTimed((enc, ts) => {
-        grid.raster.recordForward(enc, gridViews[cell], grid.scratchIO, ts);
-      }, timer);
+      const io = grid.scratchIOForCell(cell);
+      if (!grid.retainsCellState) {
+        replay += await this.submitTimed((enc, ts) => {
+          grid.raster.recordForward(enc, gridViews[cell], io, ts);
+        }, timer);
+      }
       backward += await this.submitTimed((enc, ts) => {
-        grid.raster.recordBackwardAdd(enc, gridViews[cell], grid.scratchIO, ts);
+        grid.raster.recordBackwardAdd(enc, gridViews[cell], io, ts);
       }, timer);
     }
     for (let lane = 0; lane < 2; lane++) {
@@ -838,9 +1217,17 @@ export class Splat3DOptimizer {
   }
 
   private coverageOptions(): Raster3DCoverageOptions {
+    const anneal = Math.max(1, this.convergence.transmittanceAnnealSteps);
+    const t = Math.max(0, Math.min(1, this.step_ / anneal));
+    const targetTransmittance =
+      this.convergence.transmittanceStart +
+      (this.convergence.transmittanceEnd - this.convergence.transmittanceStart) * t;
     return {
-      weight: this.convergence.coverageWeight,
-      targetAlpha: this.convergence.coverageTarget,
+      transmittanceWeight: this.convergence.coverageWeight,
+      targetTransmittance,
+      rayDistortionWeight: this.convergence.rayDistortionWeight,
+      rayEntropyWeight: this.convergence.rayEntropyWeight,
+      rayEntropyMask: this.convergence.rayEntropyMask,
     };
   }
 
@@ -858,6 +1245,22 @@ export class Splat3DOptimizer {
     if (this.gridClip && this.gridClip.raster !== this.raster) {
       this.gridClip.raster.setCoverageRegularizer(opts);
     }
+    if (this.randomGridClip && this.randomGridClip.raster !== this.raster) {
+      this.randomGridClip.raster.setCoverageRegularizer(opts);
+    }
+  }
+
+  private applyFootprintCurriculum(): void {
+    if (!this.convergence.mipSmoothing) return;
+    const anneal = Math.max(1, this.convergence.mipAnnealSteps);
+    const t = Math.max(0, Math.min(1, this.step_ / anneal));
+    const variance =
+      this.convergence.mipVarianceStart +
+      (this.convergence.mipVarianceEnd - this.convergence.mipVarianceStart) * t;
+    const rasters = new Set<Raster3DEngine>([this.raster]);
+    if (this.gridClip) rasters.add(this.gridClip.raster);
+    if (this.randomGridClip) rasters.add(this.randomGridClip.raster);
+    for (const raster of rasters) raster.setScreenVariance(variance);
   }
 
   private applyBackground(rgb: [number, number, number]): void {
@@ -865,6 +1268,31 @@ export class Splat3DOptimizer {
     if (this.gridClip && this.gridClip.raster !== this.raster) {
       this.gridClip.raster.setBackground(rgb);
     }
+    if (this.randomGridClip && this.randomGridClip.raster !== this.raster) {
+      this.randomGridClip.raster.setBackground(rgb);
+    }
+  }
+
+  private hasTexturedBackground(): boolean {
+    return (
+      this.raster.usesTexturedBackground ||
+      !!this.gridClip?.raster.usesTexturedBackground ||
+      !!this.randomGridClip?.raster.usesTexturedBackground
+    );
+  }
+
+  private recordBackgroundTextures(enc: GPUCommandEncoder, strength: number): void {
+    const rasters = new Set<Raster3DEngine>([this.raster]);
+    if (this.gridClip) rasters.add(this.gridClip.raster);
+    if (this.randomGridClip) rasters.add(this.randomGridClip.raster);
+    for (const raster of rasters) raster.recordBackgroundGenerate(enc, this.step_, strength);
+  }
+
+  private trainingBackgroundStrength(): number {
+    if (this.convergence.backgroundMode === "curriculum") {
+      return this.step_ < 120 ? 0.35 : Math.min(1, 0.35 + (this.step_ - 120) / 380);
+    }
+    return 1;
   }
 
   private trainingBackground(): [number, number, number] {
@@ -917,8 +1345,26 @@ export class Splat3DOptimizer {
   }
 
   private lrsForStep(useCached: boolean): AdamLRs3D {
-    if (!useCached || this.cachedLrScale === 1) return this.lrs;
-    return scaleLrs3D(this.lrs, this.cachedLrScale);
+    let lrs = this.lrs;
+    if (this.convergence.stagedOptimization) {
+      const warmup = Math.max(1, this.convergence.geometryWarmupSteps);
+      const decay = Math.max(1, this.convergence.geometryDecaySteps);
+      const appearanceT = Math.max(0, Math.min(1, this.step_ / warmup));
+      const geometryT = Math.max(0, Math.min(1, (this.step_ - warmup) / decay));
+      const geometryScale =
+        1 + (this.convergence.geometryFinalScale - 1) * geometryT;
+      const appearanceScale =
+        this.convergence.appearanceWarmupScale +
+        (1 - this.convergence.appearanceWarmupScale) * appearanceT;
+      lrs = {
+        position: this.lrs.position * geometryScale,
+        logRadius: this.lrs.logRadius * geometryScale,
+        color: this.lrs.color * appearanceScale,
+        opacity: this.lrs.opacity * appearanceScale,
+      };
+    }
+    if (!useCached || this.cachedLrScale === 1) return lrs;
+    return scaleLrs3D(lrs, this.cachedLrScale);
   }
 
   private updateCachedBatchViews(views: number[]): void {
@@ -934,15 +1380,48 @@ export class Splat3DOptimizer {
     return Math.max(1, Math.min(n, viewsPerStep | 0));
   }
 
-  private sampleRandomViews(k: number): number[] {
-    const pool = Array.from({ length: this.cameras.length }, (_unused, i) => i);
-    for (let i = 0; i < k; i++) {
-      const j = i + (this.nextRandomU32() % (pool.length - i));
+  private dualGrid4Views(): DualGrid4ViewPlan {
+    return {
+      fixedGrid: Array.from({ length: FIXED_GRID_CAMERA_COUNT }, (_unused, i) => i),
+      randomGrid: this.sampleCameraRange(DUAL_GRID_RANDOM_START, FIXED_GRID_CAMERA_COUNT, FIXED_GRID_CAMERA_COUNT, 401),
+      singles: this.sampleCameraPair(DUAL_GRID_RANDOM_START, FIXED_GRID_CAMERA_COUNT, 503, 607),
+      zooms: this.sampleCameraPair(DUAL_GRID_ZOOM_START, FIXED_GRID_CAMERA_COUNT, 709, 811),
+    };
+  }
+
+  private sampleCameraRange(start: number, count: number, k: number, salt: number): number[] {
+    const pool = Array.from({ length: count }, (_unused, i) => start + i);
+    if (this.viewSampler !== "random") {
+      const offset = this.step_ % Math.max(1, count);
+      return pool.slice(offset).concat(pool.slice(0, offset)).slice(0, k);
+    }
+    for (let i = 0; i < Math.min(k, pool.length); i++) {
+      const r = Math.floor(hash01(this.step_, salt + i * 37) * (pool.length - i));
+      const j = i + Math.max(0, Math.min(pool.length - i - 1, r));
       const tmp = pool[i];
       pool[i] = pool[j];
       pool[j] = tmp;
     }
     return pool.slice(0, k);
+  }
+
+  private sampleCameraPair(start: number, count: number, saltA: number, saltB: number): [number, number] {
+    if (this.viewSampler !== "random") {
+      const a = start + (this.step_ % count);
+      return [a, start + ((this.step_ + 4) % count)];
+    }
+    const a = start + (Math.floor(hash01(this.step_, saltA) * count) % count);
+    let b = start + (Math.floor(hash01(this.step_, saltB) * count) % count);
+    if (b === a) b = start + ((b - start + 4) % count);
+    return [a, b];
+  }
+
+  private sampleRandomViews(k: number): number[] {
+    return sampleWeightedCameraIndices(
+      this.cameras,
+      k,
+      () => this.nextRandomU32() / 4294967296
+    );
   }
 
   private shuffleViewOrder(): void {
@@ -967,15 +1446,42 @@ function normalizeClipBatchSize(value: number | undefined): number {
   return n > 1 ? Math.min(9, n) : 1;
 }
 
+function defaultRasterCap(splats: number): number {
+  let cap = 256;
+  while (cap < splats && cap < 4096) cap *= 2;
+  return cap;
+}
+
 function normalizeCachedLrScale(value: number | undefined): number {
   if (value === undefined) return 1;
   if (!Number.isFinite(value)) return 1;
   return Math.max(0, value);
 }
 
+function normalizeGridGradientScale(value: number | undefined): number {
+  if (value === undefined) return 1;
+  if (!Number.isFinite(value)) return 1;
+  return Math.max(0, value);
+}
+
+function normalizeGridRasterSide(value: number | undefined, directRaster: boolean | undefined): number {
+  if (value !== undefined && Number.isFinite(value)) {
+    const n = value | 0;
+    if (n === 80 || n === SIDE || n === 512) return n;
+  }
+  return directRaster ? 80 : SIDE;
+}
+
 function normalizeConvergenceConfig(cfg: Splat3DConvergenceConfig | undefined): Required<Splat3DConvergenceConfig> {
-  const backgroundMode =
-    cfg?.backgroundMode === "dark_random" || cfg?.backgroundMode === "curriculum" ? cfg.backgroundMode : "black";
+  const requestedBackground = cfg?.backgroundMode;
+  const backgroundMode: Splat3DBackgroundMode =
+    requestedBackground === "dark_random" ||
+    requestedBackground === "curriculum" ||
+    requestedBackground === "blurred_noise" ||
+    requestedBackground === "checkerboard" ||
+    requestedBackground === "fourier"
+      ? requestedBackground
+      : "black";
   return {
     backgroundMode,
     centerWeight: finiteNonNegative(cfg?.centerWeight, 0),
@@ -984,12 +1490,39 @@ function normalizeConvergenceConfig(cfg: Splat3DConvergenceConfig | undefined): 
     opacitySparsity: finiteNonNegative(cfg?.opacitySparsity, 0),
     coverageWeight: finiteNonNegative(cfg?.coverageWeight, 0),
     coverageTarget: clamp01(cfg?.coverageTarget, 0.18),
+    transmittanceStart: clamp01(cfg?.transmittanceStart, 0.4),
+    transmittanceEnd: clamp01(
+      cfg?.transmittanceEnd,
+      cfg?.coverageTarget === undefined ? 0.88 : 1 - clamp01(cfg.coverageTarget, 0.18)
+    ),
+    transmittanceAnnealSteps: finitePositive(cfg?.transmittanceAnnealSteps, 500),
+    rayDistortionWeight: finiteNonNegative(cfg?.rayDistortionWeight, 0),
+    rayEntropyWeight: finiteNonNegative(cfg?.rayEntropyWeight, 0),
+    rayEntropyMask: finiteNonNegative(cfg?.rayEntropyMask, 0.05),
     smallRadiusWeight: finiteNonNegative(cfg?.smallRadiusWeight, 0),
     smallRadius: finitePositive(cfg?.smallRadius, 0.022),
     radiusBandWeight: finiteNonNegative(cfg?.radiusBandWeight, 0),
     minRadius: finitePositive(cfg?.minRadius, 0.014),
     maxRadius: finitePositive(cfg?.maxRadius, 0.18),
+    stagedOptimization: cfg?.stagedOptimization === true,
+    geometryWarmupSteps: finitePositive(cfg?.geometryWarmupSteps, 250),
+    geometryDecaySteps: finitePositive(cfg?.geometryDecaySteps, 1000),
+    geometryFinalScale: finiteNonNegative(cfg?.geometryFinalScale, 0.2),
+    appearanceWarmupScale: clamp01(cfg?.appearanceWarmupScale, 0.35),
+    adaptiveRelocation: cfg?.adaptiveRelocation === true,
+    adaptationInterval: finitePositive(cfg?.adaptationInterval, 200),
+    adaptationFraction: clamp01(cfg?.adaptationFraction, 0.01),
+    mipSmoothing: cfg?.mipSmoothing === true,
+    mipVarianceStart: finiteNonNegative(cfg?.mipVarianceStart, 4),
+    mipVarianceEnd: finiteNonNegative(cfg?.mipVarianceEnd, 0.0625),
+    mipAnnealSteps: finitePositive(cfg?.mipAnnealSteps, 500),
   };
+}
+
+function textureModeForBackground(mode: Splat3DBackgroundMode): BackgroundTextureMode | undefined {
+  if (mode === "curriculum" || mode === "blurred_noise") return "blurred_noise";
+  if (mode === "checkerboard" || mode === "fourier") return mode;
+  return undefined;
 }
 
 function finiteNonNegative(value: number | undefined, fallback: number): number {

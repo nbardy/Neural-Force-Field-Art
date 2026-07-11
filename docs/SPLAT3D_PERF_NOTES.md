@@ -1042,3 +1042,184 @@ Integrated timing was mixed:
 Decision: keep `CAP` / `capNNN` benchmark controls, but do not change the
 default cap. The result is too flat, and lower cap has less safety margin during
 optimization if radii or positions concentrate.
+
+## Dual Grid Plus Zoom Layout Smoke
+
+`dual_grid4` is the heavier convergence objective behind the browser label
+`2 grids + 4`. It uses `CLIP_BATCH=6`:
+
+- fixed 9-view grid;
+- varied 9-view grid;
+- two full-resolution varied views;
+- two full-resolution zoomed views.
+
+Tiny binding/pipeline smoke:
+
+```bash
+G=128 RUNS=1 WARMUP=0 CLIP_LAYOUT=dual_grid4 CLIP_BATCH=6 VIEWS=22 GRID_DIRECT_RASTER=1 VIEW_SAMPLER=random BACKGROUND_MODE=curriculum ALPHA_REG=weak BOUNDS_REG=weak COVERAGE_REG=weak SPLAT_REG=tiny bun tools/splat3d/step_bench.ts
+```
+
+Result on the local Apple Metal adapter:
+
+```text
+compile+allocate=823 ms
+normal step avg: 323.09 ms
+profile: total=91.01 ms rasterFwd=2.03 rasterReplay=0.00 rasterBwd=4.35 clipBatch=78.36 regularizer=0.40 adam=0.24 display=0.34
+```
+
+The two grid lanes share one 80px scratch raster. An earlier draft compiled one
+scratch raster per grid lane and pushed compile+allocate above 4 seconds in the
+same tiny smoke.
+
+One-run matrix against the previous `grid9_close2` path:
+
+```bash
+G=128 TRIALS=1 RUNS=1 WARMUP=0 CONFIGS='grid2=9:3:grid9:directgrid:random:bgcurr:alphaweak:boundsweak:coverageweak:splattiny,dual=22:6:dualgrid:directgrid:random:bgcurr:alphaweak:boundsweak:coverageweak:splattiny' bun tools/splat3d/step_matrix.ts
+```
+
+| Layout | Effective Views | CLIP Batch | Normal | Profile | Clip | Raster |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `grid9_close2` | `9 + 2 closeups` | `3` | `101.62 ms` | `55.03 ms` | `49.10 ms` | `3.45 ms` |
+| `dual_grid4` | `9 + 9 + 2 + 2` | `6` | `149.02 ms` | `84.19 ms` | `73.14 ms` | `7.27 ms` |
+
+This is not a speed win. Keep it as a convergence/quality ablation: it gives
+CLIP a much richer same-object multi-view objective per optimizer update, but
+it still increases CLIP work in the tiny smoke.
+
+The first browser test produced a visible sharp black square in the center of
+every view. A 16px tile-grid overlay and a concentrated-scene reproduction
+showed that the grid objective was a red herring: the central raster tiles were
+exceeding the `2048` tile-bin cap. Grid strength remains available as a separate
+convergence ablation. Bench shorthand:
+
+- `gridoff`: grid gradients `0/0`;
+- `gridweak`: fixed grid `0.25`, random grid `0.15`;
+- `gridmed`: fixed grid `0.5`, random grid `0.35`;
+- `gridfull`: fixed/random grid `1`.
+
+Tiny parser smoke:
+
+```bash
+G=128 TRIALS=1 RUNS=1 WARMUP=0 CONFIGS='weak=22:6:dualgrid:directgrid:gridweak:random:bgcurr:alphaweak:boundsweak:coverageweak:splattiny,full=22:6:dualgrid:directgrid:gridfull:random:bgcurr:alphaweak:boundsweak:coverageweak:splattiny' bun tools/splat3d/step_matrix.ts
+```
+
+`grid raster 512` adds a high-res packed contact-sheet path: render each grid
+view at `512x512`, concatenate them as a no-gutter 3x3 grid, bilinearly resize
+that grid into the `256x256` CLIP image, and scatter gradients back through that
+resize. It is selectable in the browser and via:
+
+```bash
+G=128 RUNS=1 WARMUP=0 CLIP_LAYOUT=grid9_close2 CLIP_BATCH=3 VIEWS=9 GRID_DIRECT_RASTER=1 GRID_RASTER_SIDE=512 GRID_GRAD_SCALE=0.25 VIEW_SAMPLER=random BACKGROUND_MODE=curriculum ALPHA_REG=weak BOUNDS_REG=weak COVERAGE_REG=weak SPLAT_REG=tiny bun tools/splat3d/step_bench.ts
+```
+
+Tiny smoke:
+
+```text
+profile: total=74.05 ms rasterFwd=2.28 rasterBwd=17.58 clipBatch=47.43
+```
+
+One-run parser matrix:
+
+```bash
+G=128 TRIALS=1 RUNS=1 WARMUP=0 CONFIGS='g80=9:3:grid9:directgrid:gridweak:random:bgcurr:alphaweak:boundsweak:coverageweak:splattiny,g512=9:3:grid9:grid512:gridweak:random:bgcurr:alphaweak:boundsweak:coverageweak:splattiny' bun tools/splat3d/step_matrix.ts
+```
+
+| Layout | Grid Raster | Profile | Clip | Raster |
+| --- | ---: | ---: | ---: | ---: |
+| `g80` | `80` | `43.91 ms` | `35.13 ms` | `3.71 ms` |
+| `g512` | `512` | `70.54 ms` | `44.61 ms` | `19.00 ms` |
+
+This is intentionally not the default. It tests high-resolution grid
+supervision, not the hard-square raster fix.
+
+## Tile Overflow Square Root Cause
+
+The hard square aligned with the renderer's `16x16` screen-space tile grid. A
+forced-center telemetry case reproduces the failure deterministically:
+
+```bash
+G=4096 CAP=2048 POSITION_SPREAD=0.05 RADIUS=0.08 VIEWS=0 bun tools/splat3d/raster_telemetry.ts
+G=4096 CAP=4096 POSITION_SPREAD=0.05 RADIUS=0.08 VIEWS=0 bun tools/splat3d/raster_telemetry.ts
+```
+
+| Cap | Overflow Tiles | Dropped Pairs | Max Count | Max Stop |
+| ---: | ---: | ---: | ---: | ---: |
+| `2048` | `16` | `21,387 / 65,659` (`32.6%`) | `4096` | `2048` |
+| `4096` | `0` | `0 / 65,659` | `4096` | `3263` |
+
+The old forward shader could not simply use `cap=4096`: the 4096-entry ID
+array plus a separate workgroup atomic required 16,400 bytes, just over the
+WebGPU-minimum 16KB workgroup limit. Forward and batch-forward now reuse the ID
+array for the final `tileStop` max reduction, leaving exactly 16KB of workgroup
+storage. The default cap scales with `G` up to `4096`, so the default
+4096-splat scene cannot overflow.
+
+Integrated timing is flat:
+
+| Cap | Normal | Profile | Clip | Raster |
+| ---: | ---: | ---: | ---: | ---: |
+| `2048` | `61.47 ms` | `72.42 ms` | `41.43 ms` | `26.95 ms` |
+| `4096` | `61.88 ms` | `72.37 ms` | `40.13 ms` | `27.31 ms` |
+
+The browser timing overlay now samples `tileCounts` after the profiled display
+view and reports max count/cap plus overflow tiles and dropped pairs.
+
+## Collapse-Driven Raster Cost And Grid Replay
+
+The step-691 screenshot reported `3730/4096` splats in the hottest tile. That
+explains the raster jump: the tile-local bitonic sort and differentiable
+backward were processing almost the entire scene in central tiles. The earlier
+`cap=2048` path appeared cheaper partly because it silently dropped entries;
+the corrected `cap=4096` path does all required work.
+
+This is not comparable to a native "40K splats at 4K in 6 ms" forward number.
+The default `grid9_close2` optimizer step performs:
+
+- 9 grid forwards at `80x80`;
+- 2 full-resolution forwards at `256x256`;
+- 9 grid backwards and 2 full-resolution backwards;
+- one display forward;
+- previously, 9 additional grid forward replays before backward.
+
+The replay existed because all nine grid cells reused one bin/sort scratch
+state. The 80px path now retains one scratch state per grid cell, costing about
+5.2 MB per grid, and removes all nine replays. Larger 256/512 grid modes retain
+the old replay path to avoid large scratch allocations. Set
+`RETAIN_GRID_STATE=0` in `step_bench.ts` to restore the old path.
+
+Correctness and timing evidence:
+
+- `tools/splat3d/grid_retain_parity.ts`: max optimized-parameter difference
+  between replay and retained paths is `0.000e+0` after one full CLIP step.
+- Cold retained sample: `48.56 ms` total, `3.80 ms` raster forward,
+  `0.00 ms` replay, `12.45 ms` raster backward, `31.85 ms` CLIP.
+- A throttled same-seed replay sample spent `10.88 ms` in replay; the retained
+  sample spent `0.00 ms`. Wall totals are not used as the speed claim because
+  CLIP time changed substantially with GPU contention between runs.
+
+After disabling the collapsing coverage default, a 15-step retained run held
+RMS spread at `0.9031 -> 0.8771`, with hottest-tile occupancy `721/4096` and no
+overflow. Raster is now roughly one third of that cold step, while CLIP is the
+largest component again.
+
+## Convergence-Prior Cost
+
+Sequential Apple Metal timestamp runs used the same 4096-splat, 9-view
+`grid9_close2`, direct80, retained-state, CLIP-batch-3 configuration:
+
+| Mode | Total | Raster Fwd | Raster Bwd | CLIP Batch |
+| --- | ---: | ---: | ---: | ---: |
+| base | `47.64 ms` | `3.34 ms` | `11.86 ms` | `31.98 ms` |
+| ray compact weak | `46.40 ms` | `3.34 ms` | `11.73 ms` | `30.87 ms` |
+| mip curriculum only | `49.87 ms` | `4.33 ms` | `12.85 ms` | `32.24 ms` |
+| background + ray + mip + staged rates | `48.43 ms` | `4.00 ms` | `12.98 ms` | `31.00 ms` |
+
+The fresh paired sample puts the combined priors at `+1.7%` total GPU time and
+`+11.7%` raster time. Normal-step wall sampling was `47.95 -> 50.03 ms`
+(`+4.3%`). CLIP still dominates total time. Mip smoothing
+raises tile pairs early because the 2 px covariance floor deliberately widens
+small splats. Ray compactness adds arithmetic and one extra depth-gradient
+atomic per accepted splat, but no longer pays for an unused transmittance
+reduction. The exact transmittance loss adds a reduction replay
+before each supervised backward and measured `52.10 ms` total in its weak-only
+sample; it remains an optional ablation.
