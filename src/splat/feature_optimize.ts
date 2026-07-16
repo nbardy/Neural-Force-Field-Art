@@ -1,9 +1,9 @@
 /** CLIP-guided optimizer for the experimental 2D Feature Painter. */
 /// <reference types="@webgpu/types" />
 import { VisionTrainer, type TrainPlan } from "../clip/vision";
-import { FEATURE_GROUPS, FEATURE_STRIDE } from "./feature_painter_wgsl";
+import { DECODER_PARAM_COUNT, FEATURE_LATENT_CHANNELS, FEATURE_STRIDE } from "./feature_painter_wgsl";
 import { FeaturePainterEngine } from "./feature_painter";
-import { LEGIBLE_INIT, LEGIBLE_LRS, randomSplats, type SplatInit, type SplatNudgeOptions, nudgeSplats, cosine } from "./optimize";
+import { LEGIBLE_LRS, randomSplats, type SplatInit, type SplatNudgeOptions, nudgeSplats, cosine } from "./optimize";
 
 const SIDE = 256;
 const IMG_BYTES = 3 * SIDE * SIDE * 4;
@@ -26,6 +26,10 @@ export class FeaturePainterOptimizer {
     const trainer = await VisionTrainer.create(device, plan, weights);
     raster.setParams(randomSplats(G, cfg.seed ?? 1, cfg.init));
     raster.setFeatureParams(randomFeatures(G, cfg.seed ?? 1));
+    // The output residual is still exactly zero at boot: z/Ax/Ay and all
+    // decoder bias/RGB-skip weights are zero. Nonzero latent columns give the
+    // feature field a gradient on its very first optimization step.
+    raster.setDecoderParams(randomDecoder(cfg.seed ?? 1));
     raster.zeroAdamState();
     return new FeaturePainterOptimizer(device, raster, trainer, cfg.init);
   }
@@ -40,13 +44,31 @@ export class FeaturePainterOptimizer {
   destroy() { this.raster.destroy(); }
 }
 
-/** Base RGB logits are active at boot; residual channels and local banks start
- * small so the painter begins near the RGB splat behavior but can develop marks. */
-export function randomFeatures(G: number, seed = 1): Float32Array {
+/**
+ * Compact Feature8 initialization. RGB remains in the regular splat buffer;
+ * only five latent z channels live here. All channels begin at zero, so a
+ * fresh renderer exactly matches RGB even though the latent decoder columns
+ * are nonzero and can route gradient immediately.
+ */
+export function randomFeatures(G: number, _seed = 1): Float32Array {
+  return new Float32Array(G*FEATURE_STRIDE);
+}
+
+/**
+ * A zero-output but gradient-active decoder initialization. The RGB-skip
+ * columns and bias stay zero; only latent columns are seeded. Because every
+ * latent feature starts at zero, this preserves exact RGB image parity while
+ * avoiding the one-step feature-gradient dead start of an all-zero decoder.
+ */
+export function randomDecoder(seed = 1): Float32Array {
   let state=(seed>>>0)||1; const next=()=>{state=(Math.imul(state,747796405)+2891336453)>>>0; let t=Math.imul((state>>>((state>>>28)+4))^state,277803737)>>>0; t=((t>>>22)^t)>>>0; return t/4294967296;};
   const normal=()=>{let a=0,b=0;while(a===0)a=next();while(b===0)b=next();return Math.sqrt(-2*Math.log(a))*Math.cos(2*Math.PI*b);};
-  const out=new Float32Array(G*FEATURE_STRIDE);
-  for(let g=0;g<G;g++) for(let group=0;group<FEATURE_GROUPS;group++) { const base=(g*3)*FEATURE_GROUPS+group; const noise=group===0?1.0:0.04; out[base+0]=noise*normal(); out[base+1]=noise*normal(); out[base+2]=noise*normal(); out[base+3]=group===0?0:0.04*normal(); for(let bank=1;bank<3;bank++) for(let lane=0;lane<4;lane++) out[base+bank*FEATURE_GROUPS+lane]=0.008*normal(); }
+  const out=new Float32Array(DECODER_PARAM_COUNT);
+  for(let output=0;output<3;output++) {
+    for(let channel=0;channel<FEATURE_LATENT_CHANNELS;channel++) {
+      out[output*8+3+channel]=0.25*normal();
+    }
+  }
   return out;
 }
 

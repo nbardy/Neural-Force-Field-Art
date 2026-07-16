@@ -1,52 +1,57 @@
 # 2D Feature Painter
 
-The 2D prompt-to-splats page now has an explicit `feature painter` mode beside
-the established `RGB splats` baseline. It is an experimental representation,
-not the default.
+The 2D prompt-to-splats page has an experimental `feature painter` mode beside
+the RGB baseline. It is a compact Feature8 renderer, not the earlier 32-channel
+prototype.
 
-## Contract
+## Representation
 
-Each splat has three 32D banks: a base feature plus local-x and local-y feature
-coefficients. At a pixel it emits:
+Each splat retains its normal RGB color and alpha. It also owns five latent
+values plus five local-x and five local-y coefficients:
 
 ```text
-z_i(x) = base_i + u_x(x) * localX_i + u_y(x) * localY_i
+latent_i(x) = z_i + ux_i(x) * Ax_i + uy_i(x) * Ay_i
 ```
 
-The feature vectors are source-over alpha composited in the existing tiled
-2D raster. A shared, trainable 32-to-RGB residual decoder then emits the image
-seen by CLIP. Its RGB skip starts at zero residual, so channels 0-2 provide the
-initial RGB-compatible path while the other channels can become useful as the
-decoder learns.
+The raster alpha-composites RGB and the five latent values. A small 3x8 linear
+residual decoder then maps `[composited RGB, composited latent]` to RGB. It is
+not a per-hit neural MLP: each splat's local coordinates are applied before
+compositing, where that splat's local frame is defined.
 
-The local coordinate is conic-normalized and clamped to `[-3, 3]`. It is
-computed before compositing, where an individual splat center is well-defined.
-This avoids the invalid design of giving a post-composite pixel an arbitrary
-single splat center.
+## RGB Skip And Initialization
 
-## Deliberate First-Version Limit
+The RGB skip is the ordinary composited RGB image. It is transformed through
+`logit(baseRGB)` only immediately before the residual output sigmoid. Thus a
+zero residual reproduces the standard rasterizer; raw per-splat RGB logits are
+never incorrectly composited as feature values.
 
-The local-appearance derivative into mean, scale, and rotation is stopped.
-Geometry still receives the exact alpha-compositing gradient. The base/local
-feature banks and decoder train normally. This keeps the initial tiled path
-within WebGPU's portable eight-storage-buffer stage limit and avoids adding a
-partially verified geometry Jacobian to the live optimizer.
+At boot, all latent values and local coefficients are zero. Decoder bias and
+RGB-skip columns are zero; deterministic latent decoder columns are nonzero.
+That preserves exact RGB output while giving feature values a gradient on the
+first optimizer step.
 
-The next representation-level improvement is the full local-frame Jacobian,
-including rotation, after a finite-difference gradient check. Do not claim
-that this version is a full neural-splat appearance model yet.
+## Differentiability And Resources
 
-## Resource And Quality Envelope
+- The local frame uses true rotation and anisotropic scale, not a conic-axis
+  approximation.
+- The backward propagates local appearance through center, log scale, and
+  rotation, as well as through alpha compositing.
+- No dense feature image or dense feature-gradient image is materialized.
+- The tile backward consumes CLIP's RGB gradient directly and keeps only a
+  27-value workgroup-local decoder gradient reduction.
+- Feature mode defaults to 2,048 splats; RGB mode remains 12,000.
 
-- Feature mode defaults to 2,048 splats; RGB remains 12,000 splats.
-- Each feature splat has 96 scalar parameters: 32 base, 32 local-x, 32 local-y.
-- Feature images and feature gradients are 32 x 256 x 256 fp32, about 8 MB each.
-- Metal smoke, fixed cat prompt, 2,048 splats: `0.17411 -> 0.31624` cosine in
-  20 optimizer steps. This proves gradient flow, not final visual superiority.
+Real-Metal checks live in `tools/splat/feature_painter_math_test.ts`:
+
+- production initialization RGB parity;
+- RGB gradient parity against the regular rasterizer; and
+- a finite-difference local-theta gradient check.
+
+See `docs/FEATURE_PAINTER_FUSED_DECISION.md` for the formula, rejected designs,
+and DynaWorld-derived performance rationale.
 
 ## Exploration Behavior
 
-`NUDGE` now clears Adam moment state after reseeding parameters. Retaining old
-moments made a partial reseed drift toward the previous local minimum. In
-feature mode it preserves the learned residual decoder and only clears the
-splat/feature Adam state.
+`NUDGE` preserves the representation but clears Adam moments after reseeding
+geometry. Retaining old moments made a partial reseed drift toward its prior
+local basin instead of exploring.

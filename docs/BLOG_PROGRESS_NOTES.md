@@ -3,10 +3,13 @@
 ## Working Checkpoint
 
 - 2D prompt-to-splats page works with WebGPU CLIP guidance and a `NUDGE` button.
-- The 2D page now has an experimental `feature painter` mode: tiled 32D splat
-  features, local-coordinate appearance coefficients, and a trainable residual
-  RGB decoder. It remains separate from the RGB default while its full
-  appearance-to-geometry Jacobian is validated.
+- The 2D page now has an experimental `feature painter` mode: a compact fused
+  Feature8 path with five local-coordinate latent channels and a residual RGB
+  decoder. It starts as exact RGB splatting, then learns feature appearance
+  without materializing a dense feature image or feature-gradient image.
+- The full local appearance-to-geometry Jacobian is now live and has a
+  finite-difference gate. The old F32 feature painter remains a historical
+  prototype, not the active implementation.
 - 3D fork renders one shared 3D splat cloud from nine fixed cameras in a 3x3 grid.
 - 3D optimizer accumulates gradients from all nine camera views, then applies one shared Adam update.
 - Prompt modes:
