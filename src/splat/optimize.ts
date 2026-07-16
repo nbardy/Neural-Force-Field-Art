@@ -170,13 +170,16 @@ export class SplatOptimizer {
     return this.step_;
   }
 
-  /** Partial re-randomization of the current splats. Unlike Reset, this keeps
-   *  the optimizer, CLIP resources, prompt, step count, and Adam buffers alive. */
+  /** Partial re-randomization of the current splats. The CLIP resources and
+   *  prompt stay alive, but Adam's old momentum is deliberately discarded:
+   *  retaining it makes a visible nudge drift straight back to the previous
+   *  basin rather than explore a new one. */
   async nudge(opts: SplatNudgeOptions = {}): Promise<void> {
     const G = this.raster.dims.G;
     const params = await this.raster.readParams();
     nudgeSplats(params, G, opts.seed ?? Date.now(), opts.amount ?? DEFAULT_NUDGE_AMOUNT, opts.init ?? this.init);
     this.raster.setParams(params);
+    this.raster.zeroAdamState();
   }
 
   /** Render the current splats without training; leaves the image on the GPU

@@ -3,6 +3,10 @@
 ## Working Checkpoint
 
 - 2D prompt-to-splats page works with WebGPU CLIP guidance and a `NUDGE` button.
+- The 2D page now has an experimental `feature painter` mode: tiled 32D splat
+  features, local-coordinate appearance coefficients, and a trainable residual
+  RGB decoder. It remains separate from the RGB default while its full
+  appearance-to-geometry Jacobian is validated.
 - 3D fork renders one shared 3D splat cloud from nine fixed cameras in a 3x3 grid.
 - 3D optimizer accumulates gradients from all nine camera views, then applies one shared Adam update.
 - Prompt modes:

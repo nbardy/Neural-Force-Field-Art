@@ -39,6 +39,10 @@
       }
       button:hover { border-color: #89b4fa; }
       button:disabled { opacity: 0.5; cursor: default; }
+      select {
+        padding: 8px 7px; background: #181825; color: #cdd6f4;
+        border: 1px solid #45475a; border-radius: 6px; font: inherit; font-size: 13px;
+      }
       #readout {
         width: 512px; font-size: 13px; color: #a6adc8;
         min-height: 18px; letter-spacing: 0.2px;
@@ -55,6 +59,10 @@
       <div id="controls">
         <input id="prompt" type="text" placeholder="a photo of a cat"
                value="a photo of a cat" autocomplete="off" />
+        <select id="representation" aria-label="representation">
+          <option value="rgb" selected>RGB splats</option>
+          <option value="feature">feature painter</option>
+        </select>
         <button id="optimize">Optimize</button>
         <button id="nudge">NUDGE</button>
         <button id="reset">Reset</button>

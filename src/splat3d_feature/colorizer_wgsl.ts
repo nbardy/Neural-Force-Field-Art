@@ -266,5 +266,22 @@ fn main(
     }
   }
 }
+
 `;
+}
+
+/** Small generic SGD update for the residual decoder parameters. Keeping this
+ * separate from the splat Adam pass lets feature experiments own their compact
+ * decoder without changing the proven splat optimizer contract. */
+export function feature32ColorizerSgdShader(): string {
+  return /* wgsl */ `
+struct UpdateU { count : u32, _pad0 : u32, lr : f32, _pad1 : f32 };
+@group(0) @binding(0) var<uniform> update : UpdateU;
+@group(0) @binding(1) var<storage, read_write> parameter : array<vec4f>;
+@group(0) @binding(2) var<storage, read> gradient : array<vec4f>;
+@compute @workgroup_size(${FEATURE32_WORKGROUP_SIZE})
+fn main(@builtin(global_invocation_id) gid : vec3u) {
+  if (gid.x >= update.count) { return; }
+  parameter[gid.x] = parameter[gid.x] - update.lr * gradient[gid.x];
+}`;
 }

@@ -30,6 +30,7 @@
  */
 /// <reference types="@webgpu/types" />
 import { SplatOptimizer, cosine } from "./splat/optimize";
+import { FeaturePainterOptimizer } from "./splat/feature_optimize";
 import { loadClipTrainAssets } from "./splat/model_assets";
 import type { TrainPlan } from "./clip/vision";
 
@@ -71,6 +72,7 @@ const promptInput = document.getElementById("prompt") as HTMLInputElement;
 const optimizeBtn = document.getElementById("optimize") as HTMLButtonElement;
 const nudgeBtn = document.getElementById("nudge") as HTMLButtonElement;
 const resetBtn = document.getElementById("reset") as HTMLButtonElement;
+const representationSelect = document.getElementById("representation") as HTMLSelectElement;
 const readoutEl = document.getElementById("readout") as HTMLDivElement;
 const noticeEl = document.getElementById("notice") as HTMLDivElement;
 
@@ -105,7 +107,7 @@ let device!: GPUDevice;
 let ctx!: GPUCanvasContext;
 let plan!: TrainPlan;
 let weights!: Float32Array;
-let opt!: SplatOptimizer;
+let opt!: SplatOptimizer | FeaturePainterOptimizer;
 let seed = 1;
 
 // Blit pipeline (storage-buffer image → canvas). Pipeline built once; the bind
@@ -312,7 +314,7 @@ async function onReset(): Promise<void> {
   status.phase = "reset";
   seed += 1;
   const old = opt;
-  opt = await SplatOptimizer.create(device, plan, weights, { seed });
+  opt = await createOptimizer();
   old.destroy();
   rebuildBlitBind();
   await opt.renderImage(); // repopulate raster.image for the blit
@@ -320,6 +322,12 @@ async function onReset(): Promise<void> {
   status.step = 0;
   setNotice("");
   renderReadout();
+}
+
+async function createOptimizer(): Promise<SplatOptimizer | FeaturePainterOptimizer> {
+  return representationSelect.value === "feature"
+    ? FeaturePainterOptimizer.create(device, plan, weights, { seed })
+    : SplatOptimizer.create(device, plan, weights, { seed });
 }
 
 async function onNudge(): Promise<void> {
@@ -390,7 +398,7 @@ async function boot(): Promise<void> {
   status.phase = "optimizer";
   readoutEl.textContent = "building optimizer…";
   await buildBlitPipeline();
-  opt = await SplatOptimizer.create(device, plan, weights, { seed });
+  opt = await createOptimizer();
   rebuildBlitBind();
   await opt.renderImage(); // populate raster.image so the canvas isn't blank pre-optimize
 
@@ -412,6 +420,7 @@ async function boot(): Promise<void> {
 optimizeBtn.addEventListener("click", () => void onOptimize());
 nudgeBtn.addEventListener("click", () => void onNudge());
 resetBtn.addEventListener("click", () => void onReset());
+representationSelect.addEventListener("change", () => void onReset());
 promptInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") void onOptimize();
 });

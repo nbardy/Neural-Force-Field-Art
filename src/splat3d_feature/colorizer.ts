@@ -11,9 +11,10 @@ import {
   feature32ColorizerFeatureGradShader,
   feature32ColorizerForwardShader,
   feature32ColorizerParameterGradShader,
+  feature32ColorizerSgdShader,
 } from "./colorizer_wgsl";
 
-const U = { COPY_SRC: 4, COPY_DST: 8, STORAGE: 128 };
+const U = { COPY_SRC: 4, COPY_DST: 8, UNIFORM: 64, STORAGE: 128 };
 
 export interface Feature32ColorizerConfig {
   width: number;
@@ -160,6 +161,11 @@ export class Feature32Colorizer {
   private forwardPipe!: GPUComputePipeline;
   private featureGradPipe!: GPUComputePipeline;
   private parameterGradPipe!: GPUComputePipeline;
+  private sgdPipe!: GPUComputePipeline;
+  private weightSgdUniform!: GPUBuffer;
+  private biasSgdUniform!: GPUBuffer;
+  private weightSgdBind!: GPUBindGroup;
+  private biasSgdBind!: GPUBindGroup;
   private readonly label: string;
 
   private constructor(private readonly device: GPUDevice, config: Feature32ColorizerConfig) {
@@ -236,6 +242,19 @@ export class Feature32Colorizer {
       feature32ColorizerParameterGradShader(shaderConfig),
       `${this.label}-parameter-grad`
     );
+    this.sgdPipe = await makeCompute(this.device, feature32ColorizerSgdShader(), `${this.label}-sgd`);
+    this.weightSgdUniform = this.device.createBuffer({ size: 16, usage: U.UNIFORM | U.COPY_DST });
+    this.biasSgdUniform = this.device.createBuffer({ size: 16, usage: U.UNIFORM | U.COPY_DST });
+    const sgdBind = (uniform: GPUBuffer, parameter: GPUBuffer, gradient: GPUBuffer) => this.device.createBindGroup({
+      layout: this.sgdPipe.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: uniform } },
+        { binding: 1, resource: { buffer: parameter } },
+        { binding: 2, resource: { buffer: gradient } },
+      ],
+    });
+    this.weightSgdBind = sgdBind(this.weightSgdUniform, this.weights, this.weightGrad);
+    this.biasSgdBind = sgdBind(this.biasSgdUniform, this.bias, this.biasGrad);
   }
 
   private resolveBinding(input: Feature32BufferBinding, requiredBytes: number, label: string): GPUBufferBinding {
@@ -366,10 +385,32 @@ export class Feature32Colorizer {
     pass.end();
   }
 
+  /** Applies the decoder gradients produced by `recordBackward`. */
+  recordSgd(encoder: GPUCommandEncoder, lr: number): void {
+    if (!Number.isFinite(lr) || lr < 0) throw new Error(`feature32 colorizer: invalid SGD lr ${lr}`);
+    const write = (buffer: GPUBuffer, count: number) => {
+      const raw = new ArrayBuffer(16);
+      new Uint32Array(raw)[0] = count;
+      new Float32Array(raw)[2] = lr;
+      this.device.queue.writeBuffer(buffer, 0, raw);
+    };
+    write(this.weightSgdUniform, FEATURE32_WEIGHT_FLOATS / 4);
+    write(this.biasSgdUniform, FEATURE32_BIAS_FLOATS / 4);
+    const compute = encoder.beginComputePass();
+    compute.setPipeline(this.sgdPipe);
+    compute.setBindGroup(0, this.weightSgdBind);
+    compute.dispatchWorkgroups(ceilDiv(FEATURE32_WEIGHT_FLOATS / 4, FEATURE32_WORKGROUP_SIZE));
+    compute.setBindGroup(0, this.biasSgdBind);
+    compute.dispatchWorkgroups(ceilDiv(FEATURE32_BIAS_FLOATS / 4, FEATURE32_WORKGROUP_SIZE));
+    compute.end();
+  }
+
   destroy(): void {
     this.weights.destroy();
     this.bias.destroy();
     this.weightGrad.destroy();
     this.biasGrad.destroy();
+    this.weightSgdUniform?.destroy();
+    this.biasSgdUniform?.destroy();
   }
 }
