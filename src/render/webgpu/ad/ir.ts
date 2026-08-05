@@ -95,12 +95,17 @@ export class Graph {
     return this.mk({ op: "select", inputs: [cond, a, b] });
   }
 
-  /** activation by name — the dispatch a field-type declaration goes through. */
-  act(name: "selu" | "tanh" | "sigmoid" | "sin", x: Node): Node {
+  /** activation by name — the dispatch a field-type declaration goes through.
+   *  "linear" is the identity (no node minted) — needed by heads whose output
+   *  layer is an unsquashed regression (tfjs `dense` with no activation, e.g.
+   *  the adversary's raw-signal regression heads). It mirrors the shipped Activation
+   *  union in advect_wgsl.ts, which already includes "linear". */
+  act(name: "selu" | "tanh" | "sigmoid" | "sin" | "linear", x: Node): Node {
     return name === "selu" ? this.selu(x)
       : name === "tanh" ? this.tanh(x)
       : name === "sigmoid" ? this.sigmoid(x)
-      : this.sin(x);
+      : name === "sin" ? this.sin(x)
+      : x;
   }
 
   /** sum a list (left fold); empty → const 0. */

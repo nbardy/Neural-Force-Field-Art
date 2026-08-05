@@ -93,7 +93,7 @@ const NATIVE_RADIUS_MAX = 1.6;
 const STROKE_TAP_BUDGET = 24e6;
 const STROKE_TAPS_PER_SAMPLE = 10;
 
-// Shared uniform block — one 64-byte buffer bound to all three passes.
+// Shared uniform block — one 80-byte buffer bound to all three passes.
 const UNI_WGSL = /* wgsl */ `
 struct Uni {
   size       : vec2u,  // accumulator W,H (NATIVE pixels: ceil(css * dpr))
@@ -108,6 +108,10 @@ struct Uni {
   pad0       : f32,
   pad1       : f32,
   pad2       : f32,
+  palette    : u32,    // 0 speed, 1 species, 2 exact RGB Agree/Disagree roles
+  pad3       : u32,
+  pad4       : u32,
+  pad5       : u32,
 };
 @group(0) @binding(0) var<uniform> u : Uni;
 `;
@@ -161,7 +165,15 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 
   let t = clamp(length(vec2f(vx, vy)) / u.maxSpeed, 0.0, 1.0);
   var col = mix(vec3f(0.25, 0.55, 1.0), vec3f(1.0, 0.55, 0.2), t); // blue->orange
-  if (u.classes > 0u) {
+  if (u.palette == 2u) {
+    let role = pcg(iid ^ 2246822519u) % 3u;
+    let base = select(
+      select(vec3f(1.0, 0.0, 0.0), vec3f(0.0, 1.0, 0.0), role == 1u),
+      vec3f(0.0, 0.0, 1.0),
+      role == 2u
+    );
+    col = base * (0.55 + 0.45 * t);
+  } else if (u.classes > 0u) {
     // per-species base colour (cosine palette, golden-angle spaced hues),
     // brightness modulated by speed — PALETTE HOOK: swap this block for a
     // per-class lookup to hand-pick species colours
@@ -200,7 +212,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 `;
 
 // Uniform block for the STROKE pipeline. Byte-layout IDENTICAL to UNI_WGSL —
-// same 64-byte buffer is bound — only the two pad slots gain meaning
+// same 80-byte buffer is bound — only the pad slots gain meaning
 // (strokeLen @52, curlAmp @56). UNI_WGSL itself is left untouched so the dot
 // pipeline's WGSL stays byte-stable.
 const STROKE_UNI_WGSL = /* wgsl */ `
@@ -217,6 +229,10 @@ struct Uni {
   strokeLen  : f32,    // T: stroke length in FRAMES of travel (UNI_WGSL pad0)
   curlAmp    : f32,    // 1 = curved 2nd-order stroke, 0 = straight (pad1)
   maxS       : f32,    // count-aware sample cap (tap-budget degrade; pad2)
+  palette    : u32,
+  pad3       : u32,
+  pad4       : u32,
+  pad5       : u32,
 };
 @group(0) @binding(0) var<uniform> u : Uni;
 `;
@@ -302,7 +318,15 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   // colour: identical to the dot shader (keyed to the HEAD velocity)
   let t = clamp(length(v) / u.maxSpeed, 0.0, 1.0);
   var col = mix(vec3f(0.25, 0.55, 1.0), vec3f(1.0, 0.55, 0.2), t); // blue->orange
-  if (u.classes > 0u) {
+  if (u.palette == 2u) {
+    let role = pcg(iid ^ 2246822519u) % 3u;
+    let base = select(
+      select(vec3f(1.0, 0.0, 0.0), vec3f(0.0, 1.0, 0.0), role == 1u),
+      vec3f(0.0, 0.0, 1.0),
+      role == 2u
+    );
+    col = base * (0.55 + 0.45 * t);
+  } else if (u.classes > 0u) {
     let cls = pcg(iid ^ 2166136261u) % u.classes;
     let hue = f32(cls) * 2.399963;
     let base = 0.55 + 0.45 * cos(vec3f(hue, hue + 2.0944, hue + 4.1888));
@@ -417,6 +441,7 @@ export interface SplatOpts {
   maxSpeed?: number;
   /** multi-species count — colours splats per class (0 = speed colouring) */
   classes?: number;
+  palette?: "speed" | "species" | "rgb-roles";
   /** per-frame trail persistence: 0 = hard clear, ~0.85-0.95 = ghost trails */
   decay?: number;
   /** linear gain on accumulated energy before the tone curve */
@@ -508,7 +533,7 @@ export class SplatRenderer {
   private readonly splatPipe: GPUComputePipeline;
   private readonly tonePipe: GPURenderPipeline;
   private readonly uni: GPUBuffer;
-  private readonly uniData = new ArrayBuffer(64);
+  private readonly uniData = new ArrayBuffer(80);
   private readonly uniF = new Float32Array(this.uniData);
   private readonly uniU = new Uint32Array(this.uniData);
 
@@ -520,6 +545,7 @@ export class SplatRenderer {
   background: [number, number, number];
   maxSpeed: number;
   classes: number;
+  palette: "speed" | "species" | "rgb-roles";
   decay: number;
   exposure: number;
   /** radial cone splat radius, CSS px (native = radius*dpr, clamped [0.75,4]) */
@@ -576,12 +602,13 @@ export class SplatRenderer {
       format: this.target.format,
       topology: "triangle-list",
     });
-    this.uni = uniformBuffer(device, 64);
+    this.uni = uniformBuffer(device, 80);
 
     this.dpr = opts.dpr ?? 1;
     this.background = opts.background ?? [2, 0, 12];
     this.maxSpeed = opts.maxSpeed ?? 4;
     this.classes = opts.classes ?? 0;
+    this.palette = opts.palette ?? (this.classes > 0 ? "species" : "speed");
     this.decay = opts.decay ?? 0;
     this.exposure = opts.exposure ?? 1;
     this.radius = opts.radius ?? 1.25;
@@ -698,6 +725,8 @@ export class SplatRenderer {
     // clamp, high counts degrade to SHORTER continuous strokes — never a
     // beaded dash, never a 5-10fps cliff.
     this.uniF[15] = Math.max(2, Math.min(24, Math.floor(STROKE_TAP_BUDGET / (Math.max(1, n) * STROKE_TAPS_PER_SAMPLE))));
+    this.uniU[16] =
+      this.palette === "rgb-roles" ? 2 : this.palette === "species" ? 1 : 0;
     this.device.queue.writeBuffer(this.uni, 0, this.uniData);
 
     const enc = encoder;

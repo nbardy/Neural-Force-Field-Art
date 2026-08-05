@@ -31,6 +31,7 @@
 /// <reference types="@webgpu/types" />
 import { SplatOptimizer, cosine } from "./splat/optimize";
 import { FeaturePainterOptimizer } from "./splat/feature_optimize";
+import { PixelBufferOptimizer } from "./splat/pixel_optimize";
 import { loadClipTrainAssets } from "./splat/model_assets";
 import type { TrainPlan } from "./clip/vision";
 
@@ -73,6 +74,7 @@ const optimizeBtn = document.getElementById("optimize") as HTMLButtonElement;
 const nudgeBtn = document.getElementById("nudge") as HTMLButtonElement;
 const resetBtn = document.getElementById("reset") as HTMLButtonElement;
 const representationSelect = document.getElementById("representation") as HTMLSelectElement;
+const autoExploreInput = document.getElementById("auto-explore") as HTMLInputElement;
 const readoutEl = document.getElementById("readout") as HTMLDivElement;
 const noticeEl = document.getElementById("notice") as HTMLDivElement;
 
@@ -107,7 +109,7 @@ let device!: GPUDevice;
 let ctx!: GPUCanvasContext;
 let plan!: TrainPlan;
 let weights!: Float32Array;
-let opt!: SplatOptimizer | FeaturePainterOptimizer;
+let opt!: SplatOptimizer | FeaturePainterOptimizer | PixelBufferOptimizer;
 let seed = 1;
 
 // Blit pipeline (storage-buffer image → canvas). Pipeline built once; the bind
@@ -243,6 +245,11 @@ let promptEmbed: Float32Array | null = null;
 let stepsSinceReadout = 0;
 let cosBusy = false;
 let nudgeBusy = false;
+let autoExploreIndex = 0;
+const AUTO_EXPLORE_STEPS = [
+  { step: 96, amount: 0.12 },
+  { step: 260, amount: 0.06 },
+] as const;
 
 async function updateCos(): Promise<void> {
   if (!promptEmbed || cosBusy || nudgeBusy) return;
@@ -271,6 +278,7 @@ function frame(): void {
       stepsSinceReadout = 0;
       void updateCos(); // async readback; don't block the frame on it
     }
+    maybeAutoExplore();
   }
   blit();
   requestAnimationFrame(frame);
@@ -294,6 +302,7 @@ async function onOptimize(): Promise<void> {
     status.initialCos = cosine(e0, emb);
     status.cos = status.initialCos;
     stepsSinceReadout = 0;
+    autoExploreIndex = 0;
     setNotice("");
     status.phase = "run";
     status.running = true;
@@ -312,35 +321,57 @@ async function onReset(): Promise<void> {
   status.cos = null;
   status.initialCos = null;
   status.phase = "reset";
+  autoExploreIndex = 0;
   seed += 1;
   const old = opt;
-  opt = await createOptimizer();
-  old.destroy();
-  rebuildBlitBind();
-  await opt.renderImage(); // repopulate raster.image for the blit
-  promptInput.value = "";
-  status.step = 0;
-  setNotice("");
-  renderReadout();
+  try {
+    opt = await createOptimizer();
+    old.destroy();
+    rebuildBlitBind();
+    await opt.renderImage(); // repopulate raster.image for the blit
+    promptInput.value = "";
+    status.step = 0;
+    status.phase = "idle";
+    setNotice("");
+    renderReadout();
+  } catch (e: any) {
+    fail(`reset failed: ${e?.message ?? e}`);
+  }
 }
 
-async function createOptimizer(): Promise<SplatOptimizer | FeaturePainterOptimizer> {
-  return representationSelect.value === "feature"
-    ? FeaturePainterOptimizer.create(device, plan, weights, { seed })
-    : SplatOptimizer.create(device, plan, weights, { seed });
+async function createOptimizer(): Promise<SplatOptimizer | FeaturePainterOptimizer | PixelBufferOptimizer> {
+  if (representationSelect.value === "feature") {
+    return FeaturePainterOptimizer.create(device, plan, weights, { seed });
+  }
+  if (representationSelect.value === "pixels") {
+    return PixelBufferOptimizer.create(device, plan, weights, seed);
+  }
+  return SplatOptimizer.create(device, plan, weights, { seed });
 }
 
-async function onNudge(): Promise<void> {
+function maybeAutoExplore(): void {
+  if (!autoExploreInput.checked || nudgeBusy || opt instanceof PixelBufferOptimizer) return;
+  const next = AUTO_EXPLORE_STEPS[autoExploreIndex];
+  if (!next || opt.stepCount < next.step) return;
+  autoExploreIndex += 1;
+  void onNudge({ amount: next.amount, automatic: true });
+}
+
+async function onNudge(options: { amount?: number; automatic?: boolean } = {}): Promise<void> {
   if (!status.ready || nudgeBusy) return;
   nudgeBusy = true;
   const resume = status.running;
   status.running = false;
-  status.phase = "nudge";
+  status.phase = options.automatic ? "explore" : "nudge";
   nudgeBtn.disabled = true;
   seed += 1;
   renderReadout();
   try {
-    await opt.nudge({ seed });
+    if (opt instanceof PixelBufferOptimizer) {
+      await opt.nudge(seed, options.amount);
+    } else {
+      await opt.nudge({ seed, amount: options.amount });
+    }
     await opt.renderImage();
     stepsSinceReadout = 0;
     if (promptEmbed) {
@@ -374,7 +405,11 @@ async function boot(): Promise<void> {
     fail("no WebGPU adapter available.");
     return;
   }
-  device = await adapter.requestDevice();
+  if (!adapter.features.has("subgroups" as GPUFeatureName)) {
+    fail("this build requires WebGPU subgroup reductions.");
+    return;
+  }
+  device = await adapter.requestDevice({ requiredFeatures: ["subgroups" as GPUFeatureName] });
   device.addEventListener?.("uncapturederror", (ev: any) => {
     // eslint-disable-next-line no-console
     console.error("[webgpu]", ev.error?.message ?? ev.error);

@@ -324,12 +324,17 @@ fn main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_index) tid 
 /**
  * Fused RGB-gradient -> Feature8 VJP -> splat backward.
  *
- * No dense feature image or feature-image gradient is written. Decoder parameter
- * gradients reduce in local atomics, then write only 27 global atomics per tile.
+ * The production path reduces f32 contributions in hardware subgroups and
+ * quantizes only each subgroup/tile partial before its device atomic. It emits
+ * vastly fewer device atomics than a splat-pixel-hit reduction while retaining
+ * the fixed-point accumulator used by the geometry and Adam chains.
  */
 export function featureBackwardShader(cfg: RasterConfig): string {
   const { d, hw, code } = common(cfg);
+  const backwardLanes = 64;
+  const pixelsPerLane = (TILE * TILE) / backwardLanes;
   return /* wgsl */ `
+enable subgroups;
 ${code}
 @group(0) @binding(0) var<storage, read> gradImage : array<f32>;
 @group(0) @binding(1) var<storage, read> tileCounts : array<u32>;
@@ -340,162 +345,207 @@ ${code}
 @group(0) @binding(6) var<storage, read> decoder : array<f32>;
 @group(0) @binding(7) var<storage, read_write> acc : array<atomic<i32>>;
 
-var<workgroup> shIds : array<u32, ${u(d.cap)}>;
-var<workgroup> shDecoderGrad : array<atomic<i32>, ${u(DECODER_PARAM_COUNT)}>;
-fn localFixadd(index : u32, v : f32) {
-  atomicAdd(&shDecoderGrad[index], i32(clamp(round(v * ${f(d.gradScale)}), -2.14e9, 2.14e9)));
+fn qgrad(v : f32) -> i32 {
+  return i32(clamp(round(v * ${f(d.gradScale)}), -2.14e9, 2.14e9));
 }
 
-@compute @workgroup_size(256)
-fn main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_index) tid : u32) {
+// A 16x16 tile has 256 pixels. Each lane owns a compile-time number of pixels,
+// so state and feature payloads are loaded once per lane/splat and reductions
+// never need a workgroup barrier. Every subgroup leader writes one partial tile
+// sum to the fixed-point buffer.
+const PIXELS_PER_LANE : u32 = ${u(pixelsPerLane)};
+
+@compute @workgroup_size(${u(backwardLanes)})
+fn main(
+  @builtin(workgroup_id) wg : vec3u,
+  @builtin(local_invocation_index) tid : u32,
+  @builtin(subgroup_invocation_id) lane : u32,
+) {
   let tileId = wg.x;
   if (tileId >= ${u(d.numTiles)}) { return; }
   let count = min(tileCounts[tileId], ${u(d.cap)});
   let stopc = min(count, tileStop[tileId]);
   let start = tileId * ${u(d.cap)};
-  for (var j = tid; j < ${u(DECODER_PARAM_COUNT)}; j += 256u) { atomicStore(&shDecoderGrad[j], 0); }
-  for (var i = tid; i < stopc; i += 256u) { shIds[i] = binnedIds[start + i]; }
-  workgroupBarrier();
-
   let tileX = tileId % ${u(d.tilesX)};
   let tileY = tileId / ${u(d.tilesX)};
-  let x = tileX * ${u(TILE)} + (tid % ${u(TILE)});
-  let y = tileY * ${u(TILE)} + (tid / ${u(TILE)});
-  if (x < ${u(d.W)} && y < ${u(d.H)}) {
-    let pxc = f32(x) + 0.5;
-    let pyc = f32(y) + 0.5;
-    let pixel = y * ${u(d.W)} + x;
-    let goR = gradImage[pixel];
-    let goG = gradImage[${u(hw)} + pixel];
-    let goB = gradImage[${u(2 * hw)} + pixel];
+  var valid : array<bool, ${u(pixelsPerLane)}>;
+  var pixel : array<u32, ${u(pixelsPerLane)}>;
+  var pxc : array<f32, ${u(pixelsPerLane)}>;
+  var pyc : array<f32, ${u(pixelsPerLane)}>;
+  var endi : array<u32, ${u(pixelsPerLane)}>;
+  var baseR : array<f32, ${u(pixelsPerLane)}>; var baseG : array<f32, ${u(pixelsPerLane)}>; var baseB : array<f32, ${u(pixelsPerLane)}>;
+  var l0 : array<f32, ${u(pixelsPerLane)}>; var l1 : array<f32, ${u(pixelsPerLane)}>; var l2 : array<f32, ${u(pixelsPerLane)}>; var l3 : array<f32, ${u(pixelsPerLane)}>; var l4 : array<f32, ${u(pixelsPerLane)}>;
+  var T : array<f32, ${u(pixelsPerLane)}>;
+  var gBaseR : array<f32, ${u(pixelsPerLane)}>; var gBaseG : array<f32, ${u(pixelsPerLane)}>; var gBaseB : array<f32, ${u(pixelsPerLane)}>;
+  var gL0 : array<f32, ${u(pixelsPerLane)}>; var gL1 : array<f32, ${u(pixelsPerLane)}>; var gL2 : array<f32, ${u(pixelsPerLane)}>; var gL3 : array<f32, ${u(pixelsPerLane)}>; var gL4 : array<f32, ${u(pixelsPerLane)}>;
+  var gT : array<f32, ${u(pixelsPerLane)}>;
+  for (var p = 0u; p < PIXELS_PER_LANE; p++) {
+    let localPixel = tid + ${u(backwardLanes)} * p;
+    let x = tileX * ${u(TILE)} + (localPixel % ${u(TILE)});
+    let y = tileY * ${u(TILE)} + (localPixel / ${u(TILE)});
+    valid[p] = x < ${u(d.W)} && y < ${u(d.H)};
+    pixel[p] = y * ${u(d.W)} + x;
+    pxc[p] = f32(x) + 0.5;
+    pyc[p] = f32(y) + 0.5;
+    endi[p] = stopc;
+    baseR[p] = 0.0; baseG[p] = 0.0; baseB[p] = 0.0;
+    l0[p] = 0.0; l1[p] = 0.0; l2[p] = 0.0; l3[p] = 0.0; l4[p] = 0.0;
+    T[p] = 1.0;
+    gBaseR[p] = 0.0; gBaseG[p] = 0.0; gBaseB[p] = 0.0;
+    gL0[p] = 0.0; gL1[p] = 0.0; gL2[p] = 0.0; gL3[p] = 0.0; gL4[p] = 0.0;
+    gT[p] = 0.0;
+  }
 
-    // Forward replay recovers the final base/latent feature vector and the
-    // per-pixel visibility prefix without storing a feature image.
-    var baseR = 0.0; var baseG = 0.0; var baseB = 0.0;
-    var l0 = 0.0; var l1 = 0.0; var l2 = 0.0; var l3 = 0.0; var l4 = 0.0;
-    var T = 1.0; var endi = stopc;
-    for (var i = 0u; i < stopc; i++) {
-      let g = shIds[i]; let s = g * STATE_STRIDE;
-      let dx = pxc - state[s + ${u(STATE_MEAN_X)}];
-      let dy = pyc - state[s + ${u(STATE_MEAN_Y)}];
-      let a = state[s + ${u(STATE_CONIC_A)}]; let b = state[s + ${u(STATE_CONIC_B)}]; let c = state[s + ${u(STATE_CONIC_C)}];
-      let power = -0.5 * (a * dx * dx + 2.0 * b * dx * dy + c * dy * dy);
-      if (power > 0.0) { continue; }
-      let alpha = min(${f(MAX_ALPHA)}, state[s + ${u(STATE_OPACITY)}] * exp(power));
-      if (alpha < ${f(ALPHA_THRESHOLD)}) { continue; }
-      let cs = state[s + ${u(STATE_COS)}]; let sn = state[s + ${u(STATE_SIN)}];
-      let ux = clamp((cs * dx + sn * dy) * state[s + ${u(STATE_INV_SX)}], -3.0, 3.0);
-      let uy = clamp((-sn * dx + cs * dy) * state[s + ${u(STATE_INV_SY)}], -3.0, 3.0);
-      let e = g * FEATURE_STRIDE; let w = T * alpha;
-      baseR += w * state[s + ${u(STATE_RGB_R)}];
-      baseG += w * state[s + ${u(STATE_RGB_G)}];
-      baseB += w * state[s + ${u(STATE_RGB_B)}];
-      l0 += w * (features[e] + ux * features[e + 5u] + uy * features[e + 10u]);
-      l1 += w * (features[e + 1u] + ux * features[e + 6u] + uy * features[e + 11u]);
-      l2 += w * (features[e + 2u] + ux * features[e + 7u] + uy * features[e + 12u]);
-      l3 += w * (features[e + 3u] + ux * features[e + 8u] + uy * features[e + 13u]);
-      l4 += w * (features[e + 4u] + ux * features[e + 9u] + uy * features[e + 14u]);
-      T *= 1.0 - alpha;
-      if (T < ${f(TRANSMITTANCE_CUTOFF)}) { endi = i + 1u; break; }
-    }
-    baseR += T * ${f(d.bg[0])};
-    baseG += T * ${f(d.bg[1])};
-    baseB += T * ${f(d.bg[2])};
-
-    let rR = decoder[24u] + decoder[0u] * baseR + decoder[1u] * baseG + decoder[2u] * baseB + decoder[3u] * l0 + decoder[4u] * l1 + decoder[5u] * l2 + decoder[6u] * l3 + decoder[7u] * l4;
-    let rG = decoder[25u] + decoder[8u] * baseR + decoder[9u] * baseG + decoder[10u] * baseB + decoder[11u] * l0 + decoder[12u] * l1 + decoder[13u] * l2 + decoder[14u] * l3 + decoder[15u] * l4;
-    let rB = decoder[26u] + decoder[16u] * baseR + decoder[17u] * baseG + decoder[18u] * baseB + decoder[19u] * l0 + decoder[20u] * l1 + decoder[21u] * l2 + decoder[22u] * l3 + decoder[23u] * l4;
-    let outR = sigmoid1(logit1(baseR) + RESIDUAL_SCALE * rR);
-    let outG = sigmoid1(logit1(baseG) + RESIDUAL_SCALE * rG);
-    let outB = sigmoid1(logit1(baseB) + RESIDUAL_SCALE * rB);
-    let dzR = goR * outR * (1.0 - outR);
-    let dzG = goG * outG * (1.0 - outG);
-    let dzB = goB * outB * (1.0 - outB);
-    let baseRc = clamp(baseR, ${f(EPS)}, ${f(1 - EPS)});
-    let baseGc = clamp(baseG, ${f(EPS)}, ${f(1 - EPS)});
-    let baseBc = clamp(baseB, ${f(EPS)}, ${f(1 - EPS)});
-    let gBaseR = dzR / max(baseRc * (1.0 - baseRc), ${f(EPS)}) + RESIDUAL_SCALE * (dzR * decoder[0u] + dzG * decoder[8u] + dzB * decoder[16u]);
-    let gBaseG = dzG / max(baseGc * (1.0 - baseGc), ${f(EPS)}) + RESIDUAL_SCALE * (dzR * decoder[1u] + dzG * decoder[9u] + dzB * decoder[17u]);
-    let gBaseB = dzB / max(baseBc * (1.0 - baseBc), ${f(EPS)}) + RESIDUAL_SCALE * (dzR * decoder[2u] + dzG * decoder[10u] + dzB * decoder[18u]);
-    let gL0 = RESIDUAL_SCALE * (dzR * decoder[3u] + dzG * decoder[11u] + dzB * decoder[19u]);
-    let gL1 = RESIDUAL_SCALE * (dzR * decoder[4u] + dzG * decoder[12u] + dzB * decoder[20u]);
-    let gL2 = RESIDUAL_SCALE * (dzR * decoder[5u] + dzG * decoder[13u] + dzB * decoder[21u]);
-    let gL3 = RESIDUAL_SCALE * (dzR * decoder[6u] + dzG * decoder[14u] + dzB * decoder[22u]);
-    let gL4 = RESIDUAL_SCALE * (dzR * decoder[7u] + dzG * decoder[15u] + dzB * decoder[23u]);
-
-    // Metal's workgroup atomics beat a shared-array reduction here. The local
-    // reductions emit only 27 global atomics per tile, never per pixel.
-    localFixadd(0u, RESIDUAL_SCALE * dzR * baseR); localFixadd(1u, RESIDUAL_SCALE * dzR * baseG); localFixadd(2u, RESIDUAL_SCALE * dzR * baseB);
-    localFixadd(3u, RESIDUAL_SCALE * dzR * l0); localFixadd(4u, RESIDUAL_SCALE * dzR * l1); localFixadd(5u, RESIDUAL_SCALE * dzR * l2); localFixadd(6u, RESIDUAL_SCALE * dzR * l3); localFixadd(7u, RESIDUAL_SCALE * dzR * l4);
-    localFixadd(8u, RESIDUAL_SCALE * dzG * baseR); localFixadd(9u, RESIDUAL_SCALE * dzG * baseG); localFixadd(10u, RESIDUAL_SCALE * dzG * baseB);
-    localFixadd(11u, RESIDUAL_SCALE * dzG * l0); localFixadd(12u, RESIDUAL_SCALE * dzG * l1); localFixadd(13u, RESIDUAL_SCALE * dzG * l2); localFixadd(14u, RESIDUAL_SCALE * dzG * l3); localFixadd(15u, RESIDUAL_SCALE * dzG * l4);
-    localFixadd(16u, RESIDUAL_SCALE * dzB * baseR); localFixadd(17u, RESIDUAL_SCALE * dzB * baseG); localFixadd(18u, RESIDUAL_SCALE * dzB * baseB);
-    localFixadd(19u, RESIDUAL_SCALE * dzB * l0); localFixadd(20u, RESIDUAL_SCALE * dzB * l1); localFixadd(21u, RESIDUAL_SCALE * dzB * l2); localFixadd(22u, RESIDUAL_SCALE * dzB * l3); localFixadd(23u, RESIDUAL_SCALE * dzB * l4);
-    localFixadd(24u, RESIDUAL_SCALE * dzR); localFixadd(25u, RESIDUAL_SCALE * dzG); localFixadd(26u, RESIDUAL_SCALE * dzB);
-
-    // Reverse alpha recurrence. RGB follows the regular splat path exactly at
-    // zero residual; latent and local-frame terms add appearance gradients.
-    var Tcur = T;
-    var gT = gBaseR * ${f(d.bg[0])} + gBaseG * ${f(d.bg[1])} + gBaseB * ${f(d.bg[2])};
-    for (var ii = i32(endi) - 1; ii >= 0; ii--) {
-      let g = shIds[u32(ii)]; let s = g * STATE_STRIDE;
-      let dx = pxc - state[s + ${u(STATE_MEAN_X)}];
-      let dy = pyc - state[s + ${u(STATE_MEAN_Y)}];
-      let a = state[s + ${u(STATE_CONIC_A)}]; let b = state[s + ${u(STATE_CONIC_B)}]; let c = state[s + ${u(STATE_CONIC_C)}];
-      let power = -0.5 * (a * dx * dx + 2.0 * b * dx * dy + c * dy * dy);
-      if (power > 0.0) { continue; }
-      let opacity = state[s + ${u(STATE_OPACITY)}];
-      let raw = opacity * exp(power);
-      let alpha = min(${f(MAX_ALPHA)}, raw);
-      if (alpha < ${f(ALPHA_THRESHOLD)}) { continue; }
-      let denom = max(1.0 - alpha, ${f(EPS)});
-      let Tprev = Tcur / denom;
-      let cs = state[s + ${u(STATE_COS)}]; let sn = state[s + ${u(STATE_SIN)}];
-      let invSx = state[s + ${u(STATE_INV_SX)}]; let invSy = state[s + ${u(STATE_INV_SY)}];
-      let uxRaw = (cs * dx + sn * dy) * invSx;
-      let uyRaw = (-sn * dx + cs * dy) * invSy;
-      let ux = clamp(uxRaw, -3.0, 3.0); let uy = clamp(uyRaw, -3.0, 3.0);
-      let e = g * FEATURE_STRIDE;
-      let z0 = features[e] + ux * features[e + 5u] + uy * features[e + 10u];
-      let z1 = features[e + 1u] + ux * features[e + 6u] + uy * features[e + 11u];
-      let z2 = features[e + 2u] + ux * features[e + 7u] + uy * features[e + 12u];
-      let z3 = features[e + 3u] + ux * features[e + 8u] + uy * features[e + 13u];
-      let z4 = features[e + 4u] + ux * features[e + 9u] + uy * features[e + 14u];
-      let cR = state[s + ${u(STATE_RGB_R)}]; let cG = state[s + ${u(STATE_RGB_G)}]; let cB = state[s + ${u(STATE_RGB_B)}];
-      let dotPayload = gBaseR * cR + gBaseG * cG + gBaseB * cB + gL0 * z0 + gL1 * z1 + gL2 * z2 + gL3 * z3 + gL4 * z4;
-      let gAlpha = Tprev * (dotPayload - gT);
-      let w = Tprev * alpha;
-      let ab = g * ACC_STRIDE;
-      fixadd(&acc, ab + 5u, gBaseR * w); fixadd(&acc, ab + 6u, gBaseG * w); fixadd(&acc, ab + 7u, gBaseB * w);
-      fixadd(&acc, ab + ACC_EXTRA_OFFSET, gL0 * w); fixadd(&acc, ab + ACC_EXTRA_OFFSET + 1u, gL1 * w); fixadd(&acc, ab + ACC_EXTRA_OFFSET + 2u, gL2 * w); fixadd(&acc, ab + ACC_EXTRA_OFFSET + 3u, gL3 * w); fixadd(&acc, ab + ACC_EXTRA_OFFSET + 4u, gL4 * w);
-      fixadd(&acc, ab + ACC_EXTRA_OFFSET + 5u, gL0 * w * ux); fixadd(&acc, ab + ACC_EXTRA_OFFSET + 6u, gL1 * w * ux); fixadd(&acc, ab + ACC_EXTRA_OFFSET + 7u, gL2 * w * ux); fixadd(&acc, ab + ACC_EXTRA_OFFSET + 8u, gL3 * w * ux); fixadd(&acc, ab + ACC_EXTRA_OFFSET + 9u, gL4 * w * ux);
-      fixadd(&acc, ab + ACC_EXTRA_OFFSET + 10u, gL0 * w * uy); fixadd(&acc, ab + ACC_EXTRA_OFFSET + 11u, gL1 * w * uy); fixadd(&acc, ab + ACC_EXTRA_OFFSET + 12u, gL2 * w * uy); fixadd(&acc, ab + ACC_EXTRA_OFFSET + 13u, gL3 * w * uy); fixadd(&acc, ab + ACC_EXTRA_OFFSET + 14u, gL4 * w * uy);
-
-      let gUx = select(0.0, w * (gL0 * features[e + 5u] + gL1 * features[e + 6u] + gL2 * features[e + 7u] + gL3 * features[e + 8u] + gL4 * features[e + 9u]), uxRaw > -3.0 && uxRaw < 3.0);
-      let gUy = select(0.0, w * (gL0 * features[e + 10u] + gL1 * features[e + 11u] + gL2 * features[e + 12u] + gL3 * features[e + 13u] + gL4 * features[e + 14u]), uyRaw > -3.0 && uyRaw < 3.0);
-      fixadd(&acc, ab + ACC_LOCAL_RAW_OFFSET, gUx * (-cs * invSx) + gUy * (sn * invSy));
-      fixadd(&acc, ab + ACC_LOCAL_RAW_OFFSET + 1u, gUx * (-sn * invSx) + gUy * (-cs * invSy));
-      fixadd(&acc, ab + ACC_LOCAL_RAW_OFFSET + 2u, gUx * (-uxRaw) * state[s + ${u(STATE_SCALE_GATE_X)}]);
-      fixadd(&acc, ab + ACC_LOCAL_RAW_OFFSET + 3u, gUy * (-uyRaw) * state[s + ${u(STATE_SCALE_GATE_Y)}]);
-      fixadd(&acc, ab + ACC_LOCAL_RAW_OFFSET + 4u, gUx * ((-sn * dx + cs * dy) * invSx) + gUy * ((-cs * dx - sn * dy) * invSy));
-
-      let gate = select(0.0, 1.0, raw < ${f(MAX_ALPHA)});
-      let gRaw = gAlpha * gate;
-      let gPower = gRaw * raw;
-      let gdx = gPower * (-(a * dx + b * dy));
-      let gdy = gPower * (-(b * dx + c * dy));
-      fixadd(&acc, ab + 2u, gPower * (-0.5) * dx * dx);
-      fixadd(&acc, ab + 3u, gPower * (-1.0) * dx * dy);
-      fixadd(&acc, ab + 4u, gPower * (-0.5) * dy * dy);
-      fixadd(&acc, ab, -gdx); fixadd(&acc, ab + 1u, -gdy);
-      fixadd(&acc, ab + 8u, gRaw * (raw / max(opacity, ${f(EPS)})));
-      gT = alpha * dotPayload + (1.0 - alpha) * gT;
-      Tcur = Tprev;
+  // Replay the forward pass four pixels at a time. The payload is loaded once
+  // per lane/splat, not once per pixel, and stopped pixels remain masked.
+  for (var i = 0u; i < stopc; i++) {
+    let g = binnedIds[start + i]; let s = g * STATE_STRIDE; let e = g * FEATURE_STRIDE;
+    let mx = state[s + ${u(STATE_MEAN_X)}]; let my = state[s + ${u(STATE_MEAN_Y)}];
+    let a = state[s + ${u(STATE_CONIC_A)}]; let b = state[s + ${u(STATE_CONIC_B)}]; let c = state[s + ${u(STATE_CONIC_C)}];
+    let opacity = state[s + ${u(STATE_OPACITY)}]; let cs = state[s + ${u(STATE_COS)}]; let sn = state[s + ${u(STATE_SIN)}];
+    let invSx = state[s + ${u(STATE_INV_SX)}]; let invSy = state[s + ${u(STATE_INV_SY)}];
+    let cR = state[s + ${u(STATE_RGB_R)}]; let cG = state[s + ${u(STATE_RGB_G)}]; let cB = state[s + ${u(STATE_RGB_B)}];
+    let f0 = features[e]; let f1 = features[e + 1u]; let f2 = features[e + 2u]; let f3 = features[e + 3u]; let f4 = features[e + 4u];
+    let fx0 = features[e + 5u]; let fx1 = features[e + 6u]; let fx2 = features[e + 7u]; let fx3 = features[e + 8u]; let fx4 = features[e + 9u];
+    let fy0 = features[e + 10u]; let fy1 = features[e + 11u]; let fy2 = features[e + 12u]; let fy3 = features[e + 13u]; let fy4 = features[e + 14u];
+    for (var p = 0u; p < PIXELS_PER_LANE; p++) {
+      if (valid[p] && i < endi[p]) {
+        let dx = pxc[p] - mx; let dy = pyc[p] - my;
+        let power = -0.5 * (a * dx * dx + 2.0 * b * dx * dy + c * dy * dy);
+        if (power <= 0.0) {
+          let alpha = min(${f(MAX_ALPHA)}, opacity * exp(power));
+          if (alpha >= ${f(ALPHA_THRESHOLD)}) {
+            let ux = clamp((cs * dx + sn * dy) * invSx, -3.0, 3.0);
+            let uy = clamp((-sn * dx + cs * dy) * invSy, -3.0, 3.0);
+            let w = T[p] * alpha;
+            baseR[p] += w * cR; baseG[p] += w * cG; baseB[p] += w * cB;
+            l0[p] += w * (f0 + ux * fx0 + uy * fy0);
+            l1[p] += w * (f1 + ux * fx1 + uy * fy1);
+            l2[p] += w * (f2 + ux * fx2 + uy * fy2);
+            l3[p] += w * (f3 + ux * fx3 + uy * fy3);
+            l4[p] += w * (f4 + ux * fx4 + uy * fy4);
+            T[p] *= 1.0 - alpha;
+            if (T[p] < ${f(TRANSMITTANCE_CUTOFF)}) { endi[p] = i + 1u; }
+          }
+        }
+      }
     }
   }
-  workgroupBarrier();
-  for (var j = tid; j < ${u(DECODER_PARAM_COUNT)}; j += 256u) {
-    atomicAdd(&acc[DECODER_OFFSET + j], atomicLoad(&shDecoderGrad[j]));
+
+  // Feature decoder VJP, accumulated locally over the four pixels before the
+  // subgroup reduction. There is no feature image or feature-image gradient.
+  var ld0 = vec4<f32>(0.0); var ld1 = vec4<f32>(0.0); var ld2 = vec4<f32>(0.0);
+  var ld3 = vec4<f32>(0.0); var ld4 = vec4<f32>(0.0); var ld5 = vec4<f32>(0.0); var ld6 = vec4<f32>(0.0);
+  for (var p = 0u; p < PIXELS_PER_LANE; p++) {
+    if (valid[p]) {
+      baseR[p] += T[p] * ${f(d.bg[0])}; baseG[p] += T[p] * ${f(d.bg[1])}; baseB[p] += T[p] * ${f(d.bg[2])};
+      let goR = gradImage[pixel[p]]; let goG = gradImage[${u(hw)} + pixel[p]]; let goB = gradImage[${u(2 * hw)} + pixel[p]];
+      let rR = decoder[24u] + decoder[0u] * baseR[p] + decoder[1u] * baseG[p] + decoder[2u] * baseB[p] + decoder[3u] * l0[p] + decoder[4u] * l1[p] + decoder[5u] * l2[p] + decoder[6u] * l3[p] + decoder[7u] * l4[p];
+      let rG = decoder[25u] + decoder[8u] * baseR[p] + decoder[9u] * baseG[p] + decoder[10u] * baseB[p] + decoder[11u] * l0[p] + decoder[12u] * l1[p] + decoder[13u] * l2[p] + decoder[14u] * l3[p] + decoder[15u] * l4[p];
+      let rB = decoder[26u] + decoder[16u] * baseR[p] + decoder[17u] * baseG[p] + decoder[18u] * baseB[p] + decoder[19u] * l0[p] + decoder[20u] * l1[p] + decoder[21u] * l2[p] + decoder[22u] * l3[p] + decoder[23u] * l4[p];
+      let outR = sigmoid1(logit1(baseR[p]) + RESIDUAL_SCALE * rR);
+      let outG = sigmoid1(logit1(baseG[p]) + RESIDUAL_SCALE * rG);
+      let outB = sigmoid1(logit1(baseB[p]) + RESIDUAL_SCALE * rB);
+      let dzR = goR * outR * (1.0 - outR); let dzG = goG * outG * (1.0 - outG); let dzB = goB * outB * (1.0 - outB);
+      let baseRc = clamp(baseR[p], ${f(EPS)}, ${f(1 - EPS)}); let baseGc = clamp(baseG[p], ${f(EPS)}, ${f(1 - EPS)}); let baseBc = clamp(baseB[p], ${f(EPS)}, ${f(1 - EPS)});
+      gBaseR[p] = dzR / max(baseRc * (1.0 - baseRc), ${f(EPS)}) + RESIDUAL_SCALE * (dzR * decoder[0u] + dzG * decoder[8u] + dzB * decoder[16u]);
+      gBaseG[p] = dzG / max(baseGc * (1.0 - baseGc), ${f(EPS)}) + RESIDUAL_SCALE * (dzR * decoder[1u] + dzG * decoder[9u] + dzB * decoder[17u]);
+      gBaseB[p] = dzB / max(baseBc * (1.0 - baseBc), ${f(EPS)}) + RESIDUAL_SCALE * (dzR * decoder[2u] + dzG * decoder[10u] + dzB * decoder[18u]);
+      gL0[p] = RESIDUAL_SCALE * (dzR * decoder[3u] + dzG * decoder[11u] + dzB * decoder[19u]);
+      gL1[p] = RESIDUAL_SCALE * (dzR * decoder[4u] + dzG * decoder[12u] + dzB * decoder[20u]);
+      gL2[p] = RESIDUAL_SCALE * (dzR * decoder[5u] + dzG * decoder[13u] + dzB * decoder[21u]);
+      gL3[p] = RESIDUAL_SCALE * (dzR * decoder[6u] + dzG * decoder[14u] + dzB * decoder[22u]);
+      gL4[p] = RESIDUAL_SCALE * (dzR * decoder[7u] + dzG * decoder[15u] + dzB * decoder[23u]);
+      gT[p] = gBaseR[p] * ${f(d.bg[0])} + gBaseG[p] * ${f(d.bg[1])} + gBaseB[p] * ${f(d.bg[2])};
+      ld0 += vec4<f32>(RESIDUAL_SCALE * dzR * baseR[p], RESIDUAL_SCALE * dzR * baseG[p], RESIDUAL_SCALE * dzR * baseB[p], RESIDUAL_SCALE * dzR * l0[p]);
+      ld1 += vec4<f32>(RESIDUAL_SCALE * dzR * l1[p], RESIDUAL_SCALE * dzR * l2[p], RESIDUAL_SCALE * dzR * l3[p], RESIDUAL_SCALE * dzR * l4[p]);
+      ld2 += vec4<f32>(RESIDUAL_SCALE * dzG * baseR[p], RESIDUAL_SCALE * dzG * baseG[p], RESIDUAL_SCALE * dzG * baseB[p], RESIDUAL_SCALE * dzG * l0[p]);
+      ld3 += vec4<f32>(RESIDUAL_SCALE * dzG * l1[p], RESIDUAL_SCALE * dzG * l2[p], RESIDUAL_SCALE * dzG * l3[p], RESIDUAL_SCALE * dzG * l4[p]);
+      ld4 += vec4<f32>(RESIDUAL_SCALE * dzB * baseR[p], RESIDUAL_SCALE * dzB * baseG[p], RESIDUAL_SCALE * dzB * baseB[p], RESIDUAL_SCALE * dzB * l0[p]);
+      ld5 += vec4<f32>(RESIDUAL_SCALE * dzB * l1[p], RESIDUAL_SCALE * dzB * l2[p], RESIDUAL_SCALE * dzB * l3[p], RESIDUAL_SCALE * dzB * l4[p]);
+      ld6 += vec4<f32>(RESIDUAL_SCALE * dzR, RESIDUAL_SCALE * dzG, RESIDUAL_SCALE * dzB, 0.0);
+    }
+  }
+  let td0 = subgroupAdd(ld0); let td1 = subgroupAdd(ld1); let td2 = subgroupAdd(ld2); let td3 = subgroupAdd(ld3);
+  let td4 = subgroupAdd(ld4); let td5 = subgroupAdd(ld5); let td6 = subgroupAdd(ld6);
+  if (lane == 0u) {
+    atomicAdd(&acc[DECODER_OFFSET], qgrad(td0.x)); atomicAdd(&acc[DECODER_OFFSET + 1u], qgrad(td0.y)); atomicAdd(&acc[DECODER_OFFSET + 2u], qgrad(td0.z)); atomicAdd(&acc[DECODER_OFFSET + 3u], qgrad(td0.w));
+    atomicAdd(&acc[DECODER_OFFSET + 4u], qgrad(td1.x)); atomicAdd(&acc[DECODER_OFFSET + 5u], qgrad(td1.y)); atomicAdd(&acc[DECODER_OFFSET + 6u], qgrad(td1.z)); atomicAdd(&acc[DECODER_OFFSET + 7u], qgrad(td1.w));
+    atomicAdd(&acc[DECODER_OFFSET + 8u], qgrad(td2.x)); atomicAdd(&acc[DECODER_OFFSET + 9u], qgrad(td2.y)); atomicAdd(&acc[DECODER_OFFSET + 10u], qgrad(td2.z)); atomicAdd(&acc[DECODER_OFFSET + 11u], qgrad(td2.w));
+    atomicAdd(&acc[DECODER_OFFSET + 12u], qgrad(td3.x)); atomicAdd(&acc[DECODER_OFFSET + 13u], qgrad(td3.y)); atomicAdd(&acc[DECODER_OFFSET + 14u], qgrad(td3.z)); atomicAdd(&acc[DECODER_OFFSET + 15u], qgrad(td3.w));
+    atomicAdd(&acc[DECODER_OFFSET + 16u], qgrad(td4.x)); atomicAdd(&acc[DECODER_OFFSET + 17u], qgrad(td4.y)); atomicAdd(&acc[DECODER_OFFSET + 18u], qgrad(td4.z)); atomicAdd(&acc[DECODER_OFFSET + 19u], qgrad(td4.w));
+    atomicAdd(&acc[DECODER_OFFSET + 20u], qgrad(td5.x)); atomicAdd(&acc[DECODER_OFFSET + 21u], qgrad(td5.y)); atomicAdd(&acc[DECODER_OFFSET + 22u], qgrad(td5.z)); atomicAdd(&acc[DECODER_OFFSET + 23u], qgrad(td5.w));
+    atomicAdd(&acc[DECODER_OFFSET + 24u], qgrad(td6.x)); atomicAdd(&acc[DECODER_OFFSET + 25u], qgrad(td6.y)); atomicAdd(&acc[DECODER_OFFSET + 26u], qgrad(td6.z));
+  }
+
+  // Reverse alpha recurrence. Each lane accumulates its four pixels, then its
+  // hardware subgroup emits the tile partial. No cross-subgroup shared state
+  // and no per-splat barrier are required.
+  for (var ii = i32(stopc) - 1; ii >= 0; ii--) {
+    var v0 = vec4<f32>(0.0); var v1 = vec4<f32>(0.0); var v2 = vec4<f32>(0.0);
+    var v3 = vec4<f32>(0.0); var v4 = vec4<f32>(0.0); var v5 = vec4<f32>(0.0);
+    var v6 = vec4<f32>(0.0); var v7 = 0.0;
+    let g = binnedIds[start + u32(ii)]; let s = g * STATE_STRIDE; let e = g * FEATURE_STRIDE;
+    let mx = state[s + ${u(STATE_MEAN_X)}]; let my = state[s + ${u(STATE_MEAN_Y)}];
+    let a = state[s + ${u(STATE_CONIC_A)}]; let b = state[s + ${u(STATE_CONIC_B)}]; let c = state[s + ${u(STATE_CONIC_C)}];
+    let opacity = state[s + ${u(STATE_OPACITY)}]; let cs = state[s + ${u(STATE_COS)}]; let sn = state[s + ${u(STATE_SIN)}];
+    let invSx = state[s + ${u(STATE_INV_SX)}]; let invSy = state[s + ${u(STATE_INV_SY)}];
+    let cR = state[s + ${u(STATE_RGB_R)}]; let cG = state[s + ${u(STATE_RGB_G)}]; let cB = state[s + ${u(STATE_RGB_B)}];
+    let scaleGateX = state[s + ${u(STATE_SCALE_GATE_X)}]; let scaleGateY = state[s + ${u(STATE_SCALE_GATE_Y)}];
+    let f0 = features[e]; let f1 = features[e + 1u]; let f2 = features[e + 2u]; let f3 = features[e + 3u]; let f4 = features[e + 4u];
+    let fx0 = features[e + 5u]; let fx1 = features[e + 6u]; let fx2 = features[e + 7u]; let fx3 = features[e + 8u]; let fx4 = features[e + 9u];
+    let fy0 = features[e + 10u]; let fy1 = features[e + 11u]; let fy2 = features[e + 12u]; let fy3 = features[e + 13u]; let fy4 = features[e + 14u];
+    for (var p = 0u; p < PIXELS_PER_LANE; p++) {
+      if (valid[p] && u32(ii) < endi[p]) {
+        let dx = pxc[p] - mx; let dy = pyc[p] - my;
+        let power = -0.5 * (a * dx * dx + 2.0 * b * dx * dy + c * dy * dy);
+        if (power <= 0.0) {
+          let raw = opacity * exp(power); let alpha = min(${f(MAX_ALPHA)}, raw);
+          if (alpha >= ${f(ALPHA_THRESHOLD)}) {
+            let denom = max(1.0 - alpha, ${f(EPS)}); let Tprev = T[p] / denom;
+            let uxRaw = (cs * dx + sn * dy) * invSx; let uyRaw = (-sn * dx + cs * dy) * invSy;
+            let ux = clamp(uxRaw, -3.0, 3.0); let uy = clamp(uyRaw, -3.0, 3.0);
+            let z0 = f0 + ux * fx0 + uy * fy0; let z1 = f1 + ux * fx1 + uy * fy1; let z2 = f2 + ux * fx2 + uy * fy2;
+            let z3 = f3 + ux * fx3 + uy * fy3; let z4 = f4 + ux * fx4 + uy * fy4;
+            let dotPayload = gBaseR[p] * cR + gBaseG[p] * cG + gBaseB[p] * cB + gL0[p] * z0 + gL1[p] * z1 + gL2[p] * z2 + gL3[p] * z3 + gL4[p] * z4;
+            let gAlpha = Tprev * (dotPayload - gT[p]); let w = Tprev * alpha;
+            let gUx = select(0.0, w * (gL0[p] * fx0 + gL1[p] * fx1 + gL2[p] * fx2 + gL3[p] * fx3 + gL4[p] * fx4), uxRaw > -3.0 && uxRaw < 3.0);
+            let gUy = select(0.0, w * (gL0[p] * fy0 + gL1[p] * fy1 + gL2[p] * fy2 + gL3[p] * fy3 + gL4[p] * fy4), uyRaw > -3.0 && uyRaw < 3.0);
+            let gRaw = gAlpha * select(0.0, 1.0, raw < ${f(MAX_ALPHA)}); let gPower = gRaw * raw;
+            let gdx = gPower * (-(a * dx + b * dy)); let gdy = gPower * (-(b * dx + c * dy));
+            v0 += vec4<f32>(-gdx, -gdy, gPower * (-0.5) * dx * dx, gPower * (-1.0) * dx * dy);
+            v1 += vec4<f32>(gPower * (-0.5) * dy * dy, gBaseR[p] * w, gBaseG[p] * w, gBaseB[p] * w);
+            v2 += vec4<f32>(gRaw * (raw / max(opacity, ${f(EPS)})), gL0[p] * w, gL1[p] * w, gL2[p] * w);
+            v3 += vec4<f32>(gL3[p] * w, gL4[p] * w, gL0[p] * w * ux, gL1[p] * w * ux);
+            v4 += vec4<f32>(gL2[p] * w * ux, gL3[p] * w * ux, gL4[p] * w * ux, gL0[p] * w * uy);
+            v5 += vec4<f32>(gL1[p] * w * uy, gL2[p] * w * uy, gL3[p] * w * uy, gL4[p] * w * uy);
+            v6 += vec4<f32>(gUx * (-cs * invSx) + gUy * (sn * invSy), gUx * (-sn * invSx) + gUy * (-cs * invSy), gUx * (-uxRaw) * scaleGateX, gUy * (-uyRaw) * scaleGateY);
+            v7 += gUx * ((-sn * dx + cs * dy) * invSx) + gUy * ((-cs * dx - sn * dy) * invSy);
+            gT[p] = alpha * dotPayload + (1.0 - alpha) * gT[p];
+            T[p] = Tprev;
+          }
+        }
+      }
+    }
+    let r0 = subgroupAdd(v0);
+    let r1 = subgroupAdd(v1);
+    let r2 = subgroupAdd(v2);
+    let r3 = subgroupAdd(v3);
+    let r4 = subgroupAdd(v4);
+    let r5 = subgroupAdd(v5);
+    let r6 = subgroupAdd(v6);
+    let r7 = subgroupAdd(v7);
+    if (lane == 0u) {
+      let ab = g * ACC_STRIDE;
+      atomicAdd(&acc[ab], qgrad(r0.x)); atomicAdd(&acc[ab + 1u], qgrad(r0.y)); atomicAdd(&acc[ab + 2u], qgrad(r0.z)); atomicAdd(&acc[ab + 3u], qgrad(r0.w));
+      atomicAdd(&acc[ab + 4u], qgrad(r1.x)); atomicAdd(&acc[ab + 5u], qgrad(r1.y)); atomicAdd(&acc[ab + 6u], qgrad(r1.z)); atomicAdd(&acc[ab + 7u], qgrad(r1.w));
+      atomicAdd(&acc[ab + 8u], qgrad(r2.x)); atomicAdd(&acc[ab + ACC_EXTRA_OFFSET], qgrad(r2.y)); atomicAdd(&acc[ab + ACC_EXTRA_OFFSET + 1u], qgrad(r2.z)); atomicAdd(&acc[ab + ACC_EXTRA_OFFSET + 2u], qgrad(r2.w));
+      atomicAdd(&acc[ab + ACC_EXTRA_OFFSET + 3u], qgrad(r3.x)); atomicAdd(&acc[ab + ACC_EXTRA_OFFSET + 4u], qgrad(r3.y)); atomicAdd(&acc[ab + ACC_EXTRA_OFFSET + 5u], qgrad(r3.z)); atomicAdd(&acc[ab + ACC_EXTRA_OFFSET + 6u], qgrad(r3.w));
+      atomicAdd(&acc[ab + ACC_EXTRA_OFFSET + 7u], qgrad(r4.x)); atomicAdd(&acc[ab + ACC_EXTRA_OFFSET + 8u], qgrad(r4.y)); atomicAdd(&acc[ab + ACC_EXTRA_OFFSET + 9u], qgrad(r4.z)); atomicAdd(&acc[ab + ACC_EXTRA_OFFSET + 10u], qgrad(r4.w));
+      atomicAdd(&acc[ab + ACC_EXTRA_OFFSET + 11u], qgrad(r5.x)); atomicAdd(&acc[ab + ACC_EXTRA_OFFSET + 12u], qgrad(r5.y)); atomicAdd(&acc[ab + ACC_EXTRA_OFFSET + 13u], qgrad(r5.z)); atomicAdd(&acc[ab + ACC_EXTRA_OFFSET + 14u], qgrad(r5.w));
+      atomicAdd(&acc[ab + ACC_LOCAL_RAW_OFFSET], qgrad(r6.x)); atomicAdd(&acc[ab + ACC_LOCAL_RAW_OFFSET + 1u], qgrad(r6.y)); atomicAdd(&acc[ab + ACC_LOCAL_RAW_OFFSET + 2u], qgrad(r6.z)); atomicAdd(&acc[ab + ACC_LOCAL_RAW_OFFSET + 3u], qgrad(r6.w));
+      atomicAdd(&acc[ab + ACC_LOCAL_RAW_OFFSET + 4u], qgrad(r7));
+    }
   }
 }
 `;

@@ -359,6 +359,43 @@ const W0 = tapWeight(0, 0, DOT_RADIUS, 0, 0);
 }
 
 // --------------------------------------------------------------------------
+// 4b: Agree+Disagree role palette — A/B/C are exact RGB axes.
+// --------------------------------------------------------------------------
+{
+  const ROLE_SALT = 2246822519;
+  const idxByRole = [-1, -1, -1];
+  for (let i = 0; idxByRole.includes(-1) && i < 10000; i++) {
+    const role = pcgJS((i ^ ROLE_SALT) >>> 0) % 3;
+    if (idxByRole[role] === -1) idxByRole[role] = i;
+  }
+  const n = Math.max(...idxByRole) + 1;
+  const posR = new Float32Array(2 * n).fill(-100);
+  const velR = new Float32Array(2 * n);
+  const spots: [number, number][] = [[48, 32], [128, 32], [208, 32]];
+  idxByRole.forEach((iid, role) => {
+    posR[2 * iid] = spots[role][0];
+    posR[2 * iid + 1] = spots[role][1];
+  });
+  const pb = mkBuf(posR);
+  const vb = mkBuf(velR);
+  r.palette = "rgb-roles";
+  r.classes = 3;
+  r.decay = 0;
+  r.render(pb, vb, n, W, H);
+  const img = await readTex(r.offscreen!.texture!, W, H);
+  const axes: [number, number, number][] = [[0.55, 0, 0], [0, 0.55, 0], [0, 0, 0.55]];
+  spots.forEach(([x, y], role) => {
+    const got = px(img, x, y);
+    const want = outColor(countsOf(axes[role], W0));
+    check(near(got, want, 3),
+      `rgb-role ${role} (A/B/C) ${fmt(got)} ≈ exact-axis ${fmt(want)}`);
+  });
+  pb.destroy(); vb.destroy();
+  r.palette = "speed";
+  r.classes = 0;
+}
+
+// --------------------------------------------------------------------------
 // 5: energy conservation — the two-pass in-shader normalization must deposit
 //    a TOTAL of 4096 counts per unit colour channel no matter the radius or
 //    subpixel phase. Blue of the v=0 colour is exactly 1.0, so Σ(blue) over

@@ -14,7 +14,7 @@
  * oracle in tools/train_test.ts.
  */
 
-import type { FieldLayout } from "./advect_wgsl";
+import type { BorderMode, FieldLayout } from "./advect_wgsl";
 import type { PassTimestampWrites } from "./gputime";
 import {
   trainPassAShader,
@@ -23,6 +23,7 @@ import {
   TRAIN_WG,
   TRAIN_WG_B,
   MAX_BATCH,
+  type FieldLossSpec,
 } from "./train_wgsl";
 
 export interface TrainPhysics {
@@ -108,12 +109,35 @@ export class FusedTrainer {
   constructor(
     device: GPUDevice,
     layout: FieldLayout,
-    opts: { batchCap?: number; weightsBuffer?: GPUBuffer; kSteps?: number } = {}
+    opts: {
+      batchCap?: number;
+      weightsBuffer?: GPUBuffer;
+      kSteps?: number;
+      /**
+       * External per-weight gradient (length totalFloats) ADDED into pass B's
+       * gradient before Adam — the fused adversary's generator-reward seam
+       * (AdversaryTrainer.extGradsBuf). Passing it changes the generated pass
+       * B shader (extra read-only binding 6); omitting it keeps the shader
+       * byte-identical to the pre-adversary codegen.
+       */
+      extGradBuffer?: GPUBuffer;
+      /** Up to two independent game gradients, summed before Adam. */
+      extGradBuffers?: readonly GPUBuffer[];
+      /** Structural/aesthetic loss compiled into the fused trainer. */
+      loss?: FieldLossSpec;
+      /** Boundary rule compiled into the rollout and its analytic backward. */
+      border?: BorderMode;
+    } = {}
   ) {
     this.device = device;
     this.layout = layout;
     this.batchCap = Math.min(opts.batchCap ?? MAX_BATCH, MAX_BATCH);
     this.kSteps = opts.kSteps ?? 1;
+    const extGradBuffers =
+      opts.extGradBuffers ?? (opts.extGradBuffer ? [opts.extGradBuffer] : []);
+    if (extGradBuffers.length > 2) {
+      throw new Error(`train: at most 2 external gradient buffers, got ${extGradBuffers.length}`);
+    }
 
     // Pass A: one module, three entry points (fwd/finalize/bwd), one EXPLICIT
     // bind-group layout so all three share a single bind group (their `auto`
@@ -135,7 +159,11 @@ export class FusedTrainer {
     });
     const plA = device.createPipelineLayout({ bindGroupLayouts: [this.bglA] });
     const moduleA = device.createShaderModule({
-      code: trainPassAShader(layout, { kSteps: this.kSteps }),
+      code: trainPassAShader(layout, {
+        kSteps: this.kSteps,
+        loss: opts.loss,
+        border: opts.border,
+      }),
     });
     const mkA = (entryPoint: string) =>
       device.createComputePipeline({ layout: plA, compute: { module: moduleA, entryPoint } });
@@ -146,7 +174,12 @@ export class FusedTrainer {
       layout: "auto",
       compute: {
         module: device.createShaderModule({
-          code: trainPassBShader(layout, { kSteps: this.kSteps }),
+          code: trainPassBShader(layout, {
+            kSteps: this.kSteps,
+            extGradCount: extGradBuffers.length,
+            loss: opts.loss,
+            border: opts.border,
+          }),
         }),
         entryPoint: "main",
       },
@@ -194,6 +227,10 @@ export class FusedTrainer {
         { binding: 3, resource: { buffer: this.gradsBuf } },
         { binding: 4, resource: { buffer: this.adamM } },
         { binding: 5, resource: { buffer: this.adamV } },
+        ...extGradBuffers.map((buffer, i) => ({
+          binding: 6 + i,
+          resource: { buffer },
+        })),
       ],
     });
   }

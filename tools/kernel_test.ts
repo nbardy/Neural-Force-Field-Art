@@ -430,8 +430,10 @@ await numericCase(
   HELM
 );
 
-// 2b — MULTI-SPECIES: classes=3, chaos head takes 2+3 inputs (order head
-//      class-blind at 2). Reference derives class via the same pcg hash.
+// 2b — MULTI-SPECIES: classes=3, direct-vector head B takes 2+3 inputs
+//      (head A remains class-blind at 2). Reference derives class via the same
+//      pcg hash; this input routing does not give either head an order/chaos
+//      identity.
 await numericCase(
   "helmholtz classes=3 [32,32]       ",
   layoutField(

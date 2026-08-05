@@ -2,13 +2,40 @@
 /// <reference types="@webgpu/types" />
 import { VisionTrainer, type TrainPlan } from "../clip/vision";
 import { DECODER_PARAM_COUNT, FEATURE_LATENT_CHANNELS, FEATURE_STRIDE } from "./feature_painter_wgsl";
-import { FeaturePainterEngine } from "./feature_painter";
-import { LEGIBLE_LRS, randomSplats, type SplatInit, type SplatNudgeOptions, nudgeSplats, cosine } from "./optimize";
+import { DECODER_LR, FEATURE_LR, FeaturePainterEngine } from "./feature_painter";
+import { DEFAULT_HYPER, type AdamHyper, type AdamLRs } from "./adam_wgsl";
+import { LEGIBLE_LRS, randomSplats, type SplatInit, type SplatNudgeOptions, nudgeSplatMask, nudgeSplats, cosine } from "./optimize";
 
 const SIDE = 256;
 const IMG_BYTES = 3 * SIDE * SIDE * 4;
-/** Lower than RGB mode because every visible hit carries 32 channels. */
+/** Keep the experimental feature path compact while its denser high-count
+ * schedule is evaluated separately. */
 export const FEATURE_PAINTER_G = 2048;
+
+/** Lower optical depth leaves interior splats visible and trainable. The old
+ * alpha=.60/scale=9 setup had roughly 9.5 expected overlaps per pixel. */
+export const FEATURE_PAINTER_INIT: Required<SplatInit> = {
+  scale: 7,
+  scaleJitter: 0.45,
+  opacityRaw: -0.1,
+  colorSpread: 1.1,
+};
+
+/** The early geometry multiplier below gives centers a real chance to migrate
+ * before colour/opacity settle into the first low-frequency CLIP solution. */
+export const FEATURE_PAINTER_LRS: AdamLRs = {
+  ...LEGIBLE_LRS,
+};
+
+export interface FeaturePainterOptimizerConfig {
+  G?: number;
+  seed?: number;
+  init?: SplatInit;
+  lrs?: AdamLRs;
+  hyper?: AdamHyper;
+  featureLR?: number;
+  decoderLR?: number;
+}
 
 export class FeaturePainterOptimizer {
   readonly device: GPUDevice;
@@ -16,32 +43,119 @@ export class FeaturePainterOptimizer {
   readonly trainer: VisionTrainer;
   readonly side = SIDE;
   private step_ = 0;
-  private readonly init?: SplatInit;
+  private readonly init: SplatInit;
+  private readonly lrs: AdamLRs;
+  private readonly hyper: AdamHyper;
+  private readonly featureLR: number;
+  private readonly decoderLR: number;
 
-  static async create(device: GPUDevice, plan: TrainPlan, weights: Float32Array, cfg: { G?: number; seed?: number; init?: SplatInit } = {}) {
+  static async create(device: GPUDevice, plan: TrainPlan, weights: Float32Array, cfg: FeaturePainterOptimizerConfig = {}) {
     const [channels, height, width] = plan.inputShape;
     if (channels !== 3 || height !== SIDE || width !== SIDE) throw new Error("feature painter requires MobileCLIP 256x256 RGB input");
     const G = cfg.G ?? FEATURE_PAINTER_G;
     const raster = await FeaturePainterEngine.create(device, { H: SIDE, W: SIDE, G, cap: 2048, bg: [0.5, 0.5, 0.5] });
     const trainer = await VisionTrainer.create(device, plan, weights);
-    raster.setParams(randomSplats(G, cfg.seed ?? 1, cfg.init));
+    const init = cfg.init ?? FEATURE_PAINTER_INIT;
+    raster.setParams(randomSplats(G, cfg.seed ?? 1, init));
     raster.setFeatureParams(randomFeatures(G, cfg.seed ?? 1));
     // The output residual is still exactly zero at boot: z/Ax/Ay and all
     // decoder bias/RGB-skip weights are zero. Nonzero latent columns give the
     // feature field a gradient on its very first optimization step.
     raster.setDecoderParams(randomDecoder(cfg.seed ?? 1));
     raster.zeroAdamState();
-    return new FeaturePainterOptimizer(device, raster, trainer, cfg.init);
+    return new FeaturePainterOptimizer(device, raster, trainer, init, cfg);
   }
 
-  private constructor(device: GPUDevice, raster: FeaturePainterEngine, trainer: VisionTrainer, init?: SplatInit) { this.device=device; this.raster=raster; this.trainer=trainer; this.init=init; }
-  setPrompt(text: Float32Array) { this.trainer.writeText(text); }
-  get stepCount() { return this.step_; }
-  step() { const enc=this.device.createCommandEncoder(); this.raster.recordForward(enc); enc.copyBufferToBuffer(this.raster.image,0,this.trainer.inputBuffer,0,IMG_BYTES); this.trainer.encode(enc,{backward:true}); enc.copyBufferToBuffer(this.trainer.inputGradBuffer,0,this.raster.gradImage,0,IMG_BYTES); this.raster.recordBackward(enc); this.step_++; this.raster.recordAdam(enc,this.step_,LEGIBLE_LRS); this.device.queue.submit([enc.finish()]); }
-  async nudge(opts: SplatNudgeOptions = {}) { const G=this.raster.dims.G; const params=await this.raster.readParams(); nudgeSplats(params,G,opts.seed??Date.now(),opts.amount??0.24,opts.init??this.init); this.raster.setParams(params); this.raster.zeroAdamState(); }
-  async renderImage() { this.raster.runForward(); return this.raster.readImage(); }
-  async currentEmbedding() { const enc=this.device.createCommandEncoder(); this.raster.recordForward(enc); enc.copyBufferToBuffer(this.raster.image,0,this.trainer.inputBuffer,0,IMG_BYTES); this.trainer.encode(enc,{backward:false}); this.device.queue.submit([enc.finish()]); return readFloats(this.device,this.trainer.outputBuffer,this.trainer.plan.embedDim); }
-  destroy() { this.raster.destroy(); }
+  private constructor(
+    device: GPUDevice,
+    raster: FeaturePainterEngine,
+    trainer: VisionTrainer,
+    init: SplatInit,
+    cfg: FeaturePainterOptimizerConfig,
+  ) {
+    this.device = device;
+    this.raster = raster;
+    this.trainer = trainer;
+    this.init = init;
+    this.lrs = cfg.lrs ?? FEATURE_PAINTER_LRS;
+    this.hyper = cfg.hyper ?? DEFAULT_HYPER;
+    this.featureLR = cfg.featureLR ?? FEATURE_LR;
+    this.decoderLR = cfg.decoderLR ?? DECODER_LR;
+  }
+
+  setPrompt(text: Float32Array): void {
+    this.trainer.writeText(text);
+  }
+
+  get stepCount(): number {
+    return this.step_;
+  }
+
+  step(): void {
+    const encoder = this.device.createCommandEncoder();
+    this.raster.recordForward(encoder);
+    encoder.copyBufferToBuffer(this.raster.image, 0, this.trainer.inputBuffer, 0, IMG_BYTES);
+    this.trainer.encode(encoder, { backward: true });
+    encoder.copyBufferToBuffer(this.trainer.inputGradBuffer, 0, this.raster.gradImage, 0, IMG_BYTES);
+    this.raster.recordBackward(encoder);
+    this.step_ += 1;
+    this.raster.recordAdam(encoder, this.step_, this.lrsForStep(), this.hyper, undefined, {
+      feature: this.featureLR,
+      decoder: this.decoderLR,
+    });
+    this.device.queue.submit([encoder.finish()]);
+  }
+
+  /** Start mobile, then progressively settle. This is only an LR schedule, so
+   * Adam's fixed beta bias correction remains mathematically valid. */
+  private lrsForStep(): AdamLRs {
+    const t = Math.max(0, Math.min(1, this.step_ / 180));
+    const geometry = 1.6 - 0.6 * t;
+    const appearance = 0.55 + 0.45 * t;
+    return {
+      mean: this.lrs.mean * geometry,
+      logScale: this.lrs.logScale * geometry,
+      theta: this.lrs.theta * geometry,
+      color: this.lrs.color * appearance,
+      opacity: this.lrs.opacity * appearance,
+    };
+  }
+
+  async nudge(opts: SplatNudgeOptions = {}): Promise<void> {
+    const G = this.raster.dims.G;
+    const seed = opts.seed ?? Date.now();
+    const amount = opts.amount ?? 0.12;
+    const selection = nudgeSplatMask(G, seed, amount);
+    const [params, features] = await Promise.all([
+      this.raster.readParams(),
+      this.raster.readFeatureParams(),
+    ]);
+    nudgeSplats(params, G, seed, amount, opts.init ?? this.init, selection);
+    for (let g = 0; g < G; g++) {
+      if (selection[g] !== 0) features.fill(0, g * FEATURE_STRIDE, (g + 1) * FEATURE_STRIDE);
+    }
+    this.raster.setParams(params);
+    this.raster.setFeatureParams(features);
+    this.raster.zeroAdamState();
+  }
+
+  async renderImage(): Promise<Float32Array> {
+    this.raster.runForward();
+    return this.raster.readImage();
+  }
+
+  async currentEmbedding(): Promise<Float32Array> {
+    const encoder = this.device.createCommandEncoder();
+    this.raster.recordForward(encoder);
+    encoder.copyBufferToBuffer(this.raster.image, 0, this.trainer.inputBuffer, 0, IMG_BYTES);
+    this.trainer.encode(encoder, { backward: false });
+    this.device.queue.submit([encoder.finish()]);
+    return readFloats(this.device, this.trainer.outputBuffer, this.trainer.plan.embedDim);
+  }
+
+  destroy(): void {
+    this.raster.destroy();
+  }
 }
 
 /**

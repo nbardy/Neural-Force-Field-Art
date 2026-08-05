@@ -129,8 +129,9 @@ trajectory-window, proven equal to the real advected trajectory to 6e-5 px).
   branch, not a default.
 - A second field head predicting per-position friction / mass — spatially
   varying "material."
-- α (order↔chaos) as an INPUT to a single conditioned net rather than a blend
-  of two nets.
+- The neutral A/B blend α as an INPUT to a single conditioned net rather than
+  a blend of two direct-vector nets. Any order/chaos meaning must still come
+  from an explicit loss; α has no intrinsic semantic.
 
 **N-BODY / swarm direction (maintainer's stated future).** Particles
 attending to / repelling neighbors = learned interaction kernels. This turns
@@ -147,14 +148,18 @@ the art from a "field" into a "society."
 
 ## 4. The OBJECTIVE axis (losses as art direction)
 
-**Current composite** (`helmholtzChaosLoss` in src/main.ts): chaos (−log local
-sensitivity) + isotropy (force-covariance balance, class-blind by design) +
-0.5·divergence penalty + a faint spiral structural anchor. Each term is a
-theory-grounded dial.
+**Current objective router** (`helmholtzChaosLoss` in src/main.ts): a weighted
+sum of chaos (−log local sensitivity), isotropy (force-covariance balance),
+divergence and an optional spiral term. Gallery pieces pass an explicit
+`FieldLossSpec`: maximum-chaos pieces set the spiral weight to zero, standalone
+adversarial pieces set every structural weight to zero, and only Chaos Weave
+composes the adversarial game with maximum chaos.
 
 **Space to explore:**
-- Per-class objectives — species with different temperaments (one seeks order,
-  one seeks chaos); the class-conditioned chaos head already supports this.
+- Per-class objectives — species with different temperaments (for example one
+  seeks order and one seeks chaos). The current class-conditioned second vector
+  head provides routing capacity, but neither head has an intrinsic objective;
+  the per-class losses still need to be defined explicitly.
 - Inter-species terms — predator/prey: class A's field repels from class B's
   DENSITY. This needs a density INPUT, i.e. feed the splat accumulation buffer
   back in as a field input (closes the loop; see §5).

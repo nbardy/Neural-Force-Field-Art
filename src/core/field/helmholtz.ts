@@ -2,19 +2,17 @@
  * Neural force field — two direct-vector heads (FIRST-ORDER).
  * ===================================================================
  *
- * We keep the Helmholtz *intuition* — a force field is a blend of a
- * curl-free "order" lane and a divergence-free "chaos" lane — but we no
- * longer DERIVE the two lanes as an analytic gradient / curl of scalar
- * potentials. Instead each lane is a small MLP that outputs its 2D force
- * vector DIRECTLY:
+ * `HelmholtzField` is retained as a compatibility class name. The production
+ * architecture is simply two small MLPs that output 2D vectors DIRECTLY:
  *
- *     g(posNorm) : R^2 -> R^2   "gradient / attracting"  — ORDER lane
- *     r(posNorm) : R^2 -> R^2   "rotational / mixing"    — CHAOS lane
+ *     g(posNorm) : R^2 -> R^2   vector head A
+ *     r(posNorm) : R^2 -> R^2   vector head B
  *
  *     forces = (1 - alpha) * g(posNorm)  +  alpha * r(posNorm)
  *
- * The mix knob `alpha ∈ [0,1]` slides between them (0 = pure `g` / order,
- * 1 = pure `r` / chaos). It is a live, mutable field — an order↔chaos slider.
+ * The live `alpha ∈ [0,1]` knob is a neutral output interpolation. It is NOT an
+ * intrinsic order↔chaos coordinate: that distinction can only come from an
+ * explicitly routed loss/game (for example Agree+Disagree).
  *
  * ─────────────────────────────────────────────────────────────────────
  * WHY DIRECT VECTORS INSTEAD OF grad(φ) / curl(ψ)  (the whole point)
@@ -28,10 +26,9 @@
  * ~800–1700 ms/frame — roughly 10x too slow, and it also forced tanh-only
  * hidden layers (SELU/ELU have no registered 2nd-order gradient in tfjs).
  *
- * TRADEOFF (deliberate): we drop the *exact* divergence-free guarantee and
- * instead encourage it SOFTLY. `main.ts`'s `divergencePenalty` loss term
- * measures ∇·F by forward-only finite differences and penalises its square,
- * nudging `r` toward area-preserving mixing during training. In return,
+ * TRADEOFF (deliberate): we drop the *exact* divergence-free guarantee.
+ * Pieces that request divergence/chaos do so through an explicit field-loss
+ * specification; the architecture itself assigns no such semantic. In return,
  * `forces()` is a plain FORWARD pass — no `tf.grad` inside — so training is a
  * single FIRST-order backward, identical in cost to the fast MLP pieces
  * (~10x faster). Approximate-and-cheap beats exact-and-unusable here.
@@ -79,15 +76,21 @@ export interface ForceField {
 /** Config for {@link HelmholtzField}. */
 export interface HelmholtzFieldConfig {
   /**
-   * Order↔chaos mix in `[0,1]`. `0` = pure `g` (attracting / predictable),
-   * `1` = pure `r` (rotational / mixing). Mutable at runtime.
+   * Neutral head mix in `[0,1]`: `0` = pure A/`g`, `1` = pure B/`r`.
+   * Mutable at runtime; the loss/game, not this number, supplies semantics.
    */
   alpha: number;
+  /**
+   * Semantic use of the two vector heads. "blend" preserves the historical
+   * interpolated field. "agree-disagree" exposes A, B and their derived blend
+   * as separate particle roles; it is not a Helmholtz decomposition.
+   */
+  semantic?: "blend" | "agree-disagree";
   /** Hidden layer widths for BOTH vector heads. Default `[32, 32]`. */
   hiddenUnits?: number[];
   /**
    * Multi-species class count C (default 0 = classless). When C > 0 the
-   * CHAOS head `r` takes `[pos, onehot(class)]` (2+C inputs) while the order
+   * second head `r` takes `[pos, onehot(class)]` (2+C inputs) while the first
    * head `g` stays class-blind. Class-aware fields are FUSED-KERNEL-ONLY:
    * {@link forces} throws, because the tfjs path has no class to feed —
    * training and advection both run in the WGSL kernels (which derive class
@@ -189,21 +192,20 @@ export const fourierDim = (octaves: number) => 2 + 4 * octaves;
 /**
  * Direct-vector neural force field.
  *
- * Two small MLP heads output the order lane (`g`) and chaos lane (`r`) as
- * 2D vectors directly; `forces()` blends them by `alpha`. The chaos lane's
- * divergence-free character is encouraged SOFTLY by the `divergencePenalty`
- * loss rather than constructed exactly — see the file header for why (the
- * win is single first-order autograd, ~10x faster than the old grad/curl).
+ * Two small MLP heads output vectors directly; `forces()` blends them by
+ * `alpha`. Neither head is intrinsically a gradient/curl or order/chaos lane.
+ * See the file header for why the exact second-order construction was removed.
  */
 export class HelmholtzField implements ForceField {
-  /** Order↔chaos slider in `[0,1]`; mutate freely at runtime. */
+  /** Neutral A/B output mix in `[0,1]`; mutate freely at runtime. */
   alpha: number;
   /** Multi-species class count (0 = classless). Immutable. */
   readonly classes: number;
+  readonly semantic: "blend" | "agree-disagree";
 
-  /** Order lane: R^2 -> R^2 direct "gradient / attracting" vector. */
+  /** First direct-vector head A. */
   private readonly g: tf.Sequential;
-  /** Chaos lane: R^2 -> R^2 direct "rotational / mixing" vector. */
+  /** Second direct-vector head B. */
   private readonly r: tf.Sequential;
 
   private readonly weights: tf.Variable[];
@@ -219,6 +221,7 @@ export class HelmholtzField implements ForceField {
 
   constructor({
     alpha,
+    semantic = "blend",
     hiddenUnits = [32, 32],
     classes = 0,
     modelType = "standard",
@@ -228,6 +231,7 @@ export class HelmholtzField implements ForceField {
     gridFeatures = 4,
   }: HelmholtzFieldConfig) {
     this.alpha = alpha;
+    this.semantic = semantic;
     this.classes = classes;
     this.modelType = modelType;
     this.sirenOmega0 = sirenOmega0;
@@ -237,9 +241,11 @@ export class HelmholtzField implements ForceField {
     if (modelType !== "standard" && classes > 0) {
       throw new Error(`HelmholtzField: ${modelType} + classes not supported yet`);
     }
-    // per-head input dim by encoding: fourier expands [x,y]→γ(p); hashgrid's
-    // input is the interpolated feature vector; the chaos head `r` also
-    // carries the class one-hot (standard/siren only).
+    // Per-head input dim by encoding: Fourier expands [x,y]→γ(p); hashgrid's
+    // input is the interpolated feature vector. For the species experiment,
+    // direct-vector head 1 also carries the class one-hot
+    // (standard/SIREN only); this is an input-routing choice, not a
+    // "chaos-head" identity.
     const encIn =
       modelType === "fourier"
         ? fourierDim(fourierOctaves)
@@ -297,8 +303,8 @@ export class HelmholtzField implements ForceField {
   /**
    * Raw force vectors `[N,2]` at the given normalized positions `[N,2]`.
    *
-   *   g       = order  lane vector (attracting)  — head `g`
-   *   r       = chaos  lane vector (rotational)   — head `r`
+   *   g       = direct-vector head A
+   *   r       = direct-vector head B
    *   forces  = (1 - alpha) * g + alpha * r
    *
    * A plain FORWARD pass (no `tf.grad`): differentiable w.r.t.
@@ -327,6 +333,20 @@ export class HelmholtzField implements ForceField {
       const a = this.alpha;
       return gVec.mul(1 - a).add(rVec.mul(a)) as tf.Tensor2D;
     });
+  }
+
+  /** Separately evaluate the two independent vector generators. */
+  headForces(posNorm: tf.Tensor2D): [tf.Tensor2D, tf.Tensor2D] {
+    if (this.classes > 0) {
+      throw new Error("HelmholtzField.headForces: class-aware fields are fused-only");
+    }
+    const enc =
+      this.modelType === "fourier"
+        ? fourierEncode(posNorm, this.fourierOctaves)
+        : this.modelType === "hashgrid"
+        ? this.gridInterp(posNorm)
+        : posNorm;
+    return [this.evalHead(this.g, enc), this.evalHead(this.r, enc)];
   }
 
   /** Bilinear interpolation of the learned feature grid — the SAME row-major

@@ -70,7 +70,11 @@ export interface HeadSpec {
  */
 export type FieldSpec =
   | { kind: "helmholtz"; heads: [HeadSpec, HeadSpec] }
+  | { kind: "agree-disagree"; heads: [HeadSpec, HeadSpec] }
   | { kind: "mlp"; heads: [HeadSpec] };
+
+/** Stable particle-role hash shared by Agree+Disagree advection/rendering. */
+export const ROLE_SALT = 2246822519;
 
 /**
  * Input encoding for the field heads (a SELECTABLE model axis):
@@ -84,6 +88,119 @@ export type Encoding =
   | { kind: "raw" }
   | { kind: "fourier"; octaves: number }
   | { kind: "hashgrid"; gridSize: number; features: number };
+
+/**
+ * What the domain's EDGE does — the one axis that decides the topology the
+ * whole simulation lives on. A sum type, not a boolean or an enum-ish string,
+ * because every consumer branches SEMANTICALLY on it: the integrator's final
+ * position map, the adversary's separation metric, and the render channel's
+ * teleport filter each need their own handler and none of them has a sensible
+ * "default" for an unknown edge rule.
+ *
+ *   wrap   — floored mod: the domain is a FLAT TORUS. The shipped default and
+ *            the only mode under which minimum-image (`a − round(a)`) is a
+ *            correct distance.
+ *   bounce — specular reflection at the wall with the normal velocity component
+ *            negated. The domain is a BOX; opposite edges are maximally far
+ *            apart, so minimum image is WRONG here (it would call a particle at
+ *            x=0.01 and one at x=0.99 near neighbours when the box distance is
+ *            0.98) and every consumer must use the raw difference instead.
+ *   reset  — leaving the box respawns the particle at a fresh seeded random
+ *            position with zero velocity. Also a BOX (same metric rule as
+ *            bounce), and the respawn is a TELEPORT: it is exogenous noise, not
+ *            a transition the field produced, so instruments must drop it (see
+ *            `selectSurpriseTuples` in src/main.ts).
+ */
+export type BorderMode =
+  | { readonly tag: "wrap" }
+  | { readonly tag: "bounce" }
+  | { readonly tag: "reset" };
+
+/**
+ * Is minimum-image the right displacement/separation rule under this border?
+ *
+ * TRUE for `wrap` ONLY. Exhaustive by construction so a fourth border mode
+ * cannot be added without answering this question for it.
+ */
+export function borderIsPeriodic(b: BorderMode): boolean {
+  switch (b.tag) {
+    case "wrap": return true;
+    case "bounce": return false;
+    case "reset": return false;
+  }
+}
+
+/**
+ * δ — WGSL for the BORDER step, one handler per {@link BorderMode}, emitted
+ * into every physics site (advect kernel, trainer rollout, adversary
+ * transition) so the three cannot drift.
+ *
+ * CONTRACT: `p` is a `var vec2f` already holding the POST-integration position
+ * (`pos + v`), `v` a `var vec2f` holding the clipped velocity, `res` the domain
+ * size, `rng` a `u32` expression seeding the reset respawn. The emitted block
+ * leaves `p` inside `[0, res]` and may modify `v`.
+ *
+ * The `bounce` handler reflects ONCE per axis, which is exact because the
+ * velocity clip bounds |v| ≤ maxVel ≪ res — a single step can never cross the
+ * box twice. `>=` on the upper wall (not `>`) keeps the exact-boundary case
+ * idempotent (2·res − res = res) instead of leaving it outside the domain.
+ */
+export function emitBorder(
+  border: BorderMode,
+  p: string,
+  v: string,
+  res: string,
+  rng: string
+): string {
+  switch (border.tag) {
+    case "wrap":
+      // floored mod == tf.mod (always in [0,res)); WGSL % is truncated, not floored
+      return `${p} = ${p} - floor(${p} / ${res}) * ${res};`;
+    case "bounce":
+      return `{
+    let bLo = ${p} < vec2f(0.0);
+    let bHi = ${p} >= ${res};
+    let bRefl = select(${p}, -${p}, bLo);
+    ${p} = select(bRefl, 2.0 * ${res} - bRefl, bHi);
+    ${v} = select(${v}, -${v}, bLo | bHi);
+  }`;
+    case "reset":
+      return `{
+    let bOut = any(${p} < vec2f(0.0)) || any(${p} >= ${res});
+    if (bOut) {
+      let bRx = pcg(${rng});
+      let bRy = pcg(bRx);
+      ${p} = vec2f(rand01(bRx) * ${res}.x, rand01(bRy) * ${res}.y);
+      ${v} = vec2f(0.0, 0.0);
+    }
+  }`;
+  }
+}
+
+/**
+ * WGSL `vec2f` expression for the border step's own Jacobian, per component:
+ * `∂(post-border position)/∂(pre-border position q)`, which by construction
+ * also equals `∂(post-border position)/∂(velocity)` since `q = pos + v`.
+ *
+ * Every mode's position map is AFFINE in q with a piecewise-constant slope, so
+ * one vector of slopes is the exact derivative — not an approximation:
+ *   wrap   p = q − floor(q/res)·res           slope +1 (floor is locally const)
+ *   bounce p = ±q + {0, 2·res}                slope ±1, negative where reflected
+ *   reset  p = q, or a respawn independent of q   slope 1, or 0 where respawned
+ *
+ * `q` must be the SAME expression the matching {@link emitBorder} consumed. A
+ * backward that assumes +1 here is silently wrong exactly on the particles that
+ * touched a wall — which is the population the border mode exists to change.
+ */
+export function borderJacobianExpr(border: BorderMode, q: string, res: string): string {
+  switch (border.tag) {
+    case "wrap": return `vec2f(1.0)`;
+    case "bounce":
+      return `select(vec2f(1.0), vec2f(-1.0), (${q} < vec2f(0.0)) | (${q} >= ${res}))`;
+    case "reset":
+      return `select(vec2f(1.0), vec2f(0.0), any(${q} < vec2f(0.0)) || any(${q} >= ${res}))`;
+  }
+}
 
 /** encoded input dimension (before the class one-hot). */
 export function encodingDim(e: Encoding): number {
@@ -112,10 +229,11 @@ export interface FieldLayout {
   spec: FieldSpec;
   /**
    * Multi-species class count C. 0 = classless (bit-identical to the original
-   * kernels). When C > 0 the CHAOS head (heads[1]) takes 2+C inputs — pos plus
-   * a one-hot class — while the order head stays class-blind at 2. Class ids
-   * are NEVER stored: c(i) = pcg(i ^ CLASS_SALT) % C, derived identically in
-   * the advect kernel, the trainer, and the renderer.
+   * kernels). When C > 0, direct-vector head 1 takes 2+C inputs — position plus
+   * a one-hot class — while head 0 stays class-blind at 2. These are routing
+   * roles, not intrinsic "chaos" and "order" identities. Class ids are NEVER
+   * stored: c(i) = pcg(i ^ CLASS_SALT) % C, derived identically in the advect
+   * kernel, the trainer, and the renderer.
    */
   classes: number;
   /** input encoding (raw / fourier) — the head's layer-0 input width. */
@@ -153,7 +271,19 @@ const ACTIVATIONS: ReadonlySet<string> = new Set([
   "sin",
 ]);
 
-function validateChain(dims: LayerDims[], label: string, wantIn: number): void {
+/**
+ * PER-HEAD dims: `wantIn`/`wantOut` are parameters, not constants. The field
+ * heads pass wantOut = 2 (a force is a 2-vector — that constraint is intact),
+ * while an adversary predictor head passes its encoding widths (pair du=1 →
+ * dy=2, tri du=3 → dy=6). This is a GENERALIZATION, not a loosening: every
+ * bad config that used to throw still throws, with the same messages.
+ */
+function validateChain(
+  dims: LayerDims[],
+  label: string,
+  wantIn: number,
+  wantOut: number
+): void {
   if (dims.length === 0) {
     throw new Error(`advect: head '${label}' has no layers`);
   }
@@ -162,9 +292,9 @@ function validateChain(dims: LayerDims[], label: string, wantIn: number): void {
       `advect: head '${label}' input must be ${wantIn} (got ${dims[0].inSize})`
     );
   }
-  if (dims[dims.length - 1].outSize !== 2) {
+  if (dims[dims.length - 1].outSize !== wantOut) {
     throw new Error(
-      `advect: head '${label}' output must be 2 (got ${
+      `advect: head '${label}' output must be ${wantOut} (got ${
         dims[dims.length - 1].outSize
       })`
     );
@@ -214,7 +344,7 @@ export function layoutField(
   if (encoding.kind !== "raw" && classes > 0) {
     throw new Error(`advect: ${encoding.kind} + classes not supported yet`);
   }
-  const wantHeads = kind === "helmholtz" ? 2 : 1;
+  const wantHeads = kind === "helmholtz" || kind === "agree-disagree" ? 2 : 1;
   if (headsDims.length !== wantHeads) {
     throw new Error(
       `advect: kind '${kind}' needs ${wantHeads} head(s), got ${headsDims.length}`
@@ -235,10 +365,11 @@ export function layoutField(
     off = align4(gridFloats);
   }
   const heads: HeadSpec[] = headsDims.map((dims, h) => {
-    // head 1 (chaos lane) carries the one-hot class channels; head 0 (order)
-    // and the legacy mlp stay class-blind. Both take the ENCODED input width
-    // (encDim = 2 for raw, 2+4·octaves for fourier).
-    validateChain(dims, `${kind}[${h}]`, h === 1 ? encDim + classes : encDim);
+    // Direct-vector head 1 carries the one-hot class channels; head 0 and the
+    // legacy MLP stay class-blind. This does not assign order/chaos semantics
+    // to either head. Both take the ENCODED input width (encDim = 2 for raw,
+    // 2+4·octaves for Fourier).
+    validateChain(dims, `${kind}[${h}]`, h === 1 ? encDim + classes : encDim, 2);
     const layers: LayerSpec[] = dims.map((d, l) => {
       const weightOffset = align4(off);
       off = weightOffset + d.inSize * d.outSize;
@@ -256,10 +387,77 @@ export function layoutField(
   });
 
   const spec: FieldSpec =
-    kind === "helmholtz"
+    kind === "helmholtz" || kind === "agree-disagree"
       ? { kind, heads: heads as [HeadSpec, HeadSpec] }
       : { kind, heads: heads as [HeadSpec] };
   return { spec, classes, encoding, totalFloats: align4(off), segments };
+}
+
+/**
+ * Packed layout for the K adversary predictor heads (the fused port of
+ * src/core/gan/adversary.ts). SAME packing rules as layoutField (16-byte
+ * aligned kernel/bias segments, tfjs Dense row-major, segments in tfjs
+ * variable order) but with per-head input/output widths: a `pair` head is
+ * du=1 → dy=2, a `tri` head du=3 → dy=6 — shapes validateChain used to
+ * hard-reject for field heads (correctly: a force is a 2-vector) and now
+ * validates against the ADVERSARY's own io contract instead.
+ *
+ * DELIBERATELY A SEPARATE LAYOUT + SEPARATE WEIGHTS BUFFER, never appended to
+ * the field's FieldLayout: AdvectKernel pairs field segments 1:1 with tfjs
+ * trainableWeights at construction (advect.ts) and would throw on foreign
+ * segments. Discriminator/generator separation is structural — two buffers,
+ * two dispatch sets — the fused analogue of the tfjs "separate varLists".
+ */
+export interface AdversaryLayout {
+  /** predictor head count (1 = the `single` control) */
+  k: number;
+  /** context width (encoding du) */
+  du: number;
+  /** target width (encoding dy) */
+  dy: number;
+  heads: HeadSpec[];
+  totalFloats: number;
+  segments: PackedSegment[];
+}
+
+/**
+ * Validate + pack K identical-shape adversary heads. Throws (loudly, at
+ * construction) on: k outside [1,16], chain/io mismatches, bad activations —
+ * the same κ discipline as layoutField.
+ */
+export function layoutAdversary(
+  k: number,
+  dims: LayerDims[],
+  io: { du: number; dy: number }
+): AdversaryLayout {
+  if (!Number.isInteger(k) || k < 1 || k > 16) {
+    throw new Error(`advect: adversary k ${k} outside [1, 16]`);
+  }
+  if (!Number.isInteger(io.du) || io.du < 1 || !Number.isInteger(io.dy) || io.dy < 1) {
+    throw new Error(`advect: adversary io du=${io.du} dy=${io.dy} must be positive integers`);
+  }
+  const align4 = (x: number) => (x + 3) & ~3;
+  let off = 0;
+  const segments: PackedSegment[] = [];
+  const heads: HeadSpec[] = [];
+  for (let j = 0; j < k; j++) {
+    validateChain(dims, `adversary[${j}]`, io.du, io.dy);
+    const layers: LayerSpec[] = dims.map((d, l) => {
+      const weightOffset = align4(off);
+      off = weightOffset + d.inSize * d.outSize;
+      const biasOffset = align4(off);
+      off = biasOffset + d.outSize;
+      segments.push(
+        { floatOffset: weightOffset, floatLength: d.inSize * d.outSize,
+          role: "kernel", head: j, layer: l },
+        { floatOffset: biasOffset, floatLength: d.outSize,
+          role: "bias", head: j, layer: l }
+      );
+      return { ...d, weightOffset, biasOffset };
+    });
+    heads.push({ layers });
+  }
+  return { k, du: io.du, dy: io.dy, heads, totalFloats: align4(off), segments };
 }
 
 /** Salt for the storage-free class hash — must match trainer + renderer. */
@@ -537,14 +735,23 @@ function emitForce(spec: FieldSpec): string {
   switch (spec.kind) {
     case "helmholtz":
       return (
-        `fn forceAt(pn : vec2f, cls : u32) -> vec2f {\n` +
+        `fn forceAt(pn : vec2f, cls : u32, gid : u32) -> vec2f {\n` +
         `  return (1.0 - u.alpha) * eval_head_0(pn, cls) + u.alpha * eval_head_1(pn, cls);\n` +
+        `}`
+      );
+    case "agree-disagree":
+      return (
+        `fn forceAt(pn : vec2f, cls : u32, gid : u32) -> vec2f {\n` +
+        `  let a = eval_head_0(pn, 0u);\n` +
+        `  let b = eval_head_1(pn, 0u);\n` +
+        `  let role = pcg(gid ^ ${ROLE_SALT}u) % 3u;\n` +
+        `  return select(select(a, b, role == 1u), (1.0 - u.alpha) * a + u.alpha * b, role == 2u);\n` +
         `}`
       );
     case "mlp":
       // Legacy sigmoid MLP pieces: [0,1] output re-centered by -0.5.
       return (
-        `fn forceAt(pn : vec2f, cls : u32) -> vec2f {\n` +
+        `fn forceAt(pn : vec2f, cls : u32, gid : u32) -> vec2f {\n` +
         `  return eval_head_0(pn, cls) - vec2f(0.5, 0.5);\n` +
         `}`
       );
@@ -574,6 +781,14 @@ export interface AdvectShaderOpts {
    * looped net or stageWeights:false throws (no silent fallback).
    */
   precision?: "f32" | "f16";
+  /**
+   * Edge rule. CODEGEN, not a uniform: each mode is a straight-line handler
+   * (see {@link emitBorder}) and selecting between them per thread would put a
+   * three-way structural branch in the hottest loop in the program. Omitted ≡
+   * `{tag:"wrap"}` — the shipped physics, so every existing caller and every
+   * existing gate keeps generating byte-identical WGSL.
+   */
+  border?: BorderMode;
 }
 
 /**
@@ -587,7 +802,7 @@ export interface AdvectShaderOpts {
  *   pn  = p / resolution
  *   f   = forceAt(pn) * forceMag
  *   v'  = clamp((v + f) * friction, -maxVel, +maxVel)
- *   p'  = floored-mod(p + v', resolution)      // tf.mod is floored, WGSL % is not
+ *   p'  = border(p + v', resolution)           // opts.border, default wrap
  *   reset (after integration): rand < resetRate → p' = rand*res, v' = 0
  */
 export function advectShader(
@@ -604,6 +819,7 @@ export function advectShader(
     ? false
     : opts.unroll ?? totalMacs(layout) <= UNROLL_MAC_LIMIT;
   const precision = opts.precision ?? "f32";
+  const border: BorderMode = opts.border ?? { tag: "wrap" };
   const total4 = totalFloats / 4; // layoutField pads to a multiple of 4
   const maxW = Math.max(
     2,
@@ -718,10 +934,14 @@ ${stagePrelude}
   // class is IDENTITY — a pure hash of the particle index, stable across
   // frames and resets; same derivation in trainer + renderer (CLASS_SALT).
   let cls = ${layout.classes > 0 ? `pcg(gid ^ ${CLASS_SALT_LITERAL}u) % ${layout.classes}u` : `0u`};
-  let f = forceAt(p / res, cls) * u.forceMag;
+  let f = forceAt(p / res, cls, gid) * u.forceMag;
   v = clamp((v + f) * u.friction, vec2f(-u.maxVel), vec2f(u.maxVel));
   p = p + v;
-  p = p - floor(p / res) * res; // floored mod == tf.mod (always in [0,res))
+  // BORDER — one generated handler per BorderMode (emitBorder). The reset
+  // handler's respawn stream is seeded off a DIFFERENT mixing constant than
+  // the random-reset below, so a border respawn and a random respawn on the
+  // same particle+frame do not land on the same point.
+  ${emitBorder(border, "p", "v", "res", "gid ^ (u.seed * 1103515245u)")}
 
   // Fused random reset (matches main.ts randomReset: after integration,
   // resetRate fraction respawns uniformly with zero velocity).

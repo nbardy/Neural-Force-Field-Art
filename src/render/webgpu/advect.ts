@@ -24,6 +24,7 @@ import {
   MAX_PARTICLES,
   UNROLL_MAC_LIMIT,
   type Activation,
+  type BorderMode,
   type FieldLayout,
   type LayerDims,
 } from "./advect_wgsl";
@@ -31,7 +32,12 @@ import { computePipeline } from "./microgpu";
 import type { PassTimestampWrites } from "./gputime";
 import type { HelmholtzField } from "../../core/field/helmholtz";
 
-/** Per-piece physics constants baked into the uniform once at construction. */
+/**
+ * Per-piece physics. `width/height/friction/resetRate` are baked into the
+ * uniform at construction; `forceMagnitude` and `maxVelocity` are LIVE (see
+ * {@link AdvectKernel.setForceMagnitude} / {@link AdvectKernel.setMaxVelocity});
+ * `border` is CODEGEN, so changing it needs a new kernel.
+ */
 export interface AdvectPhysics {
   width: number;
   height: number;
@@ -39,6 +45,8 @@ export interface AdvectPhysics {
   friction: number;
   maxVelocity: number;
   resetRate: number;
+  /** Edge rule; compiled into the shader. Omitted ≡ wrap (the shipped physics). */
+  border?: BorderMode;
 }
 
 interface IngestedHead {
@@ -123,10 +131,14 @@ export class AdvectKernel {
         : field.modelType === "hashgrid"
         ? ({ kind: "hashgrid", gridSize: field.gridSize, features: field.gridFeatures } as const)
         : ({ kind: "raw" } as const);
-    const layout = layoutField("helmholtz", [remap(hg.dims), remap(hr.dims)], {
+    const layout = layoutField(
+      field.semantic === "agree-disagree" ? "agree-disagree" : "helmholtz",
+      [remap(hg.dims), remap(hr.dims)],
+      {
       classes: field.classes ?? 0,
       encoding,
-    });
+      }
+    );
     // hashgrid: the grid tf.Variable is FIRST (matches the "grid" segment at
     // offset 0); then the head variables.
     const gridVar = field.grid ? [field.grid] : [];
@@ -220,7 +232,7 @@ export class AdvectKernel {
         : "f32";
     this.pipeline = computePipeline(
       device,
-      advectShader(layout, { stageWeights, precision })
+      advectShader(layout, { stageWeights, precision, border: physics.border })
     );
 
     // COPY_SRC: a co-owning FusedTrainer reads this buffer back in tests
@@ -251,7 +263,8 @@ export class AdvectKernel {
     console.log(
       `[advect] fused kernel: ${layout.spec.kind}, ${layout.totalFloats} weight ` +
         `floats, ${totalMacs(layout)} MACs/particle, staged=${stageWeights}, ` +
-        `unrolled=${unrolled}, precision=${precision}, n=${particleCount}`
+        `unrolled=${unrolled}, precision=${precision}, ` +
+        `border=${(physics.border ?? { tag: "wrap" }).tag}, n=${particleCount}`
     );
   }
 
@@ -285,8 +298,9 @@ export class AdvectKernel {
   /**
    * One frame: sync current tfjs weights into the packed buffer (GPU→GPU) and
    * run the fused advect dispatch over all particles. `seed` varies the reset
-   * RNG per frame (frame counter is perfect); `alpha` is the live order↔chaos
-   * mix (ignored by 'mlp' kind).
+   * RNG per frame (frame counter is perfect); `alpha` is the live neutral
+   * two-head mix (ignored by 'mlp' kind). Loss/game routing supplies any
+   * semantic distinction between the heads.
    */
   step(seed: number, alpha: number): void {
     const encoder = this.device.createCommandEncoder();
@@ -387,6 +401,43 @@ export class AdvectKernel {
    */
   setResetRate(r: number): void {
     this.uniF[6] = Math.max(0, Math.min(1, r));
+  }
+
+  /**
+   * Live-update the per-component velocity clip. Free: `maxVel` already lives
+   * at a fixed uniform slot that recordStep rewrites every frame, so this is a
+   * plain field write with no pipeline/buffer churn.
+   *
+   * CALLERS MUST UPDATE THE OTHER PHYSICS SITES IN THE SAME BREATH — the fused
+   * trainer's rollout and the fused adversary's transition take maxVelocity per
+   * `encodeStep`, and the tfjs `physicsForward` takes it as an argument. Three
+   * copies of the clip disagreeing is exactly the failure `tools/train_wta_test.ts`
+   * §7 gates against.
+   */
+  setMaxVelocity(v: number): void {
+    this.uniF[4] = v;
+  }
+
+  /** Live-update the physical force multiplier. Like maxVelocity this is a
+   * fixed uniform slot, so changing the dimensionless drive costs no pipeline
+   * or buffer rebuild. Callers must pass the same value to every trainer
+   * physics record in that frame. */
+  setForceMagnitude(v: number): void {
+    if (!(Number.isFinite(v) && v >= 0)) {
+      throw new Error(`advect: forceMagnitude must be finite and >= 0, got ${v}`);
+    }
+    this.uniF[2] = v;
+  }
+
+  /** Physical multiplier the next dispatch will use. */
+  get forceMagnitude(): number {
+    return this.uniF[2];
+  }
+
+  /** The clip currently compiled into the uniform (what the kernel will apply
+   *  on the next step) — read by the §7 cross-implementation gate. */
+  get maxVelocity(): number {
+    return this.uniF[4];
   }
 
   /**

@@ -18,22 +18,33 @@ const weights = new Float32Array(readFileSync(join(MODEL_DIR, "weights_train.bin
 const text = new Float32Array((JSON.parse(readFileSync(join(MODEL_DIR, "fixtures", "text_embeds_test.json"), "utf8")) as Record<string, number[]>)["a photo of a cat"]);
 const adapter = await (navigator as any).gpu.requestAdapter();
 if (!adapter) throw new Error("no WebGPU adapter");
-const device = await adapter.requestDevice();
+const device = await adapter.requestDevice({
+  requiredFeatures: adapter.features.has("subgroups" as GPUFeatureName) ? ["subgroups" as GPUFeatureName] : [],
+});
 const G = Number(process.argv[2] ?? 2048);
 const STEPS = Number(process.argv[3] ?? 20);
+
+// Compile and warm Metal without mutating the optimizer used for the reported
+// quality result. The feature shaders bake G into their source, so warm at the
+// same shape.
+const warm = await FeaturePainterOptimizer.create(device, plan, weights, { G });
+warm.setPrompt(text);
+for (let step = 0; step < 3; step++) warm.step();
+await device.queue.onSubmittedWorkDone();
+warm.destroy();
+
 const opt = await FeaturePainterOptimizer.create(device, plan, weights, { G });
 opt.setPrompt(text);
 const before = cosine(await opt.currentEmbedding(), text);
 writePNG("/tmp/feature8_before.png", await opt.renderImage(), opt.side, opt.side);
 const featureBefore = await opt.raster.readFeatureParams();
-for (let step = 0; step < 3; step++) opt.step(); // warm Metal pipeline compilation
-await device.queue.onSubmittedWorkDone();
 const started = performance.now();
 for (let step = 0; step < STEPS; step++) opt.step();
 await device.queue.onSubmittedWorkDone();
 const msPerStep = (performance.now() - started) / STEPS;
 const after = cosine(await opt.currentEmbedding(), text);
 writePNG("/tmp/feature8_after.png", await opt.renderImage(), opt.side, opt.side);
+const telemetry = await opt.raster.readTileTelemetry();
 const featureAfter = await opt.raster.readFeatureParams();
 const decoder = await opt.raster.readDecoderParams();
 let featureDelta2 = 0;
@@ -42,6 +53,7 @@ let decoderNorm2 = 0;
 for (const value of decoder) decoderNorm2 += value * value;
 console.log(`feature8: cos ${before.toFixed(5)} -> ${after.toFixed(5)} (delta ${(after - before).toFixed(5)})`);
 console.log(`feature8: ${msPerStep.toFixed(1)} ms/step at G=${G}; feature delta L2=${Math.sqrt(featureDelta2).toFixed(4)} decoder L2=${Math.sqrt(decoderNorm2).toFixed(4)}`);
+console.log(`feature8 tiles: count mean/max ${telemetry.meanCount.toFixed(1)}/${telemetry.maxCount}; stop mean/max ${telemetry.meanStop.toFixed(1)}/${telemetry.maxStop}; overflow ${telemetry.overflowTiles} tiles / ${telemetry.overflowEntries} entries`);
 console.log("feature8 PNGs: /tmp/feature8_before.png -> /tmp/feature8_after.png");
 if (after - before <= 0.01) throw new Error(`feature8 convergence gate failed: delta ${(after - before).toFixed(5)}`);
 opt.destroy();

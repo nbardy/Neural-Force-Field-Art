@@ -45,6 +45,15 @@ const U = { MAP_READ: 1, COPY_SRC: 4, COPY_DST: 8, UNIFORM: 64, STORAGE: 128 };
 const WG = 256;
 const ceil = (n: number) => Math.ceil(n / WG);
 
+export interface RasterTileTelemetry {
+  meanCount: number;
+  maxCount: number;
+  meanStop: number;
+  maxStop: number;
+  overflowTiles: number;
+  overflowEntries: number;
+}
+
 async function makeCompute(device: GPUDevice, code: string, label: string): Promise<GPUComputePipeline> {
   device.pushErrorScope("validation");
   const module = device.createShaderModule({ code });
@@ -203,6 +212,17 @@ export class RasterEngine {
     staging.destroy();
     return out;
   }
+  private async readU32(buf: GPUBuffer, count: number): Promise<Uint32Array> {
+    const staging = this.device.createBuffer({ size: count * 4, usage: U.MAP_READ | U.COPY_DST });
+    const enc = this.device.createCommandEncoder();
+    enc.copyBufferToBuffer(buf, 0, staging, 0, count * 4);
+    this.device.queue.submit([enc.finish()]);
+    await staging.mapAsync(1 /* GPUMapMode.READ */);
+    const out = new Uint32Array(staging.getMappedRange().slice(0));
+    staging.unmap();
+    staging.destroy();
+    return out;
+  }
   readImage(): Promise<Float32Array> {
     return this.readFloats(this.image, 3 * this.dims.H * this.dims.W);
   }
@@ -211,6 +231,36 @@ export class RasterEngine {
   }
   readGradRaw(): Promise<Float32Array> {
     return this.readFloats(this.gradRaw, this.dims.G * PARAM_STRIDE);
+  }
+  async readTileTelemetry(): Promise<RasterTileTelemetry> {
+    const counts = await this.readU32(this.tileCounts, this.dims.numTiles);
+    const stops = await this.readU32(this.tileStop, this.dims.numTiles);
+    let countSum = 0;
+    let stopSum = 0;
+    let maxCount = 0;
+    let maxStop = 0;
+    let overflowTiles = 0;
+    let overflowEntries = 0;
+    for (let tile = 0; tile < this.dims.numTiles; tile++) {
+      const count = counts[tile];
+      const stop = stops[tile];
+      countSum += count;
+      stopSum += stop;
+      maxCount = Math.max(maxCount, count);
+      maxStop = Math.max(maxStop, stop);
+      if (count > this.dims.cap) {
+        overflowTiles++;
+        overflowEntries += count - this.dims.cap;
+      }
+    }
+    return {
+      meanCount: countSum / this.dims.numTiles,
+      maxCount,
+      meanStop: stopSum / this.dims.numTiles,
+      maxStop,
+      overflowTiles,
+      overflowEntries,
+    };
   }
 
   // ---- pass recording ----------------------------------------------------

@@ -10,3 +10,5 @@ dist_gh/
 models/
 .env
 .env.*
+output/
+.playwright-cli/

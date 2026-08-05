@@ -1,6 +1,7 @@
 /**
  * The full per-sample training loss L_ad, built in the IR — a K-step physics
- * rollout of the two-head Helmholtz field, then the composite chaos/div/spiral
+ * rollout of the compatibility-named two-head direct-vector field, then the
+ * explicit composite chaos/div/spiral
  * loss on pos_K plus the batch-isotropy fold. `grad(L_ad, weights)` is the ENTIRE
  * per-sample backward: δ-chains, the K-step BPTT two-adjoint recurrence, and the
  * loss seeds all emerge from one reverse pass. Summed over the batch it equals
@@ -78,7 +79,8 @@ function encodeInput(g: Graph, pn: V2, cfg: RolloutCfg): Node[] {
   return out;
 }
 
-// weight/bias leaf names (head h ∈ {0=order/g, 1=chaos/r}), shared across samples
+// Weight/bias leaf names for neutral direct-vector heads h ∈ {0=A/g, 1=B/r},
+// shared across samples. Objective routing, not head index, supplies semantics.
 export const wName = (h: number) => (l: number, i: number, j: number) => `w_${h}_${l}_${i}_${j}`;
 export const bName = (h: number) => (l: number, j: number) => `b_${h}_${l}_${j}`;
 

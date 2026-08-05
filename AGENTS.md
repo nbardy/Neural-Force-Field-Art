@@ -1,10 +1,29 @@
 # AGENTS.md
 
+## Agent notes
+
+For any non-trivial investigation, optimization, multi-agent task, or work that
+may span sessions, create or update a timestamped note under `agent_notes/`:
+
+```text
+agent_notes/YYYY-MM-DD_HHMMSS_TZ_<topic>.md
+```
+
+The note is the durable handoff. Record the goal, questions raised, files and
+commands inspected, measured results, unresolved concerns, and next actions.
+Distinguish verified facts from hypotheses and proposals. Do not rely on chat,
+workflow notifications, or an agent's final message as the only record of
+material work; inspect the worktree and keep the note current.
+
 ## Cursor Cloud specific instructions
 
 ### Project overview
 
-Neural Force Field Art — a single-page React 18 app. A tiny neural network (the "force field") is trained with TF.js autograd to move particles; the whole thing runs on the GPU via **WebGPU** (zero-copy tfjs `GPUBuffer` → WGSL renderer). Bundled with Parcel.
+Neural Force Field Art — a single-page React 18 app. Tiny neural force fields
+move particle clouds. The production field trainer, adversarial trainer,
+particle integrator, diagnostics, and renderers are fused WebGPU paths; TF.js is
+retained as the independent reference/oracle and fallback trainer. Bundled with
+Parcel.
 
 ### Dev server
 
@@ -15,12 +34,21 @@ yarn build          # production build to dist/
 
 ### Rendering & backend (current — WebGPU-only)
 
-- `main.ts` forces `tf.setBackend("webgpu")`. Rendering is `src/render/webgpu/points.ts` (+ the `microgpu.ts` helper): particle positions are read straight from tfjs tensors via `tensor.dataToGPU()` (a `GPUBuffer` on the webgpu backend) and drawn with an instanced WGSL round-dot shader — **true zero-copy, no readback**. The renderer shares tfjs's `GPUDevice` (`tf.backend().device`). If WebGPU is unavailable it shows a "This needs WebGPU" notice — there is **no** Canvas2D/WebGL fallback, by design.
+- `main.ts` forces `tf.setBackend("webgpu")`. Particle state lives in
+  `AdvectKernel`-owned `GPUBuffer`s. `src/render/webgpu/points.ts` and
+  `src/render/webgpu/splat.ts` bind those buffers directly, so the production
+  particle path is zero-copy and has no state readback. `FusedTrainer` and
+  `AdversaryTrainer` update disjoint packed weight/Adam segments and feed the
+  same field buffers. The renderer shares tfjs's `GPUDevice`
+  (`tf.backend().device`). If WebGPU is unavailable it shows a "This needs
+  WebGPU" notice — there is **no** Canvas2D/WebGL fallback, by design.
 - **Three WebGPU gotchas already handled in `main.ts` — keep them:**
   1. `import "@tensorflow/tfjs-backend-webgpu"` — the tfjs union package only registers cpu+webgl; without this `setBackend("webgpu")` throws _"Backend name 'webgpu' not found in registry"_.
   2. A `GPUAdapter.prototype.requestAdapterInfo` shim — tfjs 4.10 calls that removed API; current Chrome exposes `adapter.info`.
   3. **All tensor/model creation is deferred until after `await tf.ready()`** — webgpu init is async; building tensors earlier throws _"backend not yet initialized"_.
-- `src/renderers.ts` (Canvas2D) and `src/render/gpuPoints.ts` (WebGL2) are **dead code** kept as a revert path; nothing imports them at runtime.
+- `src/renderers.ts` (Canvas2D) is a dead implementation kept as a revert path;
+  production imports only its `RendererType` type. `src/render/gpuPoints.ts`
+  (WebGL2) is also a non-production revert path.
 
 ### Verifying a WebGPU page headless: `tools/smoke.mjs`
 

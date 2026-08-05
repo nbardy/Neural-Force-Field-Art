@@ -34,6 +34,8 @@ struct Uni {
   maxSpeed   : f32,
   hasVel     : u32,
   classes    : u32,
+  palette    : u32,
+  pad        : u32,
 };
 
 // same hash + salt as the advect/train kernels — class is derived, not stored
@@ -79,7 +81,15 @@ fn vs(@builtin(vertex_index) vid : u32,
     t = clamp(length(vec2f(vx, vy)) / u.maxSpeed, 0.0, 1.0);
     col = mix(vec3f(0.25, 0.55, 1.0), vec3f(1.0, 0.55, 0.2), t); // blue->orange
   }
-  if (u.classes > 0u) {
+  if (u.palette == 2u) {
+    let role = pcg(iid ^ 2246822519u) % 3u;
+    let base = select(
+      select(vec3f(1.0, 0.0, 0.0), vec3f(0.0, 1.0, 0.0), role == 1u),
+      vec3f(0.0, 0.0, 1.0),
+      role == 2u
+    );
+    col = base * (0.55 + 0.45 * t);
+  } else if (u.classes > 0u) {
     // per-species base colour (cosine palette, golden-angle spaced hues),
     // brightness modulated by speed
     let cls = pcg(iid ^ 2166136261u) % u.classes;
@@ -107,6 +117,7 @@ export interface GpuPointOpts {
   maxSpeed?: number;
   /** multi-species count — colours dots per class (0 = speed colouring) */
   classes?: number;
+  palette?: "speed" | "species" | "rgb-roles";
 }
 
 export class GpuPointRendererWebGPU {
@@ -125,8 +136,9 @@ export class GpuPointRendererWebGPU {
   private readonly uniU = new Uint32Array(this.uniData);
   private readonly bg: [number, number, number];
   private readonly pointSize: number;
-  private readonly maxSpeed: number;
+  private maxSpeed: number;
   private readonly classes: number;
+  private readonly palette: number;
 
   /**
    * @param canvas on-screen canvas (must NOT have a 2d/webgl context yet).
@@ -154,6 +166,13 @@ export class GpuPointRendererWebGPU {
     this.bg = opts.background ?? [2, 0, 12];
     this.maxSpeed = opts.maxSpeed ?? 4;
     this.classes = opts.classes ?? 0;
+    this.palette =
+      opts.palette === "rgb-roles" ? 2 : opts.palette === "species" ? 1 : 0;
+  }
+
+  /** Live velocity-colour scale; independent of the render pipeline. */
+  setMaxSpeed(v: number): void {
+    this.maxSpeed = Math.max(1e-6, v);
   }
 
   // Cached bind group for the raw-buffer path: the fused advect kernel's
@@ -211,6 +230,7 @@ export class GpuPointRendererWebGPU {
     this.uniF[3] = this.maxSpeed;
     this.uniU[4] = 1; // hasVel
     this.uniU[5] = this.classes;
+    this.uniU[6] = this.palette;
     this.device.queue.writeBuffer(this.uni, 0, this.uniData);
 
     if (this.bufBindPos !== posBuf || this.bufBindVel !== velBuf) {
@@ -264,6 +284,7 @@ export class GpuPointRendererWebGPU {
     this.uniF[3] = this.maxSpeed;
     this.uniU[4] = vel ? 1 : 0; // byte offset 16
     this.uniU[5] = this.classes;
+    this.uniU[6] = this.palette;
     this.device.queue.writeBuffer(this.uni, 0, this.uniData);
 
     // Zero-copy: tfjs tensor GPU buffers, same device -> bindable directly.

@@ -12,7 +12,8 @@ import { Graph, type Node } from "./ir";
 export interface HeadDim {
   inSize: number;
   outSize: number;
-  act: "selu" | "tanh" | "sigmoid" | "sin";
+  /** "linear" = identity output layer (tfjs dense with no activation). */
+  act: "selu" | "tanh" | "sigmoid" | "sin" | "linear";
 }
 
 export function buildHead(

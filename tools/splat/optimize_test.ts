@@ -56,6 +56,15 @@ const device: any = await adapter.requestDevice();
 const info = adapter.info ?? {};
 console.log(`adapter: ${info.vendor ?? "?"} ${info.architecture ?? "?"}`);
 
+// Compile and warm Metal without mutating the optimizer used for the reported
+// quality result. The raster shaders bake G into their source, so warm at the
+// same shape.
+const warm = await SplatOptimizer.create(device, plan, weights, { G });
+warm.setPrompt(textEmbed);
+for (let i = 0; i < 3; i++) warm.step();
+await device.queue.onSubmittedWorkDone();
+warm.destroy();
+
 const t0 = performance.now();
 const opt = await SplatOptimizer.create(device, plan, weights, { G });
 console.log(`SplatOptimizer(${G} splats) built in ${(performance.now() - t0).toFixed(0)} ms`);
@@ -74,9 +83,6 @@ writePNG(join(OUT_DIR, "splat_prompt_before.png"), before, opt.side, opt.side);
 const cos0 = await cosToPrompt();
 console.log(`\nstep   0: cos("${PROMPT}") = ${cos0.toFixed(5)}`);
 
-// warm up the pipelines (Metal lazy-JIT — same rule as the clip suites)
-for (let i = 0; i < 3; i++) opt.step();
-
 const tStep0 = performance.now();
 let cosLast = cos0;
 for (let s = 1; s <= STEPS; s++) {
@@ -86,10 +92,13 @@ for (let s = 1; s <= STEPS; s++) {
     console.log(`step ${String(s).padStart(3)}: cos = ${cosLast.toFixed(5)}  (Δ ${(cosLast - cos0 >= 0 ? "+" : "")}${(cosLast - cos0).toFixed(5)})`);
   }
 }
-const msPerStep = (performance.now() - tStep0) / (STEPS + 3);
+// The three warm-up steps complete before tStep0, so only timed optimization
+// steps belong in this denominator.
+const msPerStep = (performance.now() - tStep0) / STEPS;
 
 const after = await opt.renderImage();
 writePNG(join(OUT_DIR, "splat_prompt_after.png"), after, opt.side, opt.side);
+const telemetry = await opt.raster.readTileTelemetry();
 
 // final embedding vs all prompts (should rank the target highest, or at least
 // have risen against it more than the controls)
@@ -101,6 +110,7 @@ for (const k of controls) {
 }
 
 console.log(`\nbench: ${msPerStep.toFixed(1)} ms/optimize-step (raster fwd+bwd+adam + CLIP fwd+loss+bwd, ${G} splats)`);
+console.log(`tiles: count mean/max ${telemetry.meanCount.toFixed(1)}/${telemetry.maxCount}; stop mean/max ${telemetry.meanStop.toFixed(1)}/${telemetry.maxStop}; overflow ${telemetry.overflowTiles} tiles / ${telemetry.overflowEntries} entries`);
 console.log(`PNGs: ${join(OUT_DIR, "splat_prompt_before.png")}  →  ${join(OUT_DIR, "splat_prompt_after.png")}`);
 
 const improved = cosLast - cos0;

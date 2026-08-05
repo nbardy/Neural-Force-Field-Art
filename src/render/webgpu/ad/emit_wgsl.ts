@@ -11,11 +11,32 @@
  */
 import { type Node, SELU_ALPHA, SELU_SCALE } from "./ir";
 
-/** f32 literal that always carries a decimal point (so WGSL types it as f32). */
+/**
+ * f32 literal that always carries a decimal point (so WGSL types it as f32).
+ *
+ * BUG FIXED 2026-07-27 — the mantissa/exponent split below is load-bearing.
+ * The old body was `v.toPrecision(9).replace(/0+$/, "")`, which strips trailing
+ * zeros from the END OF THE WHOLE STRING — i.e. out of the EXPONENT. Measured:
+ *   1e-10 -> "1.00000000e-1" (= 0.1, off by 1e9);  1e-20 -> 0.01;  3e-30 -> 0.003.
+ * Only exponents ending in 0 are hit, which is why 1e-9/1e-12/1e-6 (every const
+ * in use at the time) survived and the bug stayed latent. It is especially nasty
+ * because f32lit is on the WGSL path ONLY — the pure-JS oracle (tools/ad_test.ts,
+ * tools/ad_train_test.ts) never calls it, so every gradient test still passes at
+ * cos=1.0 while the GPU silently computes a different loss.
+ * Strip zeros from the mantissa only, then reattach the exponent verbatim.
+ */
 export function f32lit(v: number): string {
   if (!Number.isFinite(v)) throw new Error(`AD emit: non-finite const ${v}`);
-  if (Number.isInteger(v)) return `${v}.0`;
-  return v.toPrecision(9).replace(/0+$/, "").replace(/\.$/, ".0");
+  // Large/small integers stringify in exponential form ("1e+21"), where the
+  // `.0` suffix would produce invalid WGSL — fall through to the general path.
+  if (Number.isInteger(v) && Math.abs(v) < 1e21) return `${v}.0`;
+  const s = v.toPrecision(9);
+  const m = /^([^eE]+)([eE][+-]?\d+)$/.exec(s);
+  const mantissa = (m ? m[1] : s).replace(/0+$/, "").replace(/\.$/, ".0");
+  // A trimmed mantissa can lose its point entirely ("2e-10" -> "2"); WGSL needs
+  // the decimal to type it as f32, not i32.
+  const typed = /[.]/.test(mantissa) ? mantissa : `${mantissa}.0`;
+  return m ? `${typed}${m[2]}` : typed;
 }
 
 // Walk stops at `stored` nodes: they are checkpoints already in scope (read from

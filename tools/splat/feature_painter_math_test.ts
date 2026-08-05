@@ -16,7 +16,9 @@ setupGlobals();
 
 const adapter = await (navigator as any).gpu.requestAdapter();
 if (!adapter) throw new Error("no WebGPU adapter");
-const device = await adapter.requestDevice();
+const device = await adapter.requestDevice({
+  requiredFeatures: adapter.features.has("subgroups" as GPUFeatureName) ? ["subgroups" as GPUFeatureName] : [],
+});
 
 function sceneParams(G: number, side: number): Float32Array {
   const p = new Float32Array(G * PARAM_STRIDE);
@@ -41,6 +43,12 @@ function sceneParams(G: number, side: number): Float32Array {
 function maxAbs(a: Float32Array, b: Float32Array): number {
   let out = 0;
   for (let i = 0; i < a.length; i++) out = Math.max(out, Math.abs(a[i] - b[i]));
+  return out;
+}
+
+function maxMagnitude(a: Float32Array): number {
+  let out = 0;
+  for (const value of a) out = Math.max(out, Math.abs(value));
   return out;
 }
 
@@ -78,8 +86,12 @@ await device.queue.onSubmittedWorkDone();
 const rgbGradient = await rgb.readGradRaw();
 const featureGradient = await feature.readGeometryGradient();
 const parityGradientError = maxAbs(rgbGradient, featureGradient);
-console.log(`feature8 RGB gradient parity max abs: ${parityGradientError.toExponential(3)}`);
-if (parityGradientError > 3e-5) throw new Error(`Feature8 zero-residual gradient drift ${parityGradientError}`);
+const parityGradientRelative = parityGradientError / Math.max(1e-4, maxMagnitude(rgbGradient));
+console.log(`feature8 RGB gradient parity max abs: ${parityGradientError.toExponential(3)} rel: ${parityGradientRelative.toExponential(3)}`);
+// RGB quantizes every contributing pixel; the subgroup painter quantizes one
+// partial per SIMD group. Both remain fixed-point paths, so their only allowed
+// difference is this bounded reduction-order rounding noise.
+if (parityGradientError > 2e-4) throw new Error(`Feature8 zero-residual gradient drift ${parityGradientError}`);
 rgb.destroy();
 feature.destroy();
 

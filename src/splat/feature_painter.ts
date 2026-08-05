@@ -31,10 +31,35 @@ import {
 const U = { MAP_READ: 1, COPY_SRC: 4, COPY_DST: 8, UNIFORM: 64, STORAGE: 128 };
 const WORKGROUP_SIZE = 256;
 const workgroups = (count: number): number => Math.ceil(count / WORKGROUP_SIZE);
-const FEATURE_LR = 0.025;
-const DECODER_LR = 0.03;
+export const FEATURE_LR = 0.025;
+export const DECODER_LR = 0.03;
+const DECODER_LATENT_SEGMENTS = [
+  { offset: 3, length: 5 },
+  { offset: 11, length: 5 },
+  { offset: 19, length: 5 },
+] as const;
 
 type Segment = { offset: number; length: number; lr: number };
+
+export interface FeaturePainterAppearanceRates {
+  feature?: number;
+  decoder?: number;
+}
+
+export interface FeaturePainterTimestampWrites {
+  querySet: GPUQuerySet;
+  beginningOfPassWriteIndex?: number;
+  endOfPassWriteIndex?: number;
+}
+
+function beginComputePass(
+  encoder: GPUCommandEncoder,
+  timestampWrites?: FeaturePainterTimestampWrites,
+): GPUComputePassEncoder {
+  return timestampWrites
+    ? encoder.beginComputePass({ timestampWrites } as GPUComputePassDescriptor)
+    : encoder.beginComputePass();
+}
 
 async function compute(device: GPUDevice, code: string, label: string): Promise<GPUComputePipeline> {
   device.pushErrorScope("validation");
@@ -73,6 +98,15 @@ function writeAdam(
 }
 
 export interface FeaturePainterConfig extends RasterConfig {}
+
+export interface FeaturePainterTileTelemetry {
+  meanCount: number;
+  maxCount: number;
+  meanStop: number;
+  maxStop: number;
+  overflowTiles: number;
+  overflowEntries: number;
+}
 
 /**
  * Compact feature rasterizer with exact RGB-skip initialization.
@@ -127,8 +161,8 @@ export class FeaturePainterEngine {
   private readonly geometryAdamGroups: GPUBindGroup[] = [];
   private readonly featureAdamUniform: GPUBuffer;
   private featureAdamGroup!: GPUBindGroup;
-  private readonly decoderAdamUniform: GPUBuffer;
-  private decoderAdamGroup!: GPUBindGroup;
+  private readonly decoderAdamUniforms: GPUBuffer[] = [];
+  private readonly decoderAdamGroups: GPUBindGroup[] = [];
   private readonly geometrySegments: Segment[];
 
   private constructor(device: GPUDevice, cfg: FeaturePainterConfig) {
@@ -147,9 +181,9 @@ export class FeaturePainterEngine {
     this.image = storage(3 * d.H * d.W, U.COPY_SRC);
     this.gradImage = storage(3 * d.H * d.W, U.COPY_DST);
     this.state = storage(d.G * FEATURE_STATE_STRIDE);
-    this.tileCounts = storage(d.numTiles, U.COPY_DST);
+    this.tileCounts = storage(d.numTiles, U.COPY_DST | U.COPY_SRC);
     this.binnedIds = storage(d.numTiles * d.cap);
-    this.tileStop = storage(d.numTiles);
+    this.tileStop = storage(d.numTiles, U.COPY_SRC);
     this.acc = storage(accCount, U.COPY_DST);
     this.gradGeom = storage(geomCount, U.COPY_SRC);
     this.geomM = storage(geomCount, U.COPY_DST);
@@ -162,7 +196,6 @@ export class FeaturePainterEngine {
     this.decoderV = storage(DECODER_PARAM_COUNT, U.COPY_DST);
 
     this.featureAdamUniform = adamUniform(device);
-    this.decoderAdamUniform = adamUniform(device);
     this.geometrySegments = [
       { offset: 0, length: 2 * d.G, lr: 0 },
       { offset: 2 * d.G, length: 2 * d.G, lr: 0 },
@@ -173,6 +206,9 @@ export class FeaturePainterEngine {
   }
 
   static async create(device: GPUDevice, cfg: FeaturePainterConfig): Promise<FeaturePainterEngine> {
+    if (!device.features.has("subgroups" as GPUFeatureName)) {
+      throw new Error("Feature Painter requires the WebGPU subgroups feature on this build");
+    }
     const engine = new FeaturePainterEngine(device, cfg);
     await engine.build(cfg);
     return engine;
@@ -183,7 +219,7 @@ export class FeaturePainterEngine {
     this.prepPipe = await compute(this.device, featurePrepShader(cfg), "feature8-prep");
     this.emitPipe = await compute(this.device, featureEmitShader(cfg), "feature8-emit");
     this.forwardPipe = await compute(this.device, featureForwardShader(cfg), "feature8-forward");
-    this.backwardPipe = await compute(this.device, featureBackwardShader(cfg), "feature8-backward");
+    this.backwardPipe = await compute(this.device, featureBackwardShader(cfg), "feature8-backward-subgroups");
     this.geometryChainPipe = await compute(this.device, featureGeometryChainShader(cfg), "feature8-geometry-chain");
     this.featureChainPipe = await compute(this.device, featureChainShader(cfg), "feature8-feature-chain");
     this.clearBinsPipe = await compute(this.device, clearShader(d.numTiles), "feature8-clear-bins");
@@ -232,16 +268,20 @@ export class FeaturePainterEngine {
         { binding: 4, resource: { buffer: this.featureV } },
       ],
     });
-    this.decoderAdamGroup = this.device.createBindGroup({
-      layout: this.adamPipe.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: this.decoderAdamUniform } },
-        { binding: 1, resource: { buffer: this.decoderParams } },
-        { binding: 2, resource: { buffer: this.gradDecoder } },
-        { binding: 3, resource: { buffer: this.decoderM } },
-        { binding: 4, resource: { buffer: this.decoderV } },
-      ],
-    });
+    for (const _segment of DECODER_LATENT_SEGMENTS) {
+      const uniform = adamUniform(this.device);
+      this.decoderAdamUniforms.push(uniform);
+      this.decoderAdamGroups.push(this.device.createBindGroup({
+        layout: this.adamPipe.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: uniform } },
+          { binding: 1, resource: { buffer: this.decoderParams } },
+          { binding: 2, resource: { buffer: this.gradDecoder } },
+          { binding: 3, resource: { buffer: this.decoderM } },
+          { binding: 4, resource: { buffer: this.decoderV } },
+        ],
+      }));
+    }
   }
 
   setParams(data: Float32Array): void {
@@ -276,6 +316,18 @@ export class FeaturePainterEngine {
     return out;
   }
 
+  private async readU32(buffer: GPUBuffer, count: number): Promise<Uint32Array> {
+    const staging = this.device.createBuffer({ size: count * 4, usage: U.MAP_READ | U.COPY_DST });
+    const encoder = this.device.createCommandEncoder();
+    encoder.copyBufferToBuffer(buffer, 0, staging, 0, count * 4);
+    this.device.queue.submit([encoder.finish()]);
+    await staging.mapAsync(GPUMapMode.READ);
+    const out = new Uint32Array(staging.getMappedRange().slice(0));
+    staging.unmap();
+    staging.destroy();
+    return out;
+  }
+
   readParams(): Promise<Float32Array> { return this.read(this.params, this.dims.G * PARAM_STRIDE); }
   readFeatureParams(): Promise<Float32Array> { return this.read(this.featureParams, this.dims.G * FEATURE_STRIDE); }
   readDecoderParams(): Promise<Float32Array> { return this.read(this.decoderParams, DECODER_PARAM_COUNT); }
@@ -283,6 +335,37 @@ export class FeaturePainterEngine {
   readFeatureGradient(): Promise<Float32Array> { return this.read(this.gradFeature, this.dims.G * FEATURE_STRIDE); }
   readDecoderGradient(): Promise<Float32Array> { return this.read(this.gradDecoder, DECODER_PARAM_COUNT); }
   readImage(): Promise<Float32Array> { return this.read(this.image, 3 * this.dims.H * this.dims.W); }
+
+  async readTileTelemetry(): Promise<FeaturePainterTileTelemetry> {
+    const counts = await this.readU32(this.tileCounts, this.dims.numTiles);
+    const stops = await this.readU32(this.tileStop, this.dims.numTiles);
+    let countSum = 0;
+    let stopSum = 0;
+    let maxCount = 0;
+    let maxStop = 0;
+    let overflowTiles = 0;
+    let overflowEntries = 0;
+    for (let tile = 0; tile < this.dims.numTiles; tile++) {
+      const count = counts[tile];
+      const stop = stops[tile];
+      countSum += count;
+      stopSum += stop;
+      maxCount = Math.max(maxCount, count);
+      maxStop = Math.max(maxStop, stop);
+      if (count > this.dims.cap) {
+        overflowTiles++;
+        overflowEntries += count - this.dims.cap;
+      }
+    }
+    return {
+      meanCount: countSum / this.dims.numTiles,
+      maxCount,
+      meanStop: stopSum / this.dims.numTiles,
+      maxStop,
+      overflowTiles,
+      overflowEntries,
+    };
+  }
 
   zeroAdamState(): void {
     const zeros = (count: number): Float32Array => new Float32Array(count);
@@ -294,8 +377,8 @@ export class FeaturePainterEngine {
     this.device.queue.writeBuffer(this.decoderM, 0, decoder as unknown as BufferSource); this.device.queue.writeBuffer(this.decoderV, 0, decoder as unknown as BufferSource);
   }
 
-  recordForward(encoder: GPUCommandEncoder): void {
-    const pass = encoder.beginComputePass();
+  recordForward(encoder: GPUCommandEncoder, timestampWrites?: FeaturePainterTimestampWrites): void {
+    const pass = beginComputePass(encoder, timestampWrites);
     pass.setPipeline(this.prepPipe); pass.setBindGroup(0, this.prepBind); pass.dispatchWorkgroups(workgroups(this.dims.G));
     pass.setPipeline(this.clearBinsPipe); pass.setBindGroup(0, this.clearBinsBind); pass.dispatchWorkgroups(workgroups(this.dims.numTiles));
     pass.setPipeline(this.emitPipe); pass.setBindGroup(0, this.emitBind); pass.dispatchWorkgroups(workgroups(this.dims.G));
@@ -303,8 +386,8 @@ export class FeaturePainterEngine {
     pass.end();
   }
 
-  recordBackward(encoder: GPUCommandEncoder): void {
-    const pass = encoder.beginComputePass();
+  recordBackward(encoder: GPUCommandEncoder, timestampWrites?: FeaturePainterTimestampWrites): void {
+    const pass = beginComputePass(encoder, timestampWrites);
     pass.setPipeline(this.clearAccPipe); pass.setBindGroup(0, this.clearAccBind);
     pass.dispatchWorkgroups(workgroups(this.dims.G * FEATURE_ACC_STRIDE + DECODER_PARAM_COUNT));
     pass.setPipeline(this.backwardPipe); pass.setBindGroup(0, this.backwardBind); pass.dispatchWorkgroups(this.dims.numTiles);
@@ -313,21 +396,33 @@ export class FeaturePainterEngine {
     pass.end();
   }
 
-  recordAdam(encoder: GPUCommandEncoder, step: number, lrs: AdamLRs, hyper: AdamHyper = DEFAULT_HYPER): void {
+  recordAdam(
+    encoder: GPUCommandEncoder,
+    step: number,
+    lrs: AdamLRs,
+    hyper: AdamHyper = DEFAULT_HYPER,
+    timestampWrites?: FeaturePainterTimestampWrites,
+    appearance: FeaturePainterAppearanceRates = {},
+  ): void {
     const lrsBySegment = [lrs.mean, lrs.logScale, lrs.theta, lrs.color, lrs.opacity];
     this.geometrySegments.forEach((segment, index) => {
       writeAdam(this.device, this.geometryAdamUniforms[index], segment.offset, segment.length, lrsBySegment[index], step, hyper);
     });
-    writeAdam(this.device, this.featureAdamUniform, 0, this.dims.G * FEATURE_STRIDE, FEATURE_LR, step, hyper);
-    writeAdam(this.device, this.decoderAdamUniform, 0, DECODER_PARAM_COUNT, DECODER_LR, step, hyper);
-    const pass = encoder.beginComputePass();
+    writeAdam(this.device, this.featureAdamUniform, 0, this.dims.G * FEATURE_STRIDE, appearance.feature ?? FEATURE_LR, step, hyper);
+    DECODER_LATENT_SEGMENTS.forEach((segment, index) => {
+      writeAdam(this.device, this.decoderAdamUniforms[index], segment.offset, segment.length, appearance.decoder ?? DECODER_LR, step, hyper);
+    });
+    const pass = beginComputePass(encoder, timestampWrites);
     pass.setPipeline(this.adamPipe);
     this.geometrySegments.forEach((segment, index) => {
       pass.setBindGroup(0, this.geometryAdamGroups[index]);
       pass.dispatchWorkgroups(workgroups(segment.length));
     });
     pass.setBindGroup(0, this.featureAdamGroup); pass.dispatchWorkgroups(workgroups(this.dims.G * FEATURE_STRIDE));
-    pass.setBindGroup(0, this.decoderAdamGroup); pass.dispatchWorkgroups(workgroups(DECODER_PARAM_COUNT));
+    this.decoderAdamGroups.forEach((group, index) => {
+      pass.setBindGroup(0, group);
+      pass.dispatchWorkgroups(workgroups(DECODER_LATENT_SEGMENTS[index].length));
+    });
     pass.end();
   }
 
@@ -342,7 +437,7 @@ export class FeaturePainterEngine {
       this.params, this.featureParams, this.decoderParams, this.image, this.gradImage, this.state,
       this.tileCounts, this.binnedIds, this.tileStop, this.acc, this.gradGeom, this.geomM, this.geomV,
       this.gradFeature, this.featureM, this.featureV, this.gradDecoder, this.decoderM, this.decoderV,
-      this.featureAdamUniform, this.decoderAdamUniform, ...this.geometryAdamUniforms,
+      this.featureAdamUniform, ...this.decoderAdamUniforms, ...this.geometryAdamUniforms,
     ];
     for (const buffer of buffers) {
       try { buffer.destroy(); } catch { /* already released */ }

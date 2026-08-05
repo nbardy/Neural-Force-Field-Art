@@ -111,3 +111,25 @@ Backward pieces (a = post-activation; derivatives from post-acts only):
   PRNG), owns m/v/step, exposes step(seed, alpha, lr, K); advect kernel gains
   a constructor option to read an external weights buffer instead of syncing.
 - `tools/train_test.ts` — fixture comparison + loss-curve tracking + bench.
+
+## External gradient seam (`extGradBuffer`) — added 2026-07-28
+
+Pass B takes an optional 7th binding: `extGrad : array<f32>`, one float per
+packed FIELD weight, added into `g` immediately before Adam
+(`train_wgsl.ts`, gated on `TrainPassBOpts.extGrad` — a CODEGEN flag, so the
+shader has no runtime branch and no dead binding when nothing supplies it).
+
+Today's only producer is the fused adversary's generator reward
+(`adversary_wgsl.ts::fieldGrad` → `AdversaryTrainer.extGradsBuf`, handed to
+`new FusedTrainer(..., { extGradBuffer })`). Contract for any future producer:
+
+- **Overwrite, never accumulate.** `fieldGrad` writes `extGrads[t] = g` every
+  step, so a disabled reward (genSeed 0) writes exact zeros instead of leaving a
+  stale gradient. Two producers would need an explicit accumulate pass.
+- **Record the producer BEFORE the field's step in the same encoder.** Dispatch
+  boundaries are the only barriers; ordering within one encoder is the
+  guarantee.
+- **Gate it.** `tools/train_wta_test.ts` §5 asserts
+  `grads(with seam) − grads(without seam) ≡ extGrads` (cos 1.000000) AND that
+  the two weight sets stay bit-identical when only the other one trains. Copy
+  that pair of checks for any new producer.

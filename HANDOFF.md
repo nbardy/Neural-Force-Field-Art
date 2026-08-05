@@ -25,8 +25,10 @@ Live: **https://nbardy.github.io/Neural-Force-Field-Art/** · `main` @ deploy is
 
 > **SESSION WRAP (2026-07-07): the whole engine is now fused + fast + shipped.**
 > Both Phase 1 (advect) AND Phase 2 (train) are DONE, plus a new render path.
-> Headline: **1,000,000 particles @ 60 FPS in-browser, including on retina**
-> (dpr 2). Full state below; the design map for what's next is
+> Recorded headline for the named July benchmark configuration:
+> **1,000,000 particles @ 60 FPS in-browser, including on retina** (dpr 2).
+> This is not a universal promise for every renderer, adversary, resolution or
+> GPU. Full state below; the design map for what's next is
 > `docs/DESIGN_SPACE_PARTICLE_ART.md`.
 >
 > - **Fused advect** (`render/webgpu/advect{,_wgsl}.ts`): 1 dispatch; f16 fast
@@ -35,8 +37,9 @@ Live: **https://nbardy.github.io/Neural-Force-Field-Art/** · `main` @ deploy is
 >   in 2 dispatches; grads ≡ tfjs autograd (cos 1.0000000). K-step rollouts
 >   (`?rollout=K`), particle-sourced batches (real pos+vel; default), `?mix=F`,
 >   `?window=K` (= trajectory-window, proven ≡ real advected path to 6e-5 px),
->   `?trainEvery=N`. Multi-species classes (chaos head `r(pos, onehot(c))`,
->   storage-free class hash; "Helmholtz · Species" piece).
+>   `?trainEvery=N`. Multi-species classes (class-conditioned direct-vector head
+>   1, storage-free class hash; "Neural Field · Species" piece). The head index
+>   is an input-routing role, not an intrinsic chaos identity.
 > - **Compute-splat renderer** (`render/webgpu/splat.ts`): atomic accumulation
 >   + fused-decay tonemap; radial cone dots (round, not squares), retina/dpr,
 >   ghost trails via decay, per-class hues. Default renderer at all counts;
@@ -58,6 +61,16 @@ Live: **https://nbardy.github.io/Neural-Force-Field-Art/** · `main` @ deploy is
 >   timestamp-query (features are creation-time-only; see main.ts top).
 >
 > The older Phase-1/Phase-2 narrative below is retained for the reasoning/traps.
+
+> **CURRENT CORRECTION (2026-07-29).** The Phase-1/Phase-2 prose below is
+> historical and no longer describes the active hot path. Field training and
+> supported adversaries have fused WGSL implementations. The internal
+> `HelmholtzField` name is compatibility terminology: the current field is two
+> direct-vector MLP heads with a neutral output blend, not an exact
+> potential/curl decomposition and not an intrinsic order/chaos axis. Chaos is
+> selected through the explicit field-loss specification. See
+> `docs/ADVERSARY_STATUS.md` for the current adversarial contract and
+> `docs/PLAN_RELATIONAL_ADVERSARY.md` for its math.
 
 This doc is the pick-up point. It covers (1) where the engine is now — **Phase 1
 (the fused ADVECT WGSL kernel) is SHIPPED and verified** — (2) the perf mental
@@ -113,7 +126,9 @@ defaults to **200k particles** with a **log-scale slider up to 1M**
   (zero imports, testable headless).
 - `src/render/webgpu/advect.ts` — **AdvectKernel**, the tfjs-coupled half: owns the
   pos/vel buffers, the per-frame weight sync, the one dispatch.
-- `src/core/field/helmholtz.ts` — the order↔chaos field.
+- `src/core/field/helmholtz.ts` — compatibility-named two-head direct-vector
+  field with a neutral output blend; chaos/order are loss choices, not head
+  identities (see the current correction above).
 - `src/core/losses/*` — isotropy / chaos / divergence / spectrum.
 - `src/render/webgpu/{microgpu.ts,points.ts}` — WebGPU microlib + renderer
   (`renderFromBuffers`).
@@ -305,3 +320,53 @@ suites.
 - Watch the *output*, not just the step time (AlphaGOJS "fast-but-plateaus").
 - Every kernel change: run **both** headless suites (`kernel_test` + `integration_test`)
   and `tools/smoke.mjs` for a real browser screenshot before pushing.
+
+## Adversary subsystem (re-audited 2026-07-29)
+
+New suites — none run automatically; run them when touching `src/core/gan/`,
+the surprise renderer, or the adversary wiring in `main.ts`:
+
+```
+rtk bun tools/adversary_test.ts            # reference math, encodings, WTA
+rtk bun tools/adversary_objectives_test.ts # all objective families + force/post-velocity targets
+rtk bun tools/ad_wta_test.ts               # AD oracle + emitted-WGSL checks
+rtk bun tools/train_wta_test.ts            # production fused WGSL parity and separation
+rtk bun tools/adversary_wire_test.ts       # URL/UI/runtime routing + physics target checks
+rtk bun tools/surprise_test.ts             # colormaps + real-GPU render check
+node tools/qa_adversary.mjs http://localhost:1234/index.html <outdir>  # headless piece drive + screenshots
+```
+
+The adversary has two independent target choices. `force` predicts raw `F(x)`,
+before force magnitude, integration, velocity clipping and borders.
+`post-velocity` predicts the normalized velocity after force, friction and
+componentwise clipping but before borders/reset, and its point observer sees
+both position and incoming velocity. Relational post-velocity modes are rejected
+until the world-axis clip is made rotationally equivariant.
+
+The loss choice is independent of the target: `raw-vector`, `soft-angle`,
+`angle-relative-scale`, or `angle-scale-hold`. Soft angle embeds each 2-vector
+on a smooth sphere and differentiates that scalar loss exactly; it is not a
+custom or capped surrogate gradient. Relative scale uses within-tuple centered
+log magnitudes (or the pair contrast), so uniform magnitude inflation produces
+no scale surprise. `angle-scale-hold` is intentionally general-sum: the field
+opposes direction prediction but cooperates on scale prediction. The fixed RMS
+energy term is a generator-only anchor, not part of the predictor objective.
+
+`pair-rotation-scale-adjusted` is now only a compatibility name for the
+scale-blind pair geometry. It does not pre-normalize by pair force difference
+and has no hidden `1/|F_2-F_1|` tangent Jacobian; the explicit loss selector owns
+the objective. The EMA of RMS‖y‖ remains a tuning stabilizer for raw-vector
+modes, not a proof of scale invariance.
+
+`quad-labelled` is the supported four-point experiment: labels are semantic,
+member 0 anchors and member 1 defines the frame. It deliberately makes no
+permutation-invariance claim. A skewed win histogram plus separated predictions
+is reported as `separated-unresolved`, never guessed to mean `K > modes`.
+
+The bottom UI strip remains the art-piece radio. All `LoopHandle` live controls
+are in the compact top-right dock; border, observer, K and epsilon are marked as
+restart/compile-time controls. Agree+Disagree reserves RGB for A/B/derived-C.
+
+Before release, run the complete matrix listed in
+`docs/ADVERSARY_STATUS.md`, then real-browser QA and a long NaN/magnitude soak.
+Short kernel parity tests do not establish long-run adversarial stability.

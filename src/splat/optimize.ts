@@ -95,6 +95,18 @@ export interface SplatNudgeOptions {
 
 export const DEFAULT_NUDGE_AMOUNT = 0.18;
 
+/** Deterministically select which full splat candidates a nudge replaces. */
+export function nudgeSplatMask(G: number, seed = 1, amount = DEFAULT_NUDGE_AMOUNT): Uint32Array {
+  const t = Math.max(0, Math.min(1, amount));
+  const mask = new Uint32Array(G);
+  let state = (seed ^ 0x85ebca6b) >>> 0 || 1;
+  for (let g = 0; g < G; g++) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    mask[g] = state / 4294967296 < t ? 1 : 0;
+  }
+  return mask;
+}
+
 export class SplatOptimizer {
   readonly device: GPUDevice;
   readonly raster: RasterEngine;
@@ -170,10 +182,10 @@ export class SplatOptimizer {
     return this.step_;
   }
 
-  /** Partial re-randomization of the current splats. The CLIP resources and
-   *  prompt stay alive, but Adam's old momentum is deliberately discarded:
-   *  retaining it makes a visible nudge drift straight back to the previous
-   *  basin rather than explore a new one. */
+/** Sparse candidate replacement of the current splats. The CLIP resources and
+ * prompt stay alive, but Adam's old momentum is deliberately discarded:
+ * retaining it makes fresh candidates drift straight back to the prior basin.
+ */
   async nudge(opts: SplatNudgeOptions = {}): Promise<void> {
     const G = this.raster.dims.G;
     const params = await this.raster.readParams();
@@ -271,55 +283,30 @@ export function nudgeSplats(
   G: number,
   seed = 1,
   amount = DEFAULT_NUDGE_AMOUNT,
-  init: SplatInit = {}
+  init: SplatInit = {},
+  selection: Uint32Array = nudgeSplatMask(G, seed, amount),
 ): Float32Array {
   if (params.length !== G * PARAM_STRIDE) throw new Error("nudgeSplats: wrong param length");
-  const t = clamp(amount, 0, 1);
-  if (t === 0) return params;
+  if (selection.length !== G) throw new Error("nudgeSplats: wrong selection length");
   const fresh = randomSplats(G, seed, init);
-  const meanOff = 0;
-  const lsOff = 2 * G;
-  const thetaOff = 4 * G;
-  const colOff = 5 * G;
-  const opOff = 8 * G;
-  const logMin = Math.log(0.3);
-  const logMax = Math.log(64);
+  const segments: Array<[number, number]> = [
+    [0, 2],
+    [2 * G, 2],
+    [4 * G, 1],
+    [5 * G, 3],
+    [8 * G, 1],
+  ];
 
+  // Replacing a subset creates actual new candidates in unused parts of the
+  // canvas. Interpolating every splat only makes the same configuration wiggle.
   for (let g = 0; g < G; g++) {
-    const mi = meanOff + g * 2;
-    params[mi + 0] = clamp(lerp(params[mi + 0], fresh[mi + 0], t), 0, SIDE);
-    params[mi + 1] = clamp(lerp(params[mi + 1], fresh[mi + 1], t), 0, SIDE);
-
-    const li = lsOff + g * 2;
-    params[li + 0] = clamp(lerp(params[li + 0], fresh[li + 0], t), logMin, logMax);
-    params[li + 1] = clamp(lerp(params[li + 1], fresh[li + 1], t), logMin, logMax);
-
-    const ti = thetaOff + g;
-    params[ti] = blendAngle(params[ti], fresh[ti], t);
-
-    const ci = colOff + g * 3;
-    params[ci + 0] = lerp(params[ci + 0], fresh[ci + 0], t);
-    params[ci + 1] = lerp(params[ci + 1], fresh[ci + 1], t);
-    params[ci + 2] = lerp(params[ci + 2], fresh[ci + 2], t);
-
-    const oi = opOff + g;
-    params[oi] = lerp(params[oi], fresh[oi], t);
+    if (selection[g] === 0) continue;
+    for (const [offset, width] of segments) {
+      const index = offset + g * width;
+      params.set(fresh.subarray(index, index + width), index);
+    }
   }
   return params;
-}
-
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
-}
-
-function clamp(x: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, x));
-}
-
-function blendAngle(a: number, b: number, t: number): number {
-  const tau = Math.PI * 2;
-  const d = ((((b - a) + Math.PI) % tau) + tau) % tau - Math.PI;
-  return a + d * t;
 }
 
 // small readback helper (kept local — RasterEngine's is private, and the CLIP

@@ -16,7 +16,7 @@
  */
 import { Graph, type Node } from "../src/render/webgpu/ad/ir";
 import { evalNode, grad } from "../src/render/webgpu/ad/autodiff";
-import { emitWGSL, countTranscendentals } from "../src/render/webgpu/ad/emit_wgsl";
+import { emitWGSL, countTranscendentals, f32lit } from "../src/render/webgpu/ad/emit_wgsl";
 
 let failures = 0;
 const ok = (cond: boolean, msg: string) => {
@@ -227,6 +227,42 @@ checkHead(
   console.log("\n  --- generated standard-head input-gradient WGSL (excerpt) ---");
   console.log(code.split("\n").slice(0, 8).map((l) => "  " + l).join("\n"));
   console.log(`  ... (${lineCount} lines total)\n`);
+}
+
+// --------------------------------------------------------------------------
+// 3. f32lit round-trip — REGRESSION GUARD (bug found & fixed 2026-07-27)
+//
+// f32lit used to be `v.toPrecision(9).replace(/0+$/, "")`, which strips trailing
+// zeros off the END OF THE STRING and therefore out of the EXPONENT:
+//   1e-10 -> "1.00000000e-1" (= 0.1, wrong by 1e9), 1e-20 -> 0.01, 3e-30 -> 0.003.
+// Only exponents ENDING IN 0 are corrupted, so every constant in use at the time
+// (1e-4, 1e-6, 1e-9, 1e-12, 1.4142, 2*pi*k) survived and the bug stayed invisible.
+//
+// This guard matters more than a normal literal test because f32lit is on the
+// WGSL path ONLY. The pure-JS oracle above never calls it, so a regression here
+// keeps every gradient check at cos=1.0 while the GPU silently minimizes a
+// DIFFERENT loss. Nothing else in the suite can catch that.
+//
+// What re-breaks it: any "simplification" of f32lit back to a single trailing-zero
+// strip, or dropping the mantissa/exponent split.
+{
+  const cases = [
+    1e-10, 2e-10, 1e-20, 3e-30, 5e-8, // exponents ending in 0 — the actual bug
+    1e-4, 1e-6, 1e-9, 1e-12, 1.4142, 0.05, 6.2831853, 2 / 3, // must stay correct
+    -1e-10, 0, 1, 1e21, // sign, zero, integer, and the exponential-integer edge
+  ];
+  let worstRel = 0;
+  let allTyped = true;
+  for (const v of cases) {
+    const s = f32lit(v);
+    // WGSL types a bare digit string as i32 — every emitted literal needs a point.
+    if (!s.includes(".")) { allTyped = false; console.log(`       ${v} -> ${s} (no decimal point)`); }
+    const rel = v === 0 ? Math.abs(Number(s)) : Math.abs(Number(s) - v) / Math.abs(v);
+    if (!(rel <= 1e-8)) console.log(`       ${v} -> ${s} (parses as ${Number(s)})`);
+    worstRel = Math.max(worstRel, rel);
+  }
+  ok(worstRel <= 1e-8, `f32lit round-trips all ${cases.length} literals (worst rel err ${worstRel.toExponential(2)})`);
+  ok(allTyped, "f32lit always emits a decimal point (WGSL f32, not i32)");
 }
 
 console.log(failures === 0 ? "\nALL AD CHECKS PASS" : `\n${failures} AD CHECK(S) FAILED`);
