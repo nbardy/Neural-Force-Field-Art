@@ -111,6 +111,10 @@ export interface HelmholtzFieldConfig {
    * tfjs fixtures on Metal at cos=1.0, tools/train_types_test.ts) and advect
    * via the fused forward kernel. `?train=tfjs` selects this class's autograd
    * path instead, for A/B comparison.
+   *
+   * Prefer declarative {@link import("./arch").FieldArch} +
+   * {@link import("./arch").createFieldFromArch} at gallery sites — this
+   * config is the runtime shape those helpers produce.
    */
   modelType?: "standard" | "siren" | "fourier" | "hashgrid";
   /** SIREN first-layer frequency (folded into weights). Default 6. */
@@ -121,6 +125,16 @@ export interface HelmholtzFieldConfig {
   gridSize?: number;
   /** Hashgrid features per cell (encDim). Default 4. */
   gridFeatures?: number;
+  /**
+   * Number of vector heads. `1` = single MLP (`vector` fused layout). `2` =
+   * blend. Default 2.
+   */
+  heads?: 1 | 2;
+  /**
+   * Hidden activation family. Default: `"sin"` when modelType is `"siren"`,
+   * else `"selu"`. Set `"sin"` with `modelType: "fourier"` for Fourier+SIREN.
+   */
+  hiddenAct?: "selu" | "sin";
 }
 
 /**
@@ -202,16 +216,20 @@ export class HelmholtzField implements ForceField {
   /** Multi-species class count (0 = classless). Immutable. */
   readonly classes: number;
   readonly semantic: "blend" | "agree-disagree";
+  /** 1 = single-head (α forced 0 in forces); 2 = blend. */
+  readonly headCount: 1 | 2;
 
   /** First direct-vector head A. */
   private readonly g: tf.Sequential;
-  /** Second direct-vector head B. */
-  private readonly r: tf.Sequential;
+  /** Second direct-vector head B — null when {@link headCount} is 1. */
+  private readonly r: tf.Sequential | null;
 
   private readonly weights: tf.Variable[];
 
   /** Selectable architecture — see {@link HelmholtzFieldConfig.modelType}. */
   readonly modelType: "standard" | "siren" | "fourier" | "hashgrid";
+  /** Effective hidden activation (may be sin on a fourier encoding). */
+  private readonly hiddenAct: "selu" | "sin";
   readonly sirenOmega0: number;
   readonly fourierOctaves: number;
   readonly gridSize: number;
@@ -229,23 +247,34 @@ export class HelmholtzField implements ForceField {
     fourierOctaves = 4,
     gridSize = 32,
     gridFeatures = 4,
+    heads = 2,
+    hiddenAct,
   }: HelmholtzFieldConfig) {
-    this.alpha = alpha;
+    this.headCount = heads === 1 ? 1 : 2;
+    this.alpha = this.headCount === 1 ? 0 : alpha;
     this.semantic = semantic;
     this.classes = classes;
     this.modelType = modelType;
+    this.hiddenAct =
+      hiddenAct ?? (modelType === "siren" ? "sin" : "selu");
     this.sirenOmega0 = sirenOmega0;
     this.fourierOctaves = fourierOctaves;
     this.gridSize = gridSize;
     this.gridFeatures = gridFeatures;
-    if (modelType !== "standard" && classes > 0) {
+    if (modelType === "hashgrid" && this.hiddenAct === "sin") {
+      throw new Error(`HelmholtzField: hashgrid + sin not supported`);
+    }
+    if (modelType !== "standard" && modelType !== "siren" && classes > 0) {
       throw new Error(`HelmholtzField: ${modelType} + classes not supported yet`);
     }
-    // Per-head input dim by encoding: Fourier expands [x,y]→γ(p); hashgrid's
-    // input is the interpolated feature vector. For the species experiment,
-    // direct-vector head 1 also carries the class one-hot
-    // (standard/SIREN only); this is an input-routing choice, not a
-    // "chaos-head" identity.
+    if (this.headCount === 1 && classes > 0) {
+      throw new Error("HelmholtzField: single-head + classes not supported");
+    }
+    if (this.headCount === 1 && semantic === "agree-disagree") {
+      throw new Error(
+        "HelmholtzField: agree-disagree requires two heads"
+      );
+    }
     const encIn =
       modelType === "fourier"
         ? fourierDim(fourierOctaves)
@@ -253,38 +282,30 @@ export class HelmholtzField implements ForceField {
         ? gridFeatures
         : 2;
     if (modelType === "hashgrid") {
-      // learned grid, listed FIRST in trainableWeights to match the packed
-      // "grid" segment at offset 0 in the advect weights buffer.
       this.grid = tf.variable(
         tf.randomUniform([gridSize * gridSize, gridFeatures], -0.1, 0.1)
       );
     }
-    if (modelType === "siren") {
-      this.g = makeSirenNet(hiddenUnits, encIn, sirenOmega0);
-      this.r = makeSirenNet(hiddenUnits, encIn + classes, sirenOmega0);
-    } else {
-      this.g = makeVectorNet(hiddenUnits, encIn);
-      this.r = makeVectorNet(hiddenUnits, encIn + classes);
-    }
+    const makeNet = (inDim: number) =>
+      this.hiddenAct === "sin"
+        ? makeSirenNet(hiddenUnits, inDim, sirenOmega0)
+        : makeVectorNet(hiddenUnits, inDim);
+    this.g = makeNet(encIn);
+    this.r =
+      this.headCount === 1 ? null : makeNet(encIn + classes);
 
-    // LayerVariable.val is the underlying tf.Variable (protected in the
-    // typings). We expose the real Variables so the integrator can hand
-    // them to optimizer.minimize as an explicit varList. GRID FIRST for
-    // hashgrid (matches the packed-buffer segment order).
     const collect = (net: tf.Sequential): tf.Variable[] =>
       net.trainableWeights.map((w) => (w as any).val as tf.Variable);
     this.weights = [
       ...(this.grid ? [this.grid] : []),
       ...collect(this.g),
-      ...collect(this.r),
+      ...(this.r ? collect(this.r) : []),
     ];
   }
 
-  /** Hidden-layer activation the advect kernel should generate for this type
-   *  (SIREN builds LINEAR tf layers + applies sin manually, so the tf config
-   *  can't be trusted — the field declares it). */
+  /** Hidden-layer activation the advect kernel should generate for this type. */
   get hiddenActivation(): "selu" | "sin" {
-    return this.modelType === "siren" ? "sin" : "selu";
+    return this.hiddenAct;
   }
 
   get trainableWeights(): tf.Variable[] {
@@ -292,12 +313,10 @@ export class HelmholtzField implements ForceField {
   }
 
   /**
-   * The two vector heads `[g, r]` — read-only structural access so the fused
-   * advect kernel (src/render/webgpu/advect.ts) can generate WGSL matching
-   * the live architecture instead of hardcoding dims.
+   * The vector heads — length 1 or 2. Fused codegen reads this for layout.
    */
-  get heads(): [tf.Sequential, tf.Sequential] {
-    return [this.g, this.r];
+  get heads(): tf.Sequential[] {
+    return this.r ? [this.g, this.r] : [this.g];
   }
 
   /**
@@ -329,6 +348,9 @@ export class HelmholtzField implements ForceField {
           ? this.gridInterp(posNorm)
           : posNorm;
       const gVec = this.evalHead(this.g, enc);
+      if (this.headCount === 1 || !this.r) {
+        return gVec as tf.Tensor2D;
+      }
       const rVec = this.evalHead(this.r, enc);
       const a = this.alpha;
       return gVec.mul(1 - a).add(rVec.mul(a)) as tf.Tensor2D;
@@ -346,7 +368,7 @@ export class HelmholtzField implements ForceField {
         : this.modelType === "hashgrid"
         ? this.gridInterp(posNorm)
         : posNorm;
-    return [this.evalHead(this.g, enc), this.evalHead(this.r, enc)];
+    return [this.evalHead(this.g, enc), this.evalHead(this.r!, enc)];
   }
 
   /** Bilinear interpolation of the learned feature grid — the SAME row-major
@@ -386,10 +408,9 @@ export class HelmholtzField implements ForceField {
     });
   }
 
-  /** Forward one head: standard/fourier use the built-in selu/tanh via
-   *  predict(); SIREN applies sin to hidden layers + tanh to the output. */
+  /** Forward one head: selu/tanh via predict(); SIREN applies sin + tanh. */
   private evalHead(net: tf.Sequential, input: tf.Tensor2D): tf.Tensor2D {
-    if (this.modelType !== "siren") {
+    if (this.hiddenAct !== "sin") {
       return net.predict(input) as tf.Tensor2D;
     }
     let h: tf.Tensor = input;
@@ -403,7 +424,7 @@ export class HelmholtzField implements ForceField {
 
   dispose(): void {
     this.g.dispose();
-    this.r.dispose();
+    this.r?.dispose();
     this.grid?.dispose();
   }
 }

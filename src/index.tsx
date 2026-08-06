@@ -10,15 +10,24 @@ import { createRoot } from "react-dom/client";
 import {
   ADVERSARY_WEIGHT_RANGE,
   ADVERSARY_OBJECTIVE_DEFAULTS,
+  ARCH,
+  applyArchDockPreset,
+  archDockPresets,
   GALLERY,
   GAME_LEARNING_RATE_RANGE,
+  INK_LOOK_DECAY,
   adversaryLossOf,
   adversaryTargetOf,
+  describeFieldArch,
+  inkLookFromRenderer,
+  isArchPresetKey,
   resolveAdversary,
   startLoop,
   type AdversaryTelemetry,
+  type ArchPresetKey,
   type ColorMode,
   type HeadHealth,
+  type InkLook,
   type LoopHandle,
 } from "./main";
 import type {
@@ -57,6 +66,8 @@ interface RuntimeConfig {
   adversaryKind: "off" | "single" | "wta";
   k: number;
   relaxEps: number;
+  /** Dock override for archEditable pieces; null = piece default fieldArch. */
+  archPreset: ArchPresetKey | null;
 }
 
 type AdversaryLossTag = AdversaryLoss["tag"];
@@ -136,6 +147,7 @@ function defaultsForPiece(piece: number): RuntimeConfig {
     adversaryKind: adv.tag === "on" ? adv.kind.tag : "off",
     k: adv.tag === "on" && adv.kind.tag === "wta" ? adv.kind.k : 1,
     relaxEps: adv.tag === "on" && adv.kind.tag === "wta" ? adv.kind.relaxEps : 0,
+    archPreset: null,
   };
 }
 
@@ -413,6 +425,7 @@ function App(): ReactElement {
   const [discriminatorLearningRate, setDiscriminatorLearningRate] = useState(3e-3);
   const [resetRate, setResetRate] = useState(0.01);
   const [decay, setDecay] = useState(0);
+  const [look, setLook] = useState<InkLook>("ghost");
   const [blend, setBlend] = useState(0.5);
   const [strokeStyle, setStrokeStyle] = useState<SplatStyle>("dot");
   const [strokeLength, setStrokeLength] = useState(3);
@@ -430,7 +443,17 @@ function App(): ReactElement {
 
   const piece = GALLERY[runtime.piece];
   const adversary = runtime.adversaryKind !== "off";
-  const hasField = !!piece.createField;
+  const dockPresets = archDockPresets(piece.archDock ?? "aesthetic");
+  const activeArch = (() => {
+    if (!piece.fieldArch) return null;
+    if (runtime.archPreset && isArchPresetKey(runtime.archPreset)) {
+      return applyArchDockPreset(piece.fieldArch, ARCH[runtime.archPreset]);
+    }
+    return piece.fieldArch;
+  })();
+  const showHeadBlend =
+    (activeArch?.heads ?? piece.fieldArch?.heads ?? (piece.createField ? 2 : 1)) ===
+    2;
   const isAgreeDisagree = piece.mode === "agree-disagree";
   const isWta = runtime.adversaryKind === "wta";
   const hasStructuralFieldLoss =
@@ -438,7 +461,9 @@ function App(): ReactElement {
     (piece.fieldLoss.W_CHAOS !== 0 ||
       piece.fieldLoss.W_ISO !== 0 ||
       piece.fieldLoss.W_DIV !== 0 ||
-      piece.fieldLoss.W_SPIRAL !== 0);
+      piece.fieldLoss.W_SPIRAL !== 0 ||
+      (piece.fieldLoss.W_COVER ?? 0) !== 0 ||
+      (piece.fieldLoss.W_CENTER ?? 0) !== 0);
   const relationalView = viewForEncoding(runtime.encoding);
 
   useLayoutEffect(() => {
@@ -482,6 +507,7 @@ function App(): ReactElement {
           setDiscriminatorLearningRate(handle.getDiscriminatorLearningRate());
           setResetRate(handle.getResetRate());
           setDecay(handle.getDecay());
+          setLook(inkLookFromRenderer(piece.renderer));
           setBlend(handle.getBlend());
           setStrokeStyle(handle.getStrokeStyle());
           setStrokeLength(handle.getStrokeLength());
@@ -498,6 +524,7 @@ function App(): ReactElement {
           adversaryLoss: runtime.loss,
           k: runtime.k,
           relaxEps: runtime.relaxEps,
+          fieldArch: activeArch ?? undefined,
         },
       }
     );
@@ -641,6 +668,28 @@ function App(): ReactElement {
           </ControlSection>
 
           <ControlSection title="ink" testid="ink-controls">
+            {piece.lookEditable && (
+              <Segmented
+                label="look"
+                value={look}
+                testid="ink-look-control"
+                choices={[
+                  { value: "ghost" as const, label: "GHOST", title: "Soft alpha trails" },
+                  { value: "clean" as const, label: "CLEAN", title: "No trails" },
+                  {
+                    value: "trails" as const,
+                    label: "TRAILS",
+                    title: "Long streak persistence",
+                  },
+                ]}
+                onChange={(value) => {
+                  const d = INK_LOOK_DECAY[value];
+                  setLook(value);
+                  setDecay(d);
+                  handleRef.current?.setDecay(d);
+                }}
+              />
+            )}
             <RangeRow
               label="trails"
               value={decay}
@@ -685,7 +734,42 @@ function App(): ReactElement {
             )}
           </ControlSection>
 
-          {hasField && (
+          {piece.fieldArch && (
+            <ControlSection title="model" testid="model-arch-controls">
+              <div className="tui-note" data-testid="model-arch-summary">
+                {describeFieldArch(activeArch ?? piece.fieldArch)}
+                {!piece.fieldLoss ? " · train tfjs" : ""}
+              </div>
+              {piece.archEditable && (
+                <Segmented
+                  label="arch"
+                  value={(runtime.archPreset ?? "default") as string}
+                  choices={[
+                    { value: "default", label: "default" },
+                    ...dockPresets.map((preset) => ({
+                      value: preset.key,
+                      label: preset.label,
+                    })),
+                  ]}
+                  onChange={(value) =>
+                    setRuntime((r) => ({
+                      ...r,
+                      archPreset:
+                        value === "default"
+                          ? null
+                          : (value as ArchPresetKey),
+                    }))
+                  }
+                  testid="model-arch-presets"
+                />
+              )}
+              {piece.archEditable && (
+                <p className="tui-note restart-note">arch is compiled · changing it restarts</p>
+              )}
+            </ControlSection>
+          )}
+
+          {showHeadBlend && (
             <ControlSection
               title={isAgreeDisagree ? "A/B/C roles" : "two-head field"}
               testid="field-controls"

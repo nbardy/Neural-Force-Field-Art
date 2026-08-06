@@ -35,8 +35,15 @@ evaluation is independent, and the "very wide batch" is millions of independent
 point queries. That independence is why the per-thread kernel works — and why
 some architectures don't apply (below).
 
-**Current model** (`src/core/field/helmholtz.ts`): plain MLP on raw `[x,y]`,
-SELU hidden layers, tanh output; two heads (order `g`, chaos `r`) blended by α.
+**Current models** (`src/core/field/arch.ts` + `helmholtz.ts`): declarative
+`FieldArch` presets — encoding (raw / Fourier / hashgrid), hidden act
+(SELU / SIREN sin), widths, and 1- vs 2-head — orthogonal to loss and renderer.
+`HelmholtzField` is the runtime (legacy name; not a Helmholtz decomposition).
+Gallery rows are **loss/game recipes**; look (Ghost/Clean/Trails) and arch are
+dock axes (`lookEditable` / `archEditable`). Aesthetic pieces default to
+single-head `[256,256]` (`FieldSpec.kind: "vector"`); Max Chaos uses the dual
+dock list. Fourier+SIREN (`ARCH.fourierSiren`) is a first-class encoding×act
+combo on the aesthetic dock.
 
 **Its known limitation — SPECTRAL BIAS.** Plain coordinate MLPs can only
 express smooth, low-frequency functions; a raw-`[x,y]` MLP literally cannot
@@ -169,6 +176,9 @@ composes the adversarial game with maximum chaos.
 - Flow-matching to a reference image — the splat buffer vs a target image is a
   differentiable loss because the WHOLE chain (splat → field → weights) is
   differentiable. Paint with particles.
+- **Pixel GANs (shipped)** — four drawing games on soft density; see
+  `docs/PIXEL_DISC.md`. Gallery: `Pixel · VecField`, `Pixel · NextFrame`,
+  `Pixel · RealFake`, `Pixel · Inpaint`.
 
 **Hazard to respect:** the field shapes the cloud and the cloud trains the
 field — a mode-seeking feedback loop (the GAN failure mode). Dampers already
@@ -206,10 +216,10 @@ Each combines axes above. All ship as selectable gallery entries to compare.
   Look: ink diffusing into water.
 - **Murmuration** — N-body neighbor interaction kernel (grid-binned). Theory:
   learned local interaction, permutation-invariant. Look: flocking, not field.
-- **SIREN vs MLP (A/B piece)** — the SAME loss/config on a SIREN field and a
-  SELU-MLP field, side by side as two gallery entries. Theory: make the
-  spectral-bias difference VISIBLE by comparison, per the maintainer's "options
-  to compare, not pure upgrades" principle.
+- **SIREN vs MLP (A/B)** — same loss/config; swap via the model dock on one
+  gallery recipe (not duplicate gallery rows). Theory: make the spectral-bias
+  difference VISIBLE by comparison, per the maintainer's "options to compare,
+  not pure upgrades" principle.
 
 ---
 

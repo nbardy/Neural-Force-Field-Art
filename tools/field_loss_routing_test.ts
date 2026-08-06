@@ -51,19 +51,22 @@ const phys = {
   maxVelocity: fix.meta.maxVelocity,
 };
 const zero: FieldLossSpec = {
-  W_CHAOS: 0, W_ISO: 0, W_DIV: 0, W_SPIRAL: 0, HH: 1e-2, SPIRAL_TURNS: 3,
+  W_CHAOS: 0, W_ISO: 0, W_DIV: 0, W_SPIRAL: 0, W_COVER: 0, W_CENTER: 0, HH: 1e-2, SPIRAL_TURNS: 3,
 };
 const maxChaos: FieldLossSpec = {
-  W_CHAOS: 1, W_ISO: 1, W_DIV: 0.5, W_SPIRAL: 0, HH: 1e-2, SPIRAL_TURNS: 3,
+  W_CHAOS: 1, W_ISO: 1, W_DIV: 0.5, W_SPIRAL: 0, W_COVER: 0, W_CENTER: 0, HH: 1e-2, SPIRAL_TURNS: 3,
 };
 
-function only(term: "chaos" | "iso" | "div" | "spiral"): FieldLossSpec {
+function only(term: "chaos" | "iso" | "div" | "spiral" | "cover" | "center"): FieldLossSpec {
   return {
     ...zero,
     W_CHAOS: term === "chaos" ? 1 : 0,
     W_ISO: term === "iso" ? 1 : 0,
     W_DIV: term === "div" ? 1 : 0,
     W_SPIRAL: term === "spiral" ? 1 : 0,
+    W_COVER: term === "cover" ? 1 : 0,
+    W_CENTER: term === "center" ? 0.001 : 0,
+    COVER_SAMPLES: 16,
   };
 }
 
@@ -131,6 +134,8 @@ const termMarkers = {
   iso: "let Liso",
   div: "let div_i",
   spiral: "var bestTheta",
+  cover: "spiralCoverOff",
+  center: "(np.x - cx)",
 } as const;
 const zMax = Math.max(...Array.from(z.grad, Math.abs));
 const cMax = Math.max(...Array.from(c.grad, Math.abs));

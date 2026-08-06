@@ -110,38 +110,49 @@ export class AdvectKernel {
     physics: AdvectPhysics,
     particleCount: number
   ): AdvectKernel {
-    const [g, r] = field.heads;
-    const hg = ingestSequential(g, "helmholtz.g");
-    const hr = ingestSequential(r, "helmholtz.r");
-    // Override activations from the FIELD, not the tf config: SIREN builds
-    // LINEAR tf layers and applies sin/tanh manually, so the config reads
-    // "linear" — the field declares the real hidden activation. Standard is a
-    // no-op (selu/tanh already). Hidden layers → hiddenActivation, last → tanh.
+    const heads = field.heads;
     const hidden = field.hiddenActivation;
     const remap = (dims: LayerDims[]) =>
       dims.map((d, i) => ({
         ...d,
         activation: (i === dims.length - 1 ? "tanh" : hidden) as Activation,
       }));
-    // classes + encoding come from the field config; layoutField validates
-    // that r's live layer-0 input width matches encDim(+classes) (D-trap rule).
     const encoding =
       field.modelType === "fourier"
         ? ({ kind: "fourier", octaves: field.fourierOctaves } as const)
         : field.modelType === "hashgrid"
-        ? ({ kind: "hashgrid", gridSize: field.gridSize, features: field.gridFeatures } as const)
+        ? ({
+            kind: "hashgrid",
+            gridSize: field.gridSize,
+            features: field.gridFeatures,
+          } as const)
         : ({ kind: "raw" } as const);
+    const gridVar = field.grid ? [field.grid] : [];
+
+    if (field.headCount === 1 || heads.length === 1) {
+      const hg = ingestSequential(heads[0], "vector.g");
+      const layout = layoutField("vector", [remap(hg.dims)], {
+        classes: 0,
+        encoding,
+      });
+      return new AdvectKernel(
+        layout,
+        [...gridVar, ...hg.vars],
+        physics,
+        particleCount
+      );
+    }
+
+    const hg = ingestSequential(heads[0], "helmholtz.g");
+    const hr = ingestSequential(heads[1], "helmholtz.r");
     const layout = layoutField(
       field.semantic === "agree-disagree" ? "agree-disagree" : "helmholtz",
       [remap(hg.dims), remap(hr.dims)],
       {
-      classes: field.classes ?? 0,
-      encoding,
+        classes: field.classes ?? 0,
+        encoding,
       }
     );
-    // hashgrid: the grid tf.Variable is FIRST (matches the "grid" segment at
-    // offset 0); then the head variables.
-    const gridVar = field.grid ? [field.grid] : [];
     return new AdvectKernel(
       layout,
       [...gridVar, ...hg.vars, ...hr.vars],

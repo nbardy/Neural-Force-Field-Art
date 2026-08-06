@@ -83,6 +83,19 @@ export interface FieldLossSpec {
   readonly W_ISO: number;
   readonly W_DIV: number;
   readonly W_SPIRAL: number;
+  /**
+   * Curve→particles spiral cover (Chamfer ↑): mean over arc-length spiral
+   * samples of squared distance to the nearest train-batch particle, scaled
+   * by maxR². Independent of {@link W_SPIRAL} (radial particle→curve).
+   */
+  readonly W_COVER?: number;
+  /** Arc-length cover samples baked into the shader. Default 256. */
+  readonly COVER_SAMPLES?: number;
+  /**
+   * Mean squared distance to canvas center (pixel space). Used by Vortex and
+   * as a tiny Galaxy anchor; independent of spiral/cover.
+   */
+  readonly W_CENTER?: number;
   readonly HH: number;
   readonly SPIRAL_TURNS: number;
 }
@@ -93,6 +106,9 @@ export const LOSS: FieldLossSpec = {
   W_ISO: 1.0,
   W_DIV: 0.5,
   W_SPIRAL: 0.00002,
+  W_COVER: 0,
+  W_CENTER: 0,
+  COVER_SAMPLES: 256,
   HH: 1e-2,
   SPIRAL_TURNS: 3,
 } as const;
@@ -565,8 +581,49 @@ function zeroFieldLoss(loss: FieldLossSpec): boolean {
     loss.W_CHAOS === 0 &&
     loss.W_ISO === 0 &&
     loss.W_DIV === 0 &&
-    loss.W_SPIRAL === 0
+    loss.W_SPIRAL === 0 &&
+    (loss.W_COVER ?? 0) === 0 &&
+    (loss.W_CENTER ?? 0) === 0
   );
+}
+
+/**
+ * Unit-space Archimedean cover samples: s_pixel = center + maxR * offset[m].
+ * Same arc-length / skip contract as main.ts spiralCoverLoss.
+ */
+function bakeSpiralCoverOffsets(
+  samples: number,
+  turns: number,
+  arcSkip = 0.08
+): string {
+  const thetaMax = turns * 2 * Math.PI;
+  const arcLen = (theta: number) => {
+    const s = Math.sqrt(1 + theta * theta);
+    return 0.5 * (theta * s + Math.asinh(theta));
+  };
+  const thetaFromArc = (target: number, lo0: number, hi0: number) => {
+    let lo = lo0;
+    let hi = hi0;
+    for (let i = 0; i < 48; i++) {
+      const mid = 0.5 * (lo + hi);
+      if (arcLen(mid) - arcLen(lo0) < target) lo = mid;
+      else hi = mid;
+    }
+    return 0.5 * (lo + hi);
+  };
+  const total = arcLen(thetaMax);
+  const skip = Math.min(Math.max(arcSkip, 0), 0.45) * total;
+  const usable = Math.max(total - skip, 1e-6);
+  const thetaMin = thetaFromArc(skip, 0, thetaMax);
+  const parts: string[] = [];
+  for (let i = 0; i < samples; i++) {
+    const theta = thetaFromArc(usable * ((i + 0.5) / samples), thetaMin, thetaMax);
+    const rFrac = theta / thetaMax; // since b/maxR = 1/Θ
+    const x = rFrac * Math.cos(theta);
+    const y = rFrac * Math.sin(theta);
+    parts.push(`vec2f(${x.toExponential(8)}, ${y.toExponential(8)})`);
+  }
+  return `const spiralCoverOff : array<vec2f, ${samples}> = array<vec2f, ${samples}>(\n  ${parts.join(",\n  ")}\n);`;
 }
 
 /** Minimal pass-A module for an external-gradient-only game. The field pass-B
@@ -603,8 +660,12 @@ export function trainPassAShader(
   field: FieldLayout,
   opts: TrainShaderOpts = {}
 ): string {
-  if (field.spec.kind !== "helmholtz" && field.spec.kind !== "agree-disagree") {
-    throw new Error("train: v1 trains only two-head vector fields");
+  if (
+    field.spec.kind !== "helmholtz" &&
+    field.spec.kind !== "agree-disagree" &&
+    field.spec.kind !== "vector"
+  ) {
+    throw new Error("train: v1 trains helmholtz / agree-disagree / vector fields");
   }
   const K = opts.kSteps ?? 1;
   const border: BorderMode = opts.border ?? { tag: "wrap" };
@@ -613,6 +674,7 @@ export function trainPassAShader(
   const borderJ = borderJacobianExpr(border, "q", "res");
   const sl = trainScratchLayout(field, K);
   const heads = field.spec.heads as HeadSpec[];
+  const dual = heads.length === 2;
   const enc = field.encoding;
   const maxW = Math.max(
     2,
@@ -626,10 +688,12 @@ export function trainPassAShader(
   const aoutOff = (h: number) => sl.aOff[h][heads[h].layers.length - 1];
   const CLS_SALT = CLASS_SALT;
   const CLASSES_OR_1 = Math.max(1, field.classes);
-  // probe outputs recomputed from stored post-activations at probe site `sx`
+  const headOut = (sx: string, h: number) =>
+    `vec2f(scratch[${hsBase(sx, h)} + ${aoutOff(h)}u], scratch[${hsBase(sx, h)} + ${aoutOff(h) + 1}u])`;
   const blendAt = (sx: string) =>
-    `(1.0 - u.alpha) * vec2f(scratch[${hsBase(sx, 0)} + ${aoutOff(0)}u], scratch[${hsBase(sx, 0)} + ${aoutOff(0) + 1}u])` +
-    ` + u.alpha * vec2f(scratch[${hsBase(sx, 1)} + ${aoutOff(1)}u], scratch[${hsBase(sx, 1)} + ${aoutOff(1) + 1}u])`;
+    dual
+      ? `(1.0 - u.alpha) * ${headOut(sx, 0)} + u.alpha * ${headOut(sx, 1)}`
+      : headOut(sx, 0);
 
   // --- type-directed call-site generators (dispatch happens HERE, at codegen
   // time — every emitted shader has exactly one path per encoding kind) -------
@@ -651,18 +715,39 @@ export function trainPassAShader(
       : enc.kind === "fourier"
       ? `bwd_head_${h}(${dExpr}, ${hsBase(site, h)}, ${encBase(site)})`
       : `bwd_head_${h}(${dExpr}, ${hsBase(site, h)}, ${siteU(site)}, ${dEncBase(site)})`;
+  const forceAt = (uExpr: string, site: string) =>
+    dual
+      ? `(1.0 - u.alpha) * ${fwdCall(0, uExpr, site)} + u.alpha * ${fwdCall(1, uExpr, site)}`
+      : `${fwdCall(0, uExpr, site)}`;
+  const bwdForce = (dExpr: string, site: string) =>
+    dual
+      ? `${bwdCall(0, `${dExpr} * (1.0 - u.alpha)`, site)} + ${bwdCall(1, `${dExpr} * u.alpha`, site)}`
+      : `${bwdCall(0, dExpr, site)}`;
 
   const TWO_PI = 6.283185307179586;
   const useChaos = loss.W_CHAOS !== 0;
   const useIso = loss.W_ISO !== 0;
   const useDiv = loss.W_DIV !== 0;
   const useSpiral = loss.W_SPIRAL !== 0;
+  const coverW = loss.W_COVER ?? 0;
+  const useCover = coverW !== 0;
+  const coverM = Math.max(1, Math.min(256, loss.COVER_SAMPLES ?? 256));
+  const centerW = loss.W_CENTER ?? 0;
+  const useCenter = centerW !== 0;
   const useProbe = useChaos || useDiv;
   const sampleLoss = [
     useChaos ? `${loss.W_CHAOS} * chaos_i` : "",
     useDiv ? `${loss.W_DIV} * div_i` : "",
     useSpiral ? `${loss.W_SPIRAL} * best` : "",
+    useCenter
+      ? `${centerW} * ((np.x - cx) * (np.x - cx) + (np.y - cy) * (np.y - cy))`
+      : "",
   ].filter(Boolean).join(" + ") || "0.0";
+  const coverBake = useCover
+    ? bakeSpiralCoverOffsets(coverM, loss.SPIRAL_TURNS)
+    : "";
+  const posKRead = (sampleExpr: string) =>
+    `vec2f(scratch[(${sampleExpr}) * ${STRIDE}u + ${sl.posOff + 2 * K}u], scratch[(${sampleExpr}) * ${STRIDE}u + ${sl.posOff + 2 * K + 1}u])`;
 
   return /* wgsl */ `
 struct UA {
@@ -701,6 +786,8 @@ struct UA {
 @group(0) @binding(7) var<storage, read_write> partials : array<vec4f>;
 
 ${COMMON}
+
+${coverBake}
 
 ${enc.kind === "raw" ? "" : emitEncode(enc) + "\n"}
 ${heads.map((h, i) => emitFwdStore(i, h, sl, maxW, enc)).join("\n\n")}
@@ -769,8 +856,7 @@ fn fwd(@builtin(global_invocation_id) gid : vec3u,
       let uk = p / res;
       scratch[sBase + ${sl.siteInOff}u + k * 2u] = uk.x;
       scratch[sBase + ${sl.siteInOff}u + k * 2u + 1u] = uk.y;
-      ${encodeAt("uk", "k")}let F = (1.0 - u.alpha) * ${fwdCall(0, "uk", "k")}
-            + u.alpha * ${fwdCall(1, "uk", "k")};
+      ${encodeAt("uk", "k")}let F = ${forceAt("uk", "k")};
       let Fs = F * u.forceMag;
       scratch[sBase + ${sl.fsOff}u + k * 2u] = Fs.x;
       scratch[sBase + ${sl.fsOff}u + k * 2u + 1u] = Fs.y;
@@ -788,6 +874,7 @@ fn fwd(@builtin(global_invocation_id) gid : vec3u,
     }
     let np = p;
 
+    ${useProbe ? `
     // probe sites at pn = pos_K/res (chaos + divergence)
     let pn = np / res;
     let p0 = pn;
@@ -799,15 +886,14 @@ fn fwd(@builtin(global_invocation_id) gid : vec3u,
     scratch[sBase + ${sl.siteInOff}u + ${K * 2 + 3}u] = px.y;
     scratch[sBase + ${sl.siteInOff}u + ${K * 2 + 4}u] = py.x;
     scratch[sBase + ${sl.siteInOff}u + ${K * 2 + 5}u] = py.y;
-    ${encodeAt("p0", `${K}u`)}${encodeAt("px", `${K + 1}u`)}${encodeAt("py", `${K + 2}u`)}let f0 = (1.0 - u.alpha) * ${fwdCall(0, "p0", `${K}u`)} + u.alpha * ${fwdCall(1, "p0", `${K}u`)};
-    let fx = (1.0 - u.alpha) * ${fwdCall(0, "px", `${K + 1}u`)} + u.alpha * ${fwdCall(1, "px", `${K + 1}u`)};
-    let fy = (1.0 - u.alpha) * ${fwdCall(0, "py", `${K + 2}u`)} + u.alpha * ${fwdCall(1, "py", `${K + 2}u`)};
+    ${encodeAt("p0", `${K}u`)}${encodeAt("px", `${K + 1}u`)}${encodeAt("py", `${K + 2}u`)}let f0 = ${forceAt("p0", `${K}u`)};
+    let fx = ${forceAt("px", `${K + 1}u`)};
+    let fy = ${forceAt("py", `${K + 2}u`)};
 
     // Disabled terms are CODEGEN-ELIDED. Zero times undefined is NaN, so emitting
     // their intermediates and multiplying the result by zero is not inert.
-    ${useProbe ? `
     let dxv = fx - f0;
-    let dyv = fy - f0;` : ""}
+    let dyv = fy - f0;
     ${useChaos ? `
     let sepx = dot(dxv, dxv);
     let sepy = dot(dyv, dyv);
@@ -817,6 +903,7 @@ fn fwd(@builtin(global_invocation_id) gid : vec3u,
     ${useDiv ? `
     let g = ((fx.x - f0.x) + (fy.y - f0.y)) / u.hh;
     let div_i = g * g;` : ""}
+    ` : ""}
     ${useSpiral ? `
     // spiral (winner-take-all over k, earlier k wins ties like tfjs minimum)
     let dx = np.x - cx;
@@ -875,6 +962,25 @@ fn finalize(@builtin(local_invocation_index) tid : u32) {
     let Liso = (D * D + 4.0 * C01 * C01) / (S * S);
     lossOut[0] = red[0].w / nf + ${loss.W_ISO} * Liso;` : `
     lossOut[0] = red[0].w / nf;`}
+    ${useCover ? `
+    // Spiral cover (curve→particles): mean_m min_i ‖s_m − p_i‖² / maxR².
+    // Batch-coupled; computed once here so fwd stays per-sample independent.
+    let maxR = min(u.res.x, u.res.y) * 0.38;
+    let coverScale = max(maxR * maxR, 1.0);
+    let center = u.res * 0.5;
+    var Lcover = 0.0;
+    for (var m = 0u; m < ${coverM}u; m = m + 1u) {
+      let spt = center + maxR * spiralCoverOff[m];
+      var best = 1e30;
+      for (var j = 0u; j < u.n; j = j + 1u) {
+        let pj = ${posKRead("j")};
+        let d = pj - spt;
+        let d2 = dot(d, d);
+        if (d2 < best) { best = d2; }
+      }
+      Lcover = Lcover + best;
+    }
+    lossOut[0] = lossOut[0] + ${coverW} * (Lcover / (f32(${coverM}) * coverScale));` : ""}
     lossOut[1] = C00; lossOut[2] = C11; lossOut[3] = C01;
     ${useIso ? `
     lossOut[4] = 2.0 * D / (S * S) - 2.0 * Liso / S;   // dLiso/dC00
@@ -903,14 +1009,14 @@ fn bwd(@builtin(global_invocation_id) gid : vec3u) {
     let sBase = s * ${STRIDE}u;
     let np = vec2f(scratch[sBase + ${sl.posOff + 2 * K}u], scratch[sBase + ${sl.posOff + 2 * K + 1}u]);
 
+    var dfx = vec2f(0.0);
+    var dfy = vec2f(0.0);
+    var df0 = vec2f(0.0);
+    ${useProbe ? `
     // recompute probe outputs from stored post-activations
     let f0 = ${blendAt(`${K}u`)};
     let fx = ${blendAt(`${K + 1}u`)};
     let fy = ${blendAt(`${K + 2}u`)};
-
-    var dfx = vec2f(0.0);
-    var dfy = vec2f(0.0);
-    var df0 = vec2f(0.0);
     ${useChaos ? `
     // chaos deltas
     let dxv = fx - f0;
@@ -932,6 +1038,7 @@ fn bwd(@builtin(global_invocation_id) gid : vec3u) {
     dfy.y = dfy.y + gd;
     df0.x = df0.x - gd;
     df0.y = df0.y - gd;` : ""}
+    ` : ""}
     ${useSpiral ? `
     // spiral delta on pos_K
     let dx = np.x - cx;
@@ -955,17 +1062,40 @@ fn bwd(@builtin(global_invocation_id) gid : vec3u) {
     // probe backward (input grads flow to pn); blend factors on the way in
     var dpn = vec2f(0.0);
     ${useProbe ? `
-    dpn = dpn + ${bwdCall(0, "df0 * (1.0 - u.alpha)", `${K}u`)};
-    dpn = dpn + ${bwdCall(1, "df0 * u.alpha", `${K}u`)};
-    dpn = dpn + ${bwdCall(0, "dfx * (1.0 - u.alpha)", `${K + 1}u`)};
-    dpn = dpn + ${bwdCall(1, "dfx * u.alpha", `${K + 1}u`)};
-    dpn = dpn + ${bwdCall(0, "dfy * (1.0 - u.alpha)", `${K + 2}u`)};
-    dpn = dpn + ${bwdCall(1, "dfy * u.alpha", `${K + 2}u`)};` : ""}
+    dpn = dpn + ${bwdForce("df0", `${K}u`)};
+    dpn = dpn + ${bwdForce("dfx", `${K + 1}u`)};
+    dpn = dpn + ${bwdForce("dfy", `${K + 2}u`)};` : ""}
 
-    // dL/dpos_K = spiral + probes/res ; dL/dvel_K = 0 (loss ignores velocity)
+    // dL/dpos_K = spiral + cover + center + probes/res ; dL/dvel_K = 0
     var dpos = ${useSpiral
       ? "spc * (vec2f(dx, dy) / r - b * reluMask * vec2f(-dy, dx) / r2) + dpn / res"
       : "dpn / res"};
+    ${useCenter ? `
+    dpos = dpos + (${centerW} / nf) * 2.0 * (np - vec2f(cx, cy));` : ""}
+    ${useCover ? `
+    // Cover ↑ grads: for each spiral sample whose nearest batch particle is
+    // this one, pull toward that sample (same winner-take-all as finalize).
+    {
+      let maxR = min(res.x, res.y) * 0.38;
+      let coverScale = max(maxR * maxR, 1.0);
+      let center = res * 0.5;
+      let wPer = ${coverW} / (f32(${coverM}) * coverScale);
+      for (var m = 0u; m < ${coverM}u; m = m + 1u) {
+        let spt = center + maxR * spiralCoverOff[m];
+        var bestC = 1e30;
+        var bestJ = 0u;
+        for (var j = 0u; j < n; j = j + 1u) {
+          let pj = ${posKRead("j")};
+          let d = pj - spt;
+          let d2 = dot(d, d);
+          // earlier j wins ties (matches tfjs minimum / spiral WTA contract)
+          if (d2 < bestC) { bestC = d2; bestJ = j; }
+        }
+        if (bestJ == s) {
+          dpos = dpos + wPer * 2.0 * (np - spt);
+        }
+      }
+    }` : ""}
     var dvel = vec2f(0.0);
 
     // walk transitions k = K-1 .. 0:
@@ -996,9 +1126,8 @@ fn bwd(@builtin(global_invocation_id) gid : vec3u) {
       dFs.x = dFs.x + ${loss.W_ISO} * (2.0 * dC.x * Fs.x + dC.z * Fs.y) / nkf;
       dFs.y = dFs.y + ${loss.W_ISO} * (2.0 * dC.y * Fs.y + dC.z * Fs.x) / nkf;` : ""}
       let dF = dFs * u.forceMag;
-      let du0 = ${bwdCall(0, "dF * (1.0 - u.alpha)", "k")};
-      let du1 = ${bwdCall(1, "dF * u.alpha", "k")};
-      dpos = dposThroughBorder + (du0 + du1) / res; // dL/dpos_k
+      let du = ${bwdForce("dF", "k")};
+      dpos = dposThroughBorder + du / res; // dL/dpos_k
       dvel = dpre * u.friction;              // dL/dvel_k
     }
   }
@@ -1027,8 +1156,12 @@ export function trainPassBShader(
   field: FieldLayout,
   opts: TrainShaderOpts = {}
 ): string {
-  if (field.spec.kind !== "helmholtz" && field.spec.kind !== "agree-disagree") {
-    throw new Error("train: v1 trains only two-head vector fields");
+  if (
+    field.spec.kind !== "helmholtz" &&
+    field.spec.kind !== "agree-disagree" &&
+    field.spec.kind !== "vector"
+  ) {
+    throw new Error("train: v1 trains helmholtz / agree-disagree / vector fields");
   }
   const K = opts.kSteps ?? 1;
   const extGradCount = opts.extGradCount ?? (opts.extGrad ? 1 : 0);

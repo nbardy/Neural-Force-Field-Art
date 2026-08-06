@@ -71,6 +71,8 @@ export interface HeadSpec {
 export type FieldSpec =
   | { kind: "helmholtz"; heads: [HeadSpec, HeadSpec] }
   | { kind: "agree-disagree"; heads: [HeadSpec, HeadSpec] }
+  /** Single tanh-bounded vector MLP (aesthetic FieldArch heads:1). */
+  | { kind: "vector"; heads: [HeadSpec] }
   | { kind: "mlp"; heads: [HeadSpec] };
 
 /** Stable particle-role hash shared by Agree+Disagree advection/rendering. */
@@ -344,7 +346,8 @@ export function layoutField(
   if (encoding.kind !== "raw" && classes > 0) {
     throw new Error(`advect: ${encoding.kind} + classes not supported yet`);
   }
-  const wantHeads = kind === "helmholtz" || kind === "agree-disagree" ? 2 : 1;
+  const wantHeads =
+    kind === "helmholtz" || kind === "agree-disagree" ? 2 : 1;
   if (headsDims.length !== wantHeads) {
     throw new Error(
       `advect: kind '${kind}' needs ${wantHeads} head(s), got ${headsDims.length}`
@@ -737,6 +740,12 @@ function emitForce(spec: FieldSpec): string {
       return (
         `fn forceAt(pn : vec2f, cls : u32, gid : u32) -> vec2f {\n` +
         `  return (1.0 - u.alpha) * eval_head_0(pn, cls) + u.alpha * eval_head_1(pn, cls);\n` +
+        `}`
+      );
+    case "vector":
+      return (
+        `fn forceAt(pn : vec2f, cls : u32, gid : u32) -> vec2f {\n` +
+        `  return eval_head_0(pn, cls);\n` +
         `}`
       );
     case "agree-disagree":

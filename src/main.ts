@@ -20,7 +20,36 @@ import "@tensorflow/tfjs-backend-webgpu";
 // Canvas2D factory (createRenderer) is never called here — it still serves
 // the legacy pages and tools/surprise_test.ts.
 import { RendererType } from "./renderers";
-import { ForceField, HelmholtzField } from "./core/field/helmholtz";
+import { HelmholtzField } from "./core/field/helmholtz";
+import type { ForceField } from "./core/field/helmholtz";
+import {
+  ARCH,
+  ARCH_DOCK_DUAL,
+  ARCH_DOCK_PRESETS,
+  applyArchDockPreset,
+  archDockPresets,
+  createFieldFromArch,
+  describeFieldArch,
+  isArchPresetKey,
+  type ArchDockKind,
+  type ArchPresetKey,
+  type FieldArch,
+} from "./core/field/arch";
+export {
+  ARCH,
+  ARCH_DOCK_DUAL,
+  ARCH_DOCK_PRESETS,
+  applyArchDockPreset,
+  archDockPresets,
+  createFieldFromArch,
+  describeFieldArch,
+  isArchPresetKey,
+  type ArchDockKind,
+  type ArchPresetKey,
+  type FieldArch,
+} from "./core/field/arch";
+export type { ForceField } from "./core/field/helmholtz";
+export { HelmholtzField } from "./core/field/helmholtz";
 // isotropyLoss only: the chaos + divergence probes used by this file's losses
 // are inlined (they share one 3×-batched field forward — see
 // helmholtzChaosLoss); the standalone chaosLoss/divergencePenalty exports are
@@ -47,6 +76,7 @@ import {
   AdversaryTrainer,
   type SurpriseMetric,
 } from "./render/webgpu/adversary_train";
+import { PixelDiscTrainer } from "./render/webgpu/pixel_disc_train";
 import { GpuTimer } from "./render/webgpu/gputime";
 // ADVERSARY (src/core/gan/adversary.ts): a relaxed winner-take-all
 // multiple-choice predictor whose irreducible residual is the generator's
@@ -221,12 +251,36 @@ export interface ArtPieceConfig {
    * Field path: a {@link ForceField} (e.g. {@link HelmholtzField}) whose raw
    * signed output is used directly (NO `-0.5` shift). Its `trainableWeights`
    * become the optimizer varList. Takes precedence over {@link createModel}.
+   * Prefer {@link fieldArch} when the architecture is declarative.
    */
   createField?: () => ForceField;
   /**
+   * Declarative force-field architecture (encoding / widths / heads).
+   * Used when {@link createField} is omitted: `createFieldFromArch(fieldArch)`.
+   * Orthogonal to loss and renderer. Dock presets can override via startLoop.
+   */
+  fieldArch?: FieldArch;
+  /**
+   * When true, the model dock may swap among {@link archDockPresets}.
+   * Default false for game pieces whose arch is load-bearing.
+   */
+  archEditable?: boolean;
+  /**
+   * Which dock preset list when {@link archEditable}. Default `"aesthetic"`
+   * (single-head). Chaos comparison pieces use `"dual"`.
+   */
+  archDock?: ArchDockKind;
+  /**
+   * When true, the ink dock exposes Ghost / Clean / Trails look presets
+   * (decay only on the WebGPU splat path). Default false for instrument
+   * renderers like surprise.
+   */
+  lookEditable?: boolean;
+  /**
    * Structural/aesthetic objective compiled into the fused field trainer.
-   * This is independent of `createField`: architecture does not imply loss.
-   * Omitted preserves the historical full chaos objective.
+   * This is independent of architecture: arch does not imply loss.
+   * Omitted ⇒ skip the fused trainer so custom aesthetic `computeLoss`
+   * (e.g. Spiral Cover) is not replaced by the default chaos objective.
    */
   fieldLoss?: FieldLossSpec;
   /**
@@ -246,6 +300,27 @@ export interface ArtPieceConfig {
    * aesthetic loss can be paired with any adversary without rewriting it.
    */
   adversary?: AdversarySpec;
+  /**
+   * Pixel-space density discriminator (cheap conv→codebook→GAP→MLP on a
+   * low-res soft splat). Optional and independent of {@link adversary}: the
+   * critic observes an image of the cloud, not relational tuples. Generator
+   * reward flows through a differentiable soft density (virtual one-step) into
+   * extGrads — reverse-mode, not JVP. See src/core/gan/pixel_disc.ts.
+   */
+  pixelDisc?: {
+    readonly weight: number;
+    /** One of the four Pixel GAN games — see docs/PIXEL_DISC.md. */
+    readonly kind?:
+      | "vec-field"
+      | "next-frame"
+      | "real-fake"
+      | "inpaint";
+    readonly G?: number;
+    readonly E?: number;
+    readonly K?: number;
+    readonly hidden?: number;
+    readonly dt?: number;
+  };
   /**
    * Colormap for `renderer: "surprise"` pieces. Absent ≡ "inferno"
    * (canonicalized in {@link resolveColorMode}); ignored by every other
@@ -648,34 +723,6 @@ export function resolveColorMode(
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Model factories
-// ---------------------------------------------------------------------------
-function mlpShallow(): tf.Sequential {
-  const m = tf.sequential();
-  m.add(tf.layers.dense({ units: 32, activation: "selu", inputShape: [2] }));
-  m.add(tf.layers.dense({ units: 64, activation: "selu" }));
-  m.add(tf.layers.dense({ units: 2, activation: "sigmoid" }));
-  return m;
-}
-
-function mlpDeep(): tf.Sequential {
-  const m = tf.sequential();
-  m.add(tf.layers.dense({ units: 64, activation: "selu", inputShape: [2] }));
-  m.add(tf.layers.dense({ units: 128, activation: "selu" }));
-  m.add(tf.layers.dense({ units: 128, activation: "selu" }));
-  m.add(tf.layers.dense({ units: 64, activation: "selu" }));
-  m.add(tf.layers.dense({ units: 2, activation: "sigmoid" }));
-  return m;
-}
-
-function mlpWide(): tf.Sequential {
-  const m = tf.sequential();
-  m.add(tf.layers.dense({ units: 256, activation: "selu", inputShape: [2] }));
-  m.add(tf.layers.dense({ units: 2, activation: "sigmoid" }));
-  return m;
-}
-
-// ---------------------------------------------------------------------------
 // Loss functions  (all differentiable through the physics chain)
 // ---------------------------------------------------------------------------
 const SPIRAL_TURNS = 3;
@@ -719,6 +766,119 @@ function spiralPlusCenterLoss(
       const cL = centerLoss(pos, w, h);
       return sL.add(cL.mul(centerWeight)).asScalar();
     });
+}
+
+/** Default curve samples for the cover half of {@link spiralCoverLoss}. */
+const SPIRAL_COVER_SAMPLES = 256;
+/** Skip the innermost fraction of arc length so cover does not overweight the hub. */
+const SPIRAL_COVER_ARC_SKIP = 0.08;
+
+/**
+ * Arc length of Archimedean `r = b·θ` from 0 to `theta`:
+ *   L(θ) = (b/2)·(θ√(1+θ²) + asinh(θ))
+ */
+function archimedeanArcLength(b: number, theta: number): number {
+  const s = Math.sqrt(1 + theta * theta);
+  return 0.5 * b * (theta * s + Math.asinh(theta));
+}
+
+/**
+ * Invert arc length for `r = b·θ` on `[thetaMin, thetaMax]` (binary search).
+ */
+function thetaFromArcLength(
+  b: number,
+  targetArc: number,
+  thetaMin: number,
+  thetaMax: number
+): number {
+  const base = archimedeanArcLength(b, thetaMin);
+  let lo = thetaMin;
+  let hi = thetaMax;
+  for (let i = 0; i < 48; i++) {
+    const mid = 0.5 * (lo + hi);
+    if (archimedeanArcLength(b, mid) - base < targetArc) lo = mid;
+    else hi = mid;
+  }
+  return 0.5 * (lo + hi);
+}
+
+/**
+ * Uniform-along-filament samples of the Archimedean spiral (same `b, Θ, maxR`
+ * as {@link spiralLoss}). Equal-θ sampling packs near the origin and makes
+ * cover collapse into a hub/cross; arc-length sampling keeps arms equally
+ * costly when empty.
+ */
+function archimedeanSpiralSamples(
+  w: number,
+  h: number,
+  samples: number
+): Float32Array {
+  const cx = w / 2;
+  const cy = h / 2;
+  const maxR = Math.min(w, h) * 0.38;
+  const b = maxR / SPIRAL_MAX_THETA;
+  const thetaMax = SPIRAL_MAX_THETA;
+  const totalArc = archimedeanArcLength(b, thetaMax);
+  const skipArc = Math.min(
+    Math.max(SPIRAL_COVER_ARC_SKIP, 0),
+    0.45
+  ) * totalArc;
+  const usable = Math.max(totalArc - skipArc, 1e-6);
+  const thetaMin = thetaFromArcLength(b, skipArc, 0, thetaMax);
+  const out = new Float32Array(samples * 2);
+  for (let i = 0; i < samples; i++) {
+    const target = usable * ((i + 0.5) / samples);
+    const theta = thetaFromArcLength(b, target, thetaMin, thetaMax);
+    const r = b * theta;
+    out[i * 2] = cx + r * Math.cos(theta);
+    out[i * 2 + 1] = cy + r * Math.sin(theta);
+  }
+  return out;
+}
+
+/**
+ * Curve → particles: mean over spiral samples of squared distance to the
+ * nearest particle, scaled by `maxR²` so weights are O(1). Empty filament
+ * segments stay costly even when all mass sits on-curve at one locus.
+ */
+function spiralCoverUpLoss(
+  pos: tf.Tensor2D,
+  w: number,
+  h: number,
+  samples: number
+): tf.Scalar {
+  return tf.tidy(() => {
+    const maxR = Math.min(w, h) * 0.38;
+    const scale = Math.max(maxR * maxR, 1);
+    const s = tf.tensor2d(archimedeanSpiralSamples(w, h, samples), [
+      samples,
+      2,
+    ]);
+    // [N,1,2] − [1,M,2] → [N,M,2] → min over particles → mean over samples
+    const d2 = pos.expandDims(1).sub(s.expandDims(0)).square().sum(2);
+    return d2.min(0).mean().div(scale).asScalar();
+  });
+}
+
+/**
+ * Spiral Cover — curve→particles only (not bidirectional).
+ *
+ * Each sample on the spiral wants a nearby particle. Attractors lie on the
+ * filament, so mass both covers the arms and stays near the curve. The old
+ * particle→spiral residual is omitted: it is minimized at the hub and fights
+ * arm fill when combined with a center-heavy cover term.
+ *
+ *   L = β · mean_m ‖s_m − p_nearest‖² / maxR²
+ */
+function spiralCoverLoss(opts?: {
+  /** Weight on curve→particles cover term (default 1). */
+  beta?: number;
+  samples?: number;
+}): ArtPieceConfig["computeLoss"] {
+  const beta = opts?.beta ?? 1;
+  const samples = opts?.samples ?? SPIRAL_COVER_SAMPLES;
+  return (pos, w, h) =>
+    tf.tidy(() => spiralCoverUpLoss(pos, w, h, samples).mul(beta).asScalar());
 }
 
 /**
@@ -1341,6 +1501,8 @@ export const MAX_CHAOS_FIELD_LOSS: FieldLossSpec = {
   W_ISO: 1,
   W_DIV: 0.5,
   W_SPIRAL: 0,
+  W_COVER: 0,
+  W_CENTER: 0,
   HH: 1e-2,
   SPIRAL_TURNS: 3,
 };
@@ -1351,13 +1513,53 @@ export const ZERO_FIELD_LOSS: FieldLossSpec = {
   W_ISO: 0,
   W_DIV: 0,
   W_SPIRAL: 0,
+  W_COVER: 0,
+  W_CENTER: 0,
+  HH: 1e-2,
+  SPIRAL_TURNS: 3,
+};
+
+/** Fused radial spiral + tiny center (matches spiralPlusCenterLoss(2e-5)). */
+export const SPIRAL_FIELD_LOSS: FieldLossSpec = {
+  W_CHAOS: 0,
+  W_ISO: 0,
+  W_DIV: 0,
+  W_SPIRAL: 1,
+  W_COVER: 0,
+  W_CENTER: 0.00002,
+  HH: 1e-2,
+  SPIRAL_TURNS: 3,
+};
+
+/** Fused Spiral Cover objective (curve→particles Chamfer ↑). */
+export const COVER_FIELD_LOSS: FieldLossSpec = {
+  W_CHAOS: 0,
+  W_ISO: 0,
+  W_DIV: 0,
+  W_SPIRAL: 0,
+  W_COVER: 1,
+  W_CENTER: 0,
+  COVER_SAMPLES: 256,
+  HH: 1e-2,
+  SPIRAL_TURNS: 3,
+};
+
+/** Fused center attractor (Vortex). */
+export const CENTER_FIELD_LOSS: FieldLossSpec = {
+  W_CHAOS: 0,
+  W_ISO: 0,
+  W_DIV: 0,
+  W_SPIRAL: 0,
+  W_COVER: 0,
+  W_CENTER: 0.001,
   HH: 1e-2,
   SPIRAL_TURNS: 3,
 };
 
 export const GALLERY: ArtPieceConfig[] = [
   {
-    name: "Spiral · Ghost",
+    // Spiral attractor — look (Ghost/Clean/Trails) and arch are dock axes.
+    name: "Spiral",
     particleCount: 1000,
     friction: 0.985,
     forceMagnitude: 3.0,
@@ -1368,26 +1570,14 @@ export const GALLERY: ArtPieceConfig[] = [
     backgroundColor: [12, 0, 34],
     alphaBlend: 0.06,
     renderer: "alpha-fade",
-    createModel: mlpShallow,
+    fieldArch: ARCH.mlpShallow,
+    archEditable: true,
+    lookEditable: true,
+    fieldLoss: { ...SPIRAL_FIELD_LOSS, W_CENTER: 0.00005 },
     computeLoss: spiralPlusCenterLoss(0.00005),
   },
   {
-    name: "Spiral · Trails",
-    particleCount: 800,
-    friction: 0.99,
-    forceMagnitude: 3.5,
-    maxVelocity: 28,
-    resetRate: 0.008,
-    drawRate: 2,
-    learningRate: 0.008,
-    backgroundColor: [4, 0, 18],
-    alphaBlend: 0.04,
-    renderer: "trail-buffer",
-    createModel: mlpDeep,
-    computeLoss: spiralPlusCenterLoss(0.0001),
-  },
-  {
-    name: "Vortex · Ghost",
+    name: "Vortex",
     particleCount: 1200,
     friction: 0.985,
     forceMagnitude: 3.0,
@@ -1398,27 +1588,16 @@ export const GALLERY: ArtPieceConfig[] = [
     backgroundColor: [12, 0, 34],
     alphaBlend: 0.05,
     renderer: "alpha-fade",
-    createModel: mlpShallow,
+    fieldArch: ARCH.mlpShallow,
+    archEditable: true,
+    lookEditable: true,
+    fieldLoss: CENTER_FIELD_LOSS,
     computeLoss: (p, w, h) =>
       tf.tidy(() => centerLoss(p, w, h).mul(0.001).asScalar()),
   },
   {
-    name: "Galaxy · Clean",
-    particleCount: 1500,
-    friction: 0.975,
-    forceMagnitude: 4.0,
-    maxVelocity: 30,
-    resetRate: 0.01,
-    drawRate: 3,
-    learningRate: 0.005,
-    backgroundColor: [2, 0, 12],
-    alphaBlend: 0.03,
-    renderer: "clean",
-    createModel: mlpWide,
-    computeLoss: spiralPlusCenterLoss(0.00002),
-  },
-  {
-    name: "Galaxy · Ghost",
+    // Particle→spiral radial residual (+ tiny center). Arch/look via dock.
+    name: "Galaxy",
     particleCount: 1500,
     friction: 0.975,
     forceMagnitude: 4.0,
@@ -1429,12 +1608,35 @@ export const GALLERY: ArtPieceConfig[] = [
     backgroundColor: [2, 0, 12],
     alphaBlend: 0.03,
     renderer: "alpha-fade",
-    createModel: mlpWide,
+    fieldArch: ARCH.mlp256,
+    archEditable: true,
+    lookEditable: true,
+    fieldLoss: SPIRAL_FIELD_LOSS,
     computeLoss: spiralPlusCenterLoss(0.00002),
   },
   {
+    // Cover-only Chamfer ↑. Arch (Fourier/SIREN/…) and look via dock.
+    name: "Spiral Cover",
+    particleCount: 1500,
+    friction: 0.975,
+    forceMagnitude: 4.0,
+    maxVelocity: 30,
+    resetRate: 0.01,
+    drawRate: 3,
+    learningRate: 0.005,
+    backgroundColor: [2, 0, 12],
+    alphaBlend: 0.03,
+    renderer: "alpha-fade",
+    fieldArch: ARCH.mlp256,
+    archEditable: true,
+    lookEditable: true,
+    fieldLoss: COVER_FIELD_LOSS,
+    computeLoss: spiralCoverLoss({ beta: 1 }),
+  },
+  {
     // Two direct-vector MLP heads share one explicit maximum-sensitivity loss.
-    // The alpha slider is a neutral output mix; it is not an order/chaos axis.
+    // Encoding variants (SIREN / Fourier / HashGrid) are dock presets — same
+    // loss. The alpha slider is a neutral output mix, not order/chaos.
     // particleCount is 200k (slider to 1M): advection is a single fused WGSL
     // dispatch (see render/webgpu/advect.ts), so count no longer gates FPS.
     name: "Neural Field · Max Chaos",
@@ -1448,16 +1650,18 @@ export const GALLERY: ArtPieceConfig[] = [
     backgroundColor: [6, 2, 20],
     alphaBlend: 0.05,
     renderer: "alpha-fade",
-    createField: () => new HelmholtzField({ alpha: 0.7 }),
+    fieldArch: { ...ARCH.dualStd, alpha: 0.7 },
+    archEditable: true,
+    archDock: "dual",
+    lookEditable: true,
     fieldLoss: MAX_CHAOS_FIELD_LOSS,
     computeLoss: helmholtzChaosLoss(MAX_CHAOS_FIELD_LOSS),
   },
   {
     // MULTI-SPECIES: 3 particle classes. Head B takes r(pos, onehot(class))
     // while head A and the isotropy pressure are class-blind. Class is a
-    // stable hash of particle index
-    // storage-free); renderer colours by species. FUSED-ONLY (tfjs has no
-    // class input — ?train=tfjs is ignored for this piece).
+    // stable hash of particle index (storage-free); renderer colours by
+    // species. FUSED-ONLY (tfjs has no class input — ?train=tfjs ignored).
     name: "Neural Field · Species",
     particleCount: 200000,
     friction: 0.99,
@@ -1469,77 +1673,8 @@ export const GALLERY: ArtPieceConfig[] = [
     backgroundColor: [4, 2, 16],
     alphaBlend: 0.05,
     renderer: "alpha-fade",
-    createField: () => new HelmholtzField({ alpha: 0.7, classes: 3 }),
-    fieldLoss: MAX_CHAOS_FIELD_LOSS,
-    computeLoss: helmholtzChaosLoss(MAX_CHAOS_FIELD_LOSS),
-  },
-  {
-    // SIREN field — sinusoidal activations (Sitzmann et al.). Smooth, well-
-    // defined spatial derivatives (which the chaos/divergence probe losses
-    // measure), and higher-frequency structure than SELU. A SELECTABLE model
-    // type to compare against the standard field (same loss, same knobs).
-    // Trains FUSED (sin backward checkpoints pre-acts); advects fused too.
-    name: "Neural Field · SIREN Chaos",
-    particleCount: 200000,
-    friction: 0.99,
-    forceMagnitude: 3.5,
-    maxVelocity: 26,
-    resetRate: 0.01,
-    drawRate: 2,
-    learningRate: 0.005,
-    backgroundColor: [6, 2, 20],
-    alphaBlend: 0.05,
-    renderer: "alpha-fade",
-    createField: () =>
-      new HelmholtzField({ alpha: 0.7, modelType: "siren", sirenOmega0: 6 }),
-    fieldLoss: MAX_CHAOS_FIELD_LOSS,
-    computeLoss: helmholtzChaosLoss(MAX_CHAOS_FIELD_LOSS),
-  },
-  {
-    // FOURIER-feature field — γ(p) = [x,y,sin/cos(ωk·x/y)] input encoding beats
-    // the plain MLP's spectral bias, exposing fine "filigree" spatial detail.
-    // ω0/octaves are the artistic dial. Trains FUSED (encoding jacobian reuses
-    // the stored sin/cos features); advects fused. SELECTABLE comparison type.
-    name: "Neural Field · Fourier Chaos",
-    particleCount: 200000,
-    friction: 0.99,
-    forceMagnitude: 3.5,
-    maxVelocity: 26,
-    resetRate: 0.01,
-    drawRate: 2,
-    learningRate: 0.008,
-    backgroundColor: [2, 4, 14],
-    alphaBlend: 0.05,
-    renderer: "alpha-fade",
-    createField: () =>
-      new HelmholtzField({ alpha: 0.7, modelType: "fourier", fourierOctaves: 4 }),
-    fieldLoss: MAX_CHAOS_FIELD_LOSS,
-    computeLoss: helmholtzChaosLoss(MAX_CHAOS_FIELD_LOSS),
-  },
-  {
-    // HASH-GRID field (Instant-NGP essence, single-level): a learned feature
-    // grid (32×32×4) is bilinearly interpolated → tiny MLP. Best detail-per-
-    // FLOP; the field reads more "painted texture" than "equation". Trains
-    // FUSED (pass B scatters into grid cells); advects via the fused
-    // grid-interp kernel. SELECTABLE comparison type.
-    name: "Neural Field · HashGrid Chaos",
-    particleCount: 200000,
-    friction: 0.99,
-    forceMagnitude: 3.5,
-    maxVelocity: 26,
-    resetRate: 0.01,
-    drawRate: 2,
-    learningRate: 0.01,
-    backgroundColor: [10, 4, 14],
-    alphaBlend: 0.05,
-    renderer: "alpha-fade",
-    createField: () =>
-      new HelmholtzField({
-        alpha: 0.7,
-        modelType: "hashgrid",
-        gridSize: 32,
-        gridFeatures: 4,
-      }),
+    fieldArch: { ...ARCH.dualStd, alpha: 0.7, classes: 3 },
+    lookEditable: true,
     fieldLoss: MAX_CHAOS_FIELD_LOSS,
     computeLoss: helmholtzChaosLoss(MAX_CHAOS_FIELD_LOSS),
   },
@@ -1575,7 +1710,7 @@ export const GALLERY: ArtPieceConfig[] = [
     alphaBlend: 0.05,
     renderer: "surprise",
     colormap: "inferno",
-    createField: () => new HelmholtzField({ alpha: 0.7 }),
+    createField: () => createFieldFromArch({ ...ARCH.dualStd, alpha: 0.7 }),
     adversary: {
       tag: "on",
       kind: { tag: "single" },
@@ -1606,7 +1741,7 @@ export const GALLERY: ArtPieceConfig[] = [
     backgroundColor: [8, 2, 22],
     alphaBlend: 0.05,
     renderer: "alpha-fade",
-    createField: () => new HelmholtzField({ alpha: 0.62 }),
+    createField: () => createFieldFromArch({ ...ARCH.dualStd, alpha: 0.62 }),
     adversary: {
       tag: "on",
       kind: { tag: "wta", k: 8, relaxEps: 0.05 },
@@ -1649,7 +1784,7 @@ export const GALLERY: ArtPieceConfig[] = [
     alphaBlend: 0.05,
     renderer: "surprise",
     colormap: "coolwarm",
-    createField: () => new HelmholtzField({ alpha: 0.55 }),
+    createField: () => createFieldFromArch({ ...ARCH.dualStd, alpha: 0.55 }),
     adversary: {
       tag: "on",
       kind: { tag: "wta", k: 4, relaxEps: 0.05 },
@@ -1692,7 +1827,7 @@ export const GALLERY: ArtPieceConfig[] = [
     alphaBlend: 0.05,
     renderer: "surprise",
     colormap: "viridis",
-    createField: () => new HelmholtzField({ alpha: 0.55 }),
+    createField: () => createFieldFromArch({ ...ARCH.dualStd, alpha: 0.55 }),
     adversary: {
       tag: "on",
       kind: { tag: "wta", k: 6, relaxEps: 0.05 },
@@ -1720,7 +1855,7 @@ export const GALLERY: ArtPieceConfig[] = [
     alphaBlend: 0.05,
     renderer: "surprise",
     colormap: "inferno",
-    createField: () => new HelmholtzField({ alpha: 0.55 }),
+    createField: () => createFieldFromArch({ ...ARCH.dualStd, alpha: 0.55 }),
     adversary: {
       tag: "on",
       kind: { tag: "wta", k: 6, relaxEps: 0.05 },
@@ -1729,6 +1864,172 @@ export const GALLERY: ArtPieceConfig[] = [
     },
     fieldLoss: ZERO_FIELD_LOSS,
     computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
+  },
+  // Four Pixel GAN games on soft density drawings (docs/PIXEL_DISC.md).
+  // Shared trunk: splat → conv3×3 → codebook. Reverse-mode gen through D(pos').
+  {
+    name: "Pixel · VecField",
+    particleCount: 80000,
+    friction: 0.97,
+    drive: 0.65,
+    forceMagnitude: forceMagnitudeForDrive(0.65, 24, 0.97),
+    maxVelocity: 24,
+    resetRate: 0.003,
+    drawRate: 2,
+    learningRate: 0.0015,
+    backgroundColor: [4, 6, 14],
+    alphaBlend: 0.05,
+    renderer: "alpha-fade",
+    createField: () =>
+      createFieldFromArch({ ...ARCH.dualFourier, alpha: 0.55 }),
+    pixelDisc: {
+      kind: "vec-field",
+      weight: 0.04,
+      G: 16,
+      E: 8,
+      K: 16,
+      hidden: 32,
+      dt: 0.15,
+    },
+    fieldLoss: {
+      W_CHAOS: 0.2,
+      W_ISO: 0.6,
+      W_DIV: 0.1,
+      W_SPIRAL: 0,
+      HH: 1e-2,
+      SPIRAL_TURNS: 3,
+    },
+    computeLoss: helmholtzChaosLoss({
+      W_CHAOS: 0.2,
+      W_ISO: 0.6,
+      W_DIV: 0.1,
+      W_SPIRAL: 0,
+      HH: 1e-2,
+      SPIRAL_TURNS: 3,
+    }),
+  },
+  {
+    name: "Pixel · NextFrame",
+    particleCount: 80000,
+    friction: 0.97,
+    drive: 0.65,
+    forceMagnitude: forceMagnitudeForDrive(0.65, 24, 0.97),
+    maxVelocity: 24,
+    resetRate: 0.003,
+    drawRate: 2,
+    learningRate: 0.0015,
+    backgroundColor: [4, 6, 14],
+    alphaBlend: 0.05,
+    renderer: "alpha-fade",
+    createField: () =>
+      createFieldFromArch({ ...ARCH.dualFourier, alpha: 0.55 }),
+    pixelDisc: {
+      kind: "next-frame",
+      weight: 0.04,
+      G: 16,
+      E: 8,
+      K: 16,
+      hidden: 32,
+      dt: 0.15,
+    },
+    fieldLoss: {
+      W_CHAOS: 0.2,
+      W_ISO: 0.6,
+      W_DIV: 0.1,
+      W_SPIRAL: 0,
+      HH: 1e-2,
+      SPIRAL_TURNS: 3,
+    },
+    computeLoss: helmholtzChaosLoss({
+      W_CHAOS: 0.2,
+      W_ISO: 0.6,
+      W_DIV: 0.1,
+      W_SPIRAL: 0,
+      HH: 1e-2,
+      SPIRAL_TURNS: 3,
+    }),
+  },
+  {
+    name: "Pixel · RealFake",
+    particleCount: 80000,
+    friction: 0.97,
+    drive: 0.65,
+    forceMagnitude: forceMagnitudeForDrive(0.65, 24, 0.97),
+    maxVelocity: 24,
+    resetRate: 0.003,
+    drawRate: 2,
+    learningRate: 0.0015,
+    backgroundColor: [4, 6, 14],
+    alphaBlend: 0.05,
+    renderer: "alpha-fade",
+    createField: () =>
+      createFieldFromArch({ ...ARCH.dualFourier, alpha: 0.55 }),
+    pixelDisc: {
+      kind: "real-fake",
+      weight: 0.03,
+      G: 16,
+      E: 8,
+      K: 16,
+      hidden: 32,
+      dt: 0.15,
+    },
+    fieldLoss: {
+      W_CHAOS: 0.2,
+      W_ISO: 0.6,
+      W_DIV: 0.1,
+      W_SPIRAL: 0,
+      HH: 1e-2,
+      SPIRAL_TURNS: 3,
+    },
+    computeLoss: helmholtzChaosLoss({
+      W_CHAOS: 0.2,
+      W_ISO: 0.6,
+      W_DIV: 0.1,
+      W_SPIRAL: 0,
+      HH: 1e-2,
+      SPIRAL_TURNS: 3,
+    }),
+  },
+  {
+    name: "Pixel · Inpaint",
+    particleCount: 80000,
+    friction: 0.97,
+    drive: 0.65,
+    forceMagnitude: forceMagnitudeForDrive(0.65, 24, 0.97),
+    maxVelocity: 24,
+    resetRate: 0.003,
+    drawRate: 2,
+    learningRate: 0.0015,
+    backgroundColor: [4, 6, 14],
+    alphaBlend: 0.05,
+    renderer: "alpha-fade",
+    createField: () =>
+      createFieldFromArch({ ...ARCH.dualFourier, alpha: 0.55 }),
+    pixelDisc: {
+      kind: "inpaint",
+      weight: 0.04,
+      G: 16,
+      E: 8,
+      K: 16,
+      hidden: 32,
+      dt: 0.15,
+    },
+    fieldLoss: {
+      W_CHAOS: 0.2,
+      W_ISO: 0.6,
+      W_DIV: 0.1,
+      W_SPIRAL: 0,
+      HH: 1e-2,
+      SPIRAL_TURNS: 3,
+    },
+    computeLoss: helmholtzChaosLoss({
+      W_CHAOS: 0.2,
+      W_ISO: 0.6,
+      W_DIV: 0.1,
+      W_SPIRAL: 0,
+      HH: 1e-2,
+      SPIRAL_TURNS: 3,
+    }),
   },
   {
     // GENERAL-SUM PREDICTOR GAME. Head A opposes the predictor, head B
@@ -1750,11 +2051,11 @@ export const GALLERY: ArtPieceConfig[] = [
     alphaBlend: 0.05,
     renderer: "alpha-fade",
     createField: () =>
-      new HelmholtzField({
+      createFieldFromArch({
+        ...ARCH.dualFourier,
         alpha: 0.5,
-        semantic: "agree-disagree",
-        modelType: "fourier",
         fourierOctaves: 3,
+        semantic: "agree-disagree",
       }),
     fieldLoss: ZERO_FIELD_LOSS,
     adversary: {
@@ -1795,7 +2096,7 @@ export const GALLERY: ArtPieceConfig[] = [
     // an order/chaos axis and the two direct-vector heads have no separate roles.
     renderer: "alpha-fade",
     createField: () =>
-      new HelmholtzField({ alpha: 0.45, modelType: "fourier", fourierOctaves: 4 }),
+      createFieldFromArch({ ...ARCH.dualFourier, alpha: 0.45 }),
     fieldLoss: MAX_CHAOS_FIELD_LOSS,
     adversary: {
       tag: "on",
@@ -1948,6 +2249,30 @@ const SPLAT_DECAY_BY_RENDERER: Record<RendererType, number> = {
   surprise: 0,
 };
 
+/** Ink look presets — dock axis orthogonal to loss and field arch. */
+export type InkLook = "ghost" | "clean" | "trails";
+
+export const INK_LOOK_DECAY: Record<InkLook, number> = {
+  ghost: SPLAT_DECAY_BY_RENDERER["alpha-fade"],
+  clean: SPLAT_DECAY_BY_RENDERER.clean,
+  trails: SPLAT_DECAY_BY_RENDERER["trail-buffer"],
+};
+
+export function inkLookFromRenderer(renderer: RendererType): InkLook {
+  switch (renderer) {
+    case "clean":
+      return "clean";
+    case "trail-buffer":
+      return "trails";
+    default:
+      return "ghost";
+  }
+}
+
+export function decayForRenderer(renderer: RendererType): number {
+  return SPLAT_DECAY_BY_RENDERER[renderer];
+}
+
 export interface LoopHandle {
   field: HelmholtzField | null;
   getParticleCount(): number;
@@ -2011,6 +2336,8 @@ export interface StartLoopOptions {
     adversaryLoss?: AdversaryLoss;
     k?: number;
     relaxEps?: number;
+    /** Swap declarative field architecture (aesthetic / archEditable pieces). */
+    fieldArch?: FieldArch;
   };
 }
 
@@ -2149,6 +2476,7 @@ export function startLoop(
   // train + generator reward recorded into the SAME frame encoder, extGrads
   // feeding the field trainer's pass B. Null on the tfjs path.
   let advTrainer: AdversaryTrainer | null = null;
+  let pixelDiscTrainer: PixelDiscTrainer | null = null;
   // Agree+Disagree owns TWO independent predictors. `advTrainer` is lane A
   // (field head 0, disagree) and this is lane B (field head 1, agree). Both
   // read the same field-weight buffer; neither owns or mutates it.
@@ -2322,6 +2650,7 @@ export function startLoop(
     // async-readback record flags for this frame (fused adversary path)
     let advStatsRec = false;
     let advStatsRecB = false;
+    let pixelDiscStatsRec = false;
     let advSurRec = false;
     let speedRec = false;
     // `?trainEvery=N`: amortize training over N frames — applies to BOTH the
@@ -2370,6 +2699,19 @@ export function startLoop(
         // external gradients and applies exactly one field Adam update.
         encodeAdversaryBranch(advTrainer);
         if (advTrainerB) encodeAdversaryBranch(advTrainerB);
+      }
+      if (pixelDiscTrainer && cfg.pixelDisc) {
+        const b = Math.min(sampleRate, 512);
+        pixelDiscTrainer.encodeStep(enc, {
+          b,
+          alpha: (field as HelmholtzField).alpha,
+          lr: discriminatorLearningRate,
+          genWeight: cfg.pixelDisc.weight,
+          applyDisc: true,
+          width: w,
+          height: h,
+        });
+        pixelDiscStatsRec = pixelDiscTrainer.recordStats(enc);
       }
       trainer.encodeStep(
         enc,
@@ -2704,6 +3046,7 @@ export function startLoop(
     if (timer) timer.afterSubmit();
     if (advTrainer) advTrainer.afterSubmit(advStatsRec);
     if (advTrainerB) advTrainerB.afterSubmit(advStatsRecB);
+    if (pixelDiscTrainer) pixelDiscTrainer.afterSubmit(pixelDiscStatsRec);
     if (advSurStats) advSurStats.afterSubmit(advSurRec);
     if (speedStats) speedStats.afterSubmit(speedRec);
 
@@ -2809,8 +3152,20 @@ export function startLoop(
       console.log(`[tfjs] CPU handoff threshold -> ${parseInt(handoff, 10) || 0}`);
     }
 
-    // Backend is ready — NOW safe to build models/tensors.
-    field = cfg.createField ? cfg.createField() : null;
+    // Architecture resolution: declarative fieldArch (piece default or dock
+    // override) wins; createField is for load-bearing game recipes that bake
+    // semantics the dock must not overwrite. Legacy createModel is last resort.
+    const archOverride = options.overrides?.fieldArch;
+    const resolvedArch = archOverride
+      ? archOverride
+      : cfg.fieldArch
+      ? cfg.fieldArch
+      : null;
+    field = resolvedArch
+      ? createFieldFromArch(resolvedArch)
+      : cfg.createField
+      ? cfg.createField()
+      : null;
     model = !field && cfg.createModel ? cfg.createModel() : null;
     varList = field ? field.trainableWeights : undefined;
     wh = tf.tensor2d([[w, h]]);
@@ -2931,7 +3286,15 @@ export function startLoop(
     // encoding jacobian, and the hashgrid interp/scatter — each verified vs a
     // tfjs-autograd fixture on Metal at cos=1.0 (tools/train_types_test.ts).
     // `?train=tfjs` keeps the autograd path selectable for A/B comparison.
-    if (field && !wantTfjsTrainer && (advRt.tag === "off" || fusedAdvOk)) {
+    // Field pieces with an explicit fieldLoss train FUSED by default
+    // (chaos / cover / … compiled into train_wgsl). Aesthetic pieces that
+    // omit fieldLoss keep the tfjs computeLoss path.
+    if (
+      field &&
+      cfg.fieldLoss !== undefined &&
+      !wantTfjsTrainer &&
+      (advRt.tag === "off" || fusedAdvOk)
+    ) {
       // `?rollout=K` (1..16, default 1): K-step BPTT rollout — the loss sees
       // how particles FLOW through the field (evolving pos+vel), not just one
       // step. K is compiled into the trainer's WGSL. K=1 ≡ the tfjs loss.
@@ -3019,9 +3382,50 @@ export function startLoop(
                 `generator reward in-frame, tfjs idle`
         );
       }
-      const extGradBuffers = [advTrainer?.extGradsBuf, advTrainerB?.extGradsBuf].filter(
-        (buffer): buffer is GPUBuffer => !!buffer
-      );
+      if (
+        cfg.pixelDisc &&
+        !!field &&
+        !wantTfjsTrainer &&
+        advect.layout.classes === 0 &&
+        advect.layout.encoding.kind !== "hashgrid" &&
+        (advect.layout.spec.kind === "helmholtz" ||
+          advect.layout.spec.kind === "agree-disagree")
+      ) {
+        pixelDiscTrainer = new PixelDiscTrainer(device!, advect.layout, {
+          fieldWeightsBuffer: advect.weightsBuffer,
+          dims: {
+            kind: cfg.pixelDisc.kind ?? "vec-field",
+            G: cfg.pixelDisc.G,
+            E: cfg.pixelDisc.E,
+            K: cfg.pixelDisc.K,
+            hidden: cfg.pixelDisc.hidden,
+            dt: cfg.pixelDisc.dt,
+          },
+          batchCap: 512,
+          seed: 20260805,
+        });
+        pixelDiscTrainer.setParticleBuffers(
+          advect.posBuffer,
+          advect.velBuffer,
+          advect.count
+        );
+        console.log(
+          `[pixel-disc] FUSED kind=${pixelDiscTrainer.kind} ` +
+            `G=${pixelDiscTrainer.dims.G} E=${pixelDiscTrainer.dims.E} ` +
+            `K=${pixelDiscTrainer.dims.K} weight=${cfg.pixelDisc.weight} — ` +
+            `soft density critic + reverse-mode gen path (no JVP)`
+        );
+      }
+      const extGradBuffers: GPUBuffer[] = [];
+      if (advTrainer) extGradBuffers.push(advTrainer.extGradsBuf);
+      if (advTrainerB) extGradBuffers.push(advTrainerB.extGradsBuf);
+      else if (pixelDiscTrainer) extGradBuffers.push(pixelDiscTrainer.extGradsBuf);
+      if (extGradBuffers.length > 2) {
+        throw new Error(
+          `[train] at most 2 extGrad buffers (got ${extGradBuffers.length}); ` +
+            `Agree+Disagree + pixel-disc cannot share the same frame yet`
+        );
+      }
       trainer = new FusedTrainer(device!, advect.layout, {
         weightsBuffer: advect.weightsBuffer,
         batchCap: 1024,
@@ -3221,7 +3625,10 @@ export function startLoop(
         },
         getBlend: () => (field instanceof HelmholtzField ? field.alpha : 0),
         setBlend: (v: number) => {
-          if (field instanceof HelmholtzField) field.alpha = Math.max(0, Math.min(1, v));
+          if (!(field instanceof HelmholtzField)) return;
+          // Single-head arches keep α=0 (no second head to blend).
+          field.alpha =
+            field.headCount === 1 ? 0 : Math.max(0, Math.min(1, v));
         },
         getStrokeStyle: () => strokeStyle,
         setStrokeStyle: (v: SplatStyle) => {
@@ -3290,6 +3697,7 @@ export function startLoop(
     if (trainer) trainer.destroy(); // batch/scratch/grads/adam GPUBuffers
     if (advTrainer) advTrainer.destroy(); // adv weights/adam/scratch/stats/surprise/extGrads
     if (advTrainerB) advTrainerB.destroy(); // independent B predictor + extGrad
+    if (pixelDiscTrainer) pixelDiscTrainer.destroy();
     if (advSurStats) advSurStats.destroy();
     if (speedStats) speedStats.destroy();
     if (advect) advect.destroy(); // pos/vel/weights GPUBuffers

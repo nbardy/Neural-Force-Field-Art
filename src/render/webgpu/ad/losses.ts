@@ -76,6 +76,54 @@ export function spiralTerm(g: Graph, dx: Node, dy: Node, b: number, turns: numbe
   return best!;
 }
 
+/** center = ‖pos − canvas_center‖² in pixel space (unweighted; scale by W_CENTER). */
+export function centerTerm(g: Graph, dx: Node, dy: Node): Node {
+  return g.add(g.mul(dx, dx), g.mul(dy, dy));
+}
+
+/**
+ * Spiral cover ↑ (curve→particles Chamfer): mean over fixed spiral samples of
+ * min_i ‖p_i − s_m‖². Batch-coupled — needs the full set of particle positions
+ * as IR inputs (same reason hashgrid gather is awkward in a per-thread graph).
+ * Unweighted; caller scales by W_COVER / maxR² via {@link coverLoss}.
+ */
+export function coverTerm(
+  g: Graph,
+  positions: V2[],
+  samples: V2[]
+): Node {
+  if (positions.length === 0 || samples.length === 0) {
+    throw new Error("coverTerm: need ≥1 particle and ≥1 spiral sample");
+  }
+  let acc: Node | null = null;
+  for (const s of samples) {
+    let best: Node | null = null;
+    for (const p of positions) {
+      const d = sub2(g, p, s);
+      const d2 = dot2(g, d, d);
+      best = best === null ? d2 : g.min(best, d2);
+    }
+    acc = acc === null ? best! : g.add(acc, best!);
+  }
+  return g.div(acc!, g.const(samples.length));
+}
+
+/**
+ * Weighted spiral cover matching fused finalize:
+ *   L = W_COVER · mean_m min_i ‖p_i − s_m‖² / maxR²
+ * Lives outside {@link buildSample} because cover is batch-coupled.
+ */
+export function coverLoss(
+  g: Graph,
+  positions: V2[],
+  samples: V2[],
+  wCover: number,
+  maxR2: number
+): Node {
+  const raw = coverTerm(g, positions, samples);
+  return g.mul(g.const(wCover / Math.max(maxR2, 1)), raw);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
    Relaxed winner-take-all adversary — the IR oracle for the fused port of
    src/core/gan/adversary.ts. Per-tuple only: B (the batch of tuples) is the

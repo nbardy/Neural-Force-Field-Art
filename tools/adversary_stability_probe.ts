@@ -56,6 +56,7 @@ const ZERO: FieldLossSpec = {
   W_ISO: 0,
   W_DIV: 0,
   W_SPIRAL: 0,
+  W_COVER: 0, W_CENTER: 0,
   HH: 1e-2,
   SPIRAL_TURNS: 3,
 };

@@ -1,11 +1,14 @@
 /**
  * The full per-sample training loss L_ad, built in the IR — a K-step physics
  * rollout of the compatibility-named two-head direct-vector field, then the
- * explicit composite chaos/div/spiral
+ * explicit composite chaos/div/spiral/center
  * loss on pos_K plus the batch-isotropy fold. `grad(L_ad, weights)` is the ENTIRE
  * per-sample backward: δ-chains, the K-step BPTT two-adjoint recurrence, and the
  * loss seeds all emerge from one reverse pass. Summed over the batch it equals
  * the hand-written trainer's gradient (verified vs the tfjs fixture at cos≈1).
+ *
+ * Spiral cover (W_COVER) is batch-coupled — use {@link coverLoss} on the full
+ * position set, not this per-sample graph.
  *
  * Mirrors tools/grad_reference.ts (the tfjs oracle) exactly: raw field output at
  * the probes, forceMag-scaled forces for physics+isotropy, spiral on pixel
@@ -17,6 +20,7 @@ import { jvp } from "./autodiff";
 import {
   chaosTerm,
   chaosTermExact,
+  centerTerm,
   divergenceTerm,
   divergenceTermExact,
   spiralTerm,
@@ -38,6 +42,13 @@ export interface RolloutCfg {
   wDiv: number;
   wSpiral: number;
   wIso: number;
+  /** Mean squared distance to canvas center (pixel). Default 0. */
+  wCenter?: number;
+  /**
+   * Reserved: cover is batch-coupled — wire via {@link coverLoss}, not here.
+   * Kept on the cfg so FieldLossSpec → RolloutCfg mapping stays 1:1.
+   */
+  wCover?: number;
   N: number; // batch size — for the 1/N and 1/(N·K) loss scalings
   /**
    * Input encoding ahead of the heads (default raw). Fourier builds γ(p) in
@@ -110,6 +121,7 @@ export interface SampleGraph {
   chaos: Node;       // unweighted per-sample terms — for loss reconstruction / checks
   div: Node;
   spiral: Node;
+  center: Node;
 }
 
 /**
@@ -161,21 +173,26 @@ export function buildSample(g: Graph, cfg: RolloutCfg, dimsG: HeadDim[], dimsR: 
     div = divergenceTermExact(g, Jx, Jy);
   }
 
-  // spiral on pos_K in PIXEL coords
+  // spiral + center on pos_K in PIXEL coords
   const cx = cfg.W / 2, cy = cfg.H / 2;
   const b = (Math.min(cfg.W, cfg.H) * 0.38) / (cfg.spiralTurns * 2 * Math.PI);
-  const spiral = spiralTerm(g, g.sub(posK[0], g.const(cx)), g.sub(posK[1], g.const(cy)), b, cfg.spiralTurns);
+  const dx = g.sub(posK[0], g.const(cx));
+  const dy = g.sub(posK[1], g.const(cy));
+  const spiral = spiralTerm(g, dx, dy, b, cfg.spiralTurns);
+  const center = centerTerm(g, dx, dy);
 
   // isotropy fold: dC injected as constants (computed from batch covariance).
   const dC: [Node, Node, Node] = [g.input("dC00"), g.input("dC11"), g.input("dC01")];
   const isoFold = isotropyFold(g, Fs, dC);
 
   const NK = cfg.N * cfg.K;
+  const wCenter = cfg.wCenter ?? 0;
   const L = g.sum([
     g.mul(g.const(cfg.wChaos / cfg.N), chaos),
     g.mul(g.const(cfg.wDiv / cfg.N), div),
     g.mul(g.const(cfg.wSpiral / cfg.N), spiral),
+    g.mul(g.const(wCenter / cfg.N), center),
     g.mul(g.const(cfg.wIso / NK), isoFold),
   ]);
-  return { L, Fs, posK, chaos, div, spiral };
+  return { L, Fs, posK, chaos, div, spiral, center };
 }

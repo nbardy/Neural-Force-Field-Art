@@ -452,7 +452,7 @@ explicitly composed. **Experimental.**
 | two ordinary MLPs called Helmholtz/order/chaos | rejected terminology |
 | explicit maximum-chaos loss without spiral | implemented |
 | Agree+Disagree A/B with derived C | implemented; isolation and live soak verified |
-| AD IR as production compiler | false; oracle only today |
+| AD IR as production compiler | false; oracle only today — Phase B cutover checklist in `agent_notes/2026-08-06_141500_KST_remaining_work_plan.md` |
 | unique measured surprise coverage | implemented; 100% live coverage verified |
 | compression progress | experimental |
 | replay-buffer novelty GAN | experimental |

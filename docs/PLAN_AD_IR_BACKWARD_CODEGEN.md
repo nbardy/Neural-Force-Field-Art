@@ -1,6 +1,10 @@
 # Source-to-source AD: generating the backward WGSL from the forward codegen
 
-**Status:** M0–M4 SHIPPED (2026-07-10), M5 (forward-mode JVP) landed in the IR.
+**Status:** M0–M5 SHIPPED for the IR *oracle*; production trainer remains
+hand-specialized `train_wgsl.ts` (see agent_notes remaining-work Phase B).
+Cover ↑ (`W_COVER`) is fused in `train_wgsl` and mirrored as `coverTerm` in
+the IR oracle (`tools/cover_oracle_test.ts`) — batch-coupled, like hashgrid,
+not a reason to flip IR→production alone.
 Sibling to `MATH_ANALYTIC_GRADIENTS.md` (the *hand-derived* math this AD pass
 must reproduce bit-for-bit) and `PLAN_FUSED_TRAIN.md` (the shipped trainer).
 
