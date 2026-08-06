@@ -1080,7 +1080,9 @@ export function adversaryPassAShader(
         let d = scratch[ab + ${aOutLast}u + o] - yvec[o];
         ss = ss + d * d;
       }
-      resid[${j}] = select(0.0, sqrt(ss), targetActive);
+      let r = select(0.0, sqrt(ss), targetActive);
+      // Non-finite residuals must not enter WTA/Adam — one NaN zeroes the batch.
+      resid[${j}] = select(0.0, r, isFiniteF(r));
     }`;
   const residCalc = Array.from({ length: k }, (_, j) =>
     softAngular
@@ -1330,6 +1332,10 @@ fn observerDelta2(a : vec2f) -> vec2f {
   return ${observerGeometry === "periodic" ? "a - round(a)" : "a"};
 }
 fn b2u(c : bool) -> u32 { return select(0u, 1u, c); }
+fn isFiniteF(x : f32) -> bool {
+  // NaN ≠ itself; ±Inf exceeds the largest finite f32.
+  return x == x && abs(x) <= 3.402823466e+38;
+}
 ${softAngular ? `
 fn softSphereEmbed(a : vec2f) -> vec3f {
   let q = vec3f(a, ${flit(tau)});
@@ -1431,14 +1437,28 @@ fn advFwd(@builtin(global_invocation_id) gid : vec3u,
       scratch[sBase + ${sl.siteInOff}u + t * 2u + 1u] = uk.y;
       ${encodeAt("uk", "t")}let F = ${fieldForward("t")};
 ${signalForward}
+      // A nonfinite field signal (SELU Inf·0 before the clamp landed, or a
+      // future encoding) must not enter κ or the WTA residual.
+      if (!isFiniteF(sig[t].x) || !isFiniteF(sig[t].y)) {
+        sig[t] = vec2f(0.0);
+        sigJac[t] = vec2f(0.0);
+      }
     }
 
     // ---- tuple encoding κ -------------------------------------------------
     var uvec : array<f32, ${du}>;
     var yvec : array<f32, ${dy}>;
 ${encFB.fwd}
-    for (var i = 0u; i < ${du}u; i = i + 1u) { scratch[sBase + ${sl.uOff}u + i] = uvec[i]; }
-    for (var o = 0u; o < ${dy}u; o = o + 1u) { scratch[sBase + ${sl.yOff}u + o] = yvec[o]; }
+    for (var i = 0u; i < ${du}u; i = i + 1u) {
+      let ui = uvec[i];
+      uvec[i] = select(0.0, ui, isFiniteF(ui));
+      scratch[sBase + ${sl.uOff}u + i] = uvec[i];
+    }
+    for (var o = 0u; o < ${dy}u; o = o + 1u) {
+      let yo = yvec[o];
+      yvec[o] = select(0.0, yo, isFiniteF(yo));
+      scratch[sBase + ${sl.yOff}u + o] = yvec[o];
+    }
 
     // ---- K adversary heads: forward, residuals, winner -------------------
 ${advFwdCalls}
@@ -1463,12 +1483,13 @@ ${headSpreadCalc}
     // are zero-sum on this scalar. Scale-hold is intentionally general-sum:
     // the field reverses the direction term but cooperates on relative scale,
     // with a separate positive energy anchor applied below.
-    let sur = weighted;
+    let sur = select(0.0, weighted, isFiniteF(weighted));
     scratch[sBase + ${sl.surOff}u] = sur;
     scratch[sBase + ${sl.winOff}u] = f32(win);
     var targetNorm2 = 0.0;
     for (var o = 0u; o < ${vectorDy}u; o = o + 1u) {
-      targetNorm2 = targetNorm2 + yvec[o] * yvec[o];
+      let y = yvec[o];
+      if (isFiniteF(y)) { targetNorm2 = targetNorm2 + y * y; }
     }
     var perUnitSignal = 0.0;
     // This branch is intentionally exact: an inactive/directionless target is
@@ -1521,8 +1542,11 @@ ${signalBackward}
     statW = weighted;
     statS = sur;
     if (targetActive) {
-      statY2 = targetNorm2;
-      statEnergy = tupleEnergy;
+      // Guard the RMS reductions: a single nonfinite y-component used to make
+      // batchRms/energyRms NaN even after resid was zeroed, which the HUD
+      // surfaces as surprise NaN via the reward-scale EMA path.
+      if (isFiniteF(targetNorm2)) { statY2 = targetNorm2; }
+      if (isFiniteF(tupleEnergy)) { statEnergy = tupleEnergy; }
       statActive = 1.0;
       atomicAdd(&winCnt[win], 1u);
     }
@@ -1787,6 +1811,10 @@ struct UAdvB {
 @group(0) @binding(5) var<storage, read_write> adamV : array<f32>;
 @group(0) @binding(6) var<storage, read_write> extGrads : array<f32>;
 
+fn isFiniteF(x : f32) -> bool {
+  return x == x && abs(x) <= 3.402823466e+38;
+}
+
 // thread = one packed ADVERSARY weight float: dW = Σ_tuples aIn⊗δ, then Adam
 // on the adversary's own buffer/moments (the field optimizer never sees them).
 @compute @workgroup_size(${ADV_WG_B})
@@ -1795,6 +1823,9 @@ fn advOpt(@builtin(global_invocation_id) gid : vec3u) {
   if (t >= ${advL.totalFloats}u) { return; }
   var g = 0.0;
 ${advBlocks.join("\n")}
+  // Drop non-finite grads before they enter Adam: Inf/Inf in the bias-corrected
+  // ratio is the fused tip-over that paints surprise NaN on the live Quad piece.
+  g = select(0.0, g, isFiniteF(g));
   advGrads[t] = g;
 
   if (ub.apply == 1u) {
@@ -1805,7 +1836,9 @@ ${advBlocks.join("\n")}
     let tf_ = f32(ub.t);
     let mhat = mm / (1.0 - pow(ub.beta1, tf_));
     let vhat = vv / (1.0 - pow(ub.beta2, tf_));
-    advW[t] = advW[t] - ub.lr * mhat / (sqrt(vhat) + ub.eps);
+    let step = ub.lr * mhat / (sqrt(vhat) + ub.eps);
+    let next = advW[t] - step;
+    advW[t] = select(advW[t], next, isFiniteF(next));
   }
 }
 
@@ -1819,7 +1852,7 @@ fn fieldGrad(@builtin(global_invocation_id) gid : vec3u) {
   if (t >= ${field.totalFloats}u) { return; }
   var g = 0.0;
 ${fieldBlocks.join("\n")}
-  extGrads[t] = g;
+  extGrads[t] = select(0.0, g, isFiniteF(g));
 }
 `;
 }

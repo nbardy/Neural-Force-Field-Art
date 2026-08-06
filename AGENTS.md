@@ -72,3 +72,19 @@ Output: `SCREENSHOT <path>`, `PROBE {webgpu,adapter,hud,warning}`, then the full
 - No linter or test runner is configured.
 - Both `yarn.lock` and `package-lock.json` may exist; the deploy path uses `npm` + `git push` to the `gh-pages` branch (site: https://nbardy.github.io/Neural-Force-Field-Art/).
 - `tools/smoke.mjs` needs `puppeteer` (a devDependency; downloads a Chromium on install).
+
+### Adversary numerical stability
+
+- Standalone adversary pieces use field/G Adam LR `0.001`, D LR `0.003`. Reward
+  weight is **not** an honest generator-step knob under Adam (see
+  `agent_notes/2026-07-29_010655_KST_adversary_release_completion.md`).
+- `tools/adversary_stability_probe.ts` co-trains D→G on a shared field buffer
+  **without advect** — useful, but it missed the Quad/Tri live blow-up.
+- Particle-coupled repro: `TAG=quad-labelled N=60000 bun tools/quad_nan_probe.ts`
+  (advect + particle-sourced D/G). Use `FINE_AFTER=<step>` to catch the first
+  nonfinite **stage**. Live HUD soak: `node tools/soak_adversary.mjs quad6 …`.
+- Policy in fused WGSL: ε inside every `sqrt`/norm radicand, activity floors on
+  singular charts, SELU preact clamp (±80), and `isFiniteF` gates on residuals /
+  Adam / extGrads. Guards are **inline in the fused shaders** — no host
+  round-trip; the hot path remains one `encodeStep` encoder → one `queue.submit`.
+- Detail handoff: `agent_notes/2026-08-05_231314_KST_quad_wta_nan.md`.

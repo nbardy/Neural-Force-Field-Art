@@ -227,8 +227,13 @@ export function scratchBytes(
 /** Shared WGSL prelude (activations, derivatives, PCG hash). EXPORTED for the
  *  adversary trainer (adversary_wgsl.ts), which reuses the same head codegen. */
 export const COMMON = /* wgsl */ `
+// Clamp the pre-activation so exp(x) cannot overflow f32 and the linear
+// branch cannot grow without bound. |x|≳80 is already pathological for this
+// net; without the floor, Inf·0 in a later matmul becomes NaN and poisons
+// Adam (Inf/Inf) — the live Quad/Tri WTA blow-up mode under particle coupling.
 fn selu(x : f32) -> f32 {
-  return select(1.7580993408473768 * (exp(x) - 1.0), 1.0507009873554805 * x, x > 0.0);
+  let xc = clamp(x, -80.0, 80.0);
+  return select(1.7580993408473768 * (exp(xc) - 1.0), 1.0507009873554805 * xc, xc > 0.0);
 }
 // derivative from the POST-activation value a = selu(x):
 //   x>0  ⇔ a>0 : scale
@@ -1172,6 +1177,9 @@ ${blocks.join("\n")}
 ${hasStructuralLoss ? "" : "  g = select(0.0, scratch[0], false); // retain binding 2; value is never selected"}
 ${extGradCount > 0 ? "  g = g + extGrad0[t];" : ""}
 ${extGradCount > 1 ? "  g = g + extGrad1[t];" : ""}
+  // Same Adam Inf/Inf guard as adversary_wgsl advOpt — a non-finite external
+  // reward must not permanently poison field weights.
+  g = select(0.0, g, g == g && abs(g) <= 3.402823466e+38);
   grads[t] = g;
 
   if (ub.apply == 1u) {
@@ -1183,7 +1191,9 @@ ${extGradCount > 1 ? "  g = g + extGrad1[t];" : ""}
     let tf_ = f32(ub.t);
     let mhat = m / (1.0 - pow(ub.beta1, tf_));
     let vhat = v / (1.0 - pow(ub.beta2, tf_));
-    weights[t] = weights[t] - ub.lr * mhat / (sqrt(vhat) + ub.eps);
+    let step = ub.lr * mhat / (sqrt(vhat) + ub.eps);
+    let next = weights[t] - step;
+    weights[t] = select(weights[t], next, next == next && abs(next) <= 3.402823466e+38);
   }
 }
 `;

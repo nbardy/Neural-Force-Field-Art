@@ -900,10 +900,12 @@ ${weightAccess}
 
 // tfjs 'selu' constants (1.7580993… = scale*alpha, fused)
 fn selu(x : f32) -> f32 {
-  return select(1.7580993408473768 * (exp(x) - 1.0), 1.0507009873554805 * x, x > 0.0);
+  let xc = clamp(x, -80.0, 80.0);
+  return select(1.7580993408473768 * (exp(xc) - 1.0), 1.0507009873554805 * xc, xc > 0.0);
 }
 fn selu4(x : vec4f) -> vec4f {
-  return select(1.7580993408473768 * (exp(x) - vec4f(1.0)), 1.0507009873554805 * x, x > vec4f(0.0));
+  let xc = clamp(x, vec4f(-80.0), vec4f(80.0));
+  return select(1.7580993408473768 * (exp(xc) - vec4f(1.0)), 1.0507009873554805 * xc, xc > vec4f(0.0));
 }
 fn sigmoid_(x : f32) -> f32 { return 1.0 / (1.0 + exp(-x)); }
 fn sigmoid4(x : vec4f) -> vec4f { return vec4f(1.0) / (vec4f(1.0) + exp(-x)); }
