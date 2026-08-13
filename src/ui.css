@@ -324,16 +324,30 @@ input {
 }
 
 .sparkline {
-  width: 104px;
-  height: 20px;
+  width: 160px;
+  height: 28px;
   border-bottom: 1px solid rgba(126, 224, 160, 0.12);
 }
 
 .sparkline polyline {
   fill: none;
-  stroke: var(--tui-green);
   stroke-width: 1.2;
   vector-effect: non-scaling-stroke;
+}
+
+.sparkline-raw {
+  stroke: rgba(126, 224, 160, 0.35);
+}
+
+.sparkline-smooth {
+  stroke: var(--tui-green);
+}
+
+.chart-legend {
+  font-size: 10px;
+  opacity: 0.55;
+  margin: -2px 0 6px;
+  letter-spacing: 0.02em;
 }
 
 .head-bars {

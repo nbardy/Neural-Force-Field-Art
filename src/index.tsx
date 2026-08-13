@@ -45,7 +45,8 @@ if (!container) throw new Error("Container not found");
 
 const PMIN = 200;
 const PMAX = 1_000_000;
-const SURPRISE_HISTORY = 120;
+const SURPRISE_HISTORY = 360; // ~72s at 200ms poll
+const HISTORY_SMOOTH = 0.08; // EMA α for overlay (higher = snappier)
 const CMAPS: ColormapName[] = ["inferno", "viridis", "coolwarm"];
 const G_LR_MIN = GAME_LEARNING_RATE_RANGE.generator.min;
 const G_LR_MAX = GAME_LEARNING_RATE_RANGE.generator.max;
@@ -69,6 +70,27 @@ interface RuntimeConfig {
   /** Dock override for archEditable pieces; null = piece default fieldArch. */
   archPreset: ArchPresetKey | null;
 }
+
+/** Live dials + compile-time dock knobs persisted across refresh. */
+interface PersistedDock {
+  runtime: RuntimeConfig;
+  particles: number;
+  samples: number;
+  maxVelocity: number;
+  drive: number;
+  generatorLearningRate: number;
+  discriminatorLearningRate: number;
+  resetRate: number;
+  decay: number;
+  look: InkLook;
+  blend: number;
+  strokeStyle: SplatStyle;
+  strokeLength: number;
+  advWeight: number;
+  colorMode: ColorMode;
+}
+
+const DOCK_STORAGE_KEY = "nffa.dock.v2";
 
 type AdversaryLossTag = AdversaryLoss["tag"];
 
@@ -151,6 +173,263 @@ function defaultsForPiece(piece: number): RuntimeConfig {
   };
 }
 
+/** Switch gallery piece without wiping dock dials. */
+function runtimeForPieceSwitch(
+  previous: RuntimeConfig,
+  piece: number
+): RuntimeConfig {
+  if (previous.piece === piece) return previous;
+  const nextDefaults = defaultsForPiece(piece);
+  // Re-adopt the piece's baked observer + loss + target + K/ε. Those are the
+  // didactic identity of each gallery entry (Pair = soft-angle, Quad =
+  // raw-vector K=6, …). Keeping loss across switches used to strand Pair on
+  // RAW after a Quad visit — Euclidean amplitude games go diagonal and look
+  // like "the angle disc learned nothing." Keeping K across WTA pieces was
+  // the same class of bug (Pair K=4 silently stuck on Quad). Live dials
+  // (particles, LRs, drive, trails, …) stay in React state outside this
+  // object and are re-synced from the new piece on gallery switch.
+  return {
+    ...previous,
+    piece,
+    encoding: nextDefaults.encoding,
+    target: nextDefaults.target,
+    loss: nextDefaults.loss,
+    adversaryKind: nextDefaults.adversaryKind,
+    k: nextDefaults.k,
+    relaxEps: nextDefaults.relaxEps,
+    // Don't carry an aesthetic arch preset onto a locked game piece.
+    archPreset: null,
+  };
+}
+
+function isBorderMode(value: unknown): value is BorderMode {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    "tag" in value &&
+    (value.tag === "wrap" || value.tag === "bounce" || value.tag === "reset")
+  );
+}
+
+function isTupleEncoding(value: unknown): value is TupleEncoding {
+  if (!value || typeof value !== "object" || !("tag" in value)) return false;
+  const tag = (value as { tag: string }).tag;
+  return (
+    tag === "point" ||
+    tag === "pair" ||
+    tag === "pair-rotation" ||
+    tag === "pair-rotation-scale-raw" ||
+    tag === "pair-rotation-scale-adjusted" ||
+    tag === "tri" ||
+    tag === "quad-labelled"
+  );
+}
+
+function isAdversaryTarget(value: unknown): value is AdversaryTarget {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    "tag" in value &&
+    (value.tag === "force" || value.tag === "post-velocity")
+  );
+}
+
+function isAdversaryLoss(value: unknown): value is AdversaryLoss {
+  if (!value || typeof value !== "object" || !("tag" in value)) return false;
+  const loss = value as AdversaryLoss;
+  switch (loss.tag) {
+    case "raw-vector":
+      return true;
+    case "soft-angle":
+      return Number.isFinite(loss.tau) && loss.tau > 0;
+    case "angle-relative-scale":
+    case "angle-scale-hold":
+      return (
+        Number.isFinite(loss.tau) &&
+        loss.tau > 0 &&
+        Number.isFinite(loss.scaleWeight) &&
+        loss.scaleWeight >= 0 &&
+        Number.isFinite(loss.energyWeight) &&
+        loss.energyWeight >= 0 &&
+        Number.isFinite(loss.energyTarget) &&
+        loss.energyTarget > 0
+      );
+    default:
+      return false;
+  }
+}
+
+function isColorMode(value: unknown): value is ColorMode {
+  if (!value || typeof value !== "object" || !("tag" in value)) return false;
+  const mode = value as ColorMode;
+  if (mode.tag === "velocity") return true;
+  if (mode.tag === "surprise-raw" || mode.tag === "surprise-per-unit") {
+    return (CMAPS as readonly string[]).includes(mode.colormap);
+  }
+  return false;
+}
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, n));
+}
+
+function parsePersistedDock(raw: unknown): PersistedDock | null {
+  if (!raw || typeof raw !== "object") return null;
+  const data = raw as Partial<PersistedDock>;
+  const runtime = data.runtime as Partial<RuntimeConfig> | undefined;
+  if (!runtime) return null;
+  const piece = Number(runtime.piece);
+  if (!Number.isInteger(piece) || piece < 0 || piece >= GALLERY.length) return null;
+  if (!isBorderMode(runtime.border)) return null;
+  if (!isTupleEncoding(runtime.encoding)) return null;
+  if (!isAdversaryTarget(runtime.target)) return null;
+  if (!isAdversaryLoss(runtime.loss)) return null;
+  if (
+    runtime.adversaryKind !== "off" &&
+    runtime.adversaryKind !== "single" &&
+    runtime.adversaryKind !== "wta"
+  ) {
+    return null;
+  }
+  const k = Number(runtime.k);
+  const relaxEps = Number(runtime.relaxEps);
+  if (!Number.isFinite(k) || !Number.isFinite(relaxEps)) return null;
+  const archPreset =
+    runtime.archPreset === null || runtime.archPreset === undefined
+      ? null
+      : isArchPresetKey(runtime.archPreset)
+        ? runtime.archPreset
+        : null;
+
+  const particles = Number(data.particles);
+  const samples = Number(data.samples);
+  const maxVelocity = Number(data.maxVelocity);
+  const drive = Number(data.drive);
+  const generatorLearningRate = Number(data.generatorLearningRate);
+  const discriminatorLearningRate = Number(data.discriminatorLearningRate);
+  const resetRate = Number(data.resetRate);
+  const decay = Number(data.decay);
+  const blend = Number(data.blend);
+  const strokeLength = Number(data.strokeLength);
+  const advWeight = Number(data.advWeight);
+  if (
+    ![
+      particles,
+      samples,
+      maxVelocity,
+      drive,
+      generatorLearningRate,
+      discriminatorLearningRate,
+      resetRate,
+      decay,
+      blend,
+      strokeLength,
+      advWeight,
+    ].every(Number.isFinite)
+  ) {
+    return null;
+  }
+  if (data.look !== "ghost" && data.look !== "clean" && data.look !== "trails") {
+    return null;
+  }
+  if (data.strokeStyle !== "dot" && data.strokeStyle !== "vel" && data.strokeStyle !== "curl") {
+    return null;
+  }
+  if (!isColorMode(data.colorMode)) return null;
+
+  // Kind + recipe must match what the restored piece actually runs. An early
+  // dock build carried raw-vector / weight=0 across gallery clicks and saved
+  // that poison onto Pair — Euclidean amplitude games go diagonal and soft-
+  // angle swirls vanish. Live dials still come from storage; the piece's
+  // baked observer/loss/K win on reload (same policy as gallery switch).
+  const recipe = defaultsForPiece(piece);
+  const galleryAdv = GALLERY[piece].adversary;
+  const pieceWeight = galleryAdv?.tag === "on" ? galleryAdv.weight : 0;
+  const restoredWeight = clamp(advWeight, ADV_WEIGHT_MIN, ADV_WEIGHT_MAX);
+  return {
+    runtime: {
+      piece,
+      border: runtime.border,
+      encoding: recipe.encoding,
+      target: recipe.target,
+      loss: recipe.loss,
+      adversaryKind: recipe.adversaryKind,
+      k: recipe.k,
+      relaxEps: recipe.relaxEps,
+      archPreset,
+    },
+    particles: clamp(Math.round(particles), PMIN, PMAX),
+    samples: clamp(Math.round(samples), 16, 1024),
+    maxVelocity: clamp(maxVelocity, 1, 200),
+    drive: clamp(drive, 0, 1),
+    generatorLearningRate: clamp(generatorLearningRate, G_LR_MIN, G_LR_MAX),
+    discriminatorLearningRate: clamp(
+      discriminatorLearningRate,
+      D_LR_MIN,
+      D_LR_MAX
+    ),
+    resetRate: clamp(resetRate, 0, 1),
+    decay: clamp(decay, 0, 0.99),
+    look: data.look,
+    blend: clamp(blend, 0, 1),
+    strokeStyle: data.strokeStyle,
+    strokeLength: clamp(strokeLength, 0.5, 16),
+    advWeight:
+      recipe.adversaryKind !== "off" && restoredWeight === 0
+        ? pieceWeight
+        : restoredWeight,
+    colorMode: data.colorMode,
+  };
+}
+
+/** Explicit shareable URL knobs win over a saved dock (deep links stay honest). */
+function urlHasDockOverrides(q: URLSearchParams): boolean {
+  return [
+    "adv",
+    "advK",
+    "advM",
+    "advEps",
+    "advWeight",
+    "advTarget",
+    "advLoss",
+    "advTau",
+    "advScaleWeight",
+    "advEnergyWeight",
+    "advEnergyTarget",
+    "gLR",
+    "dLR",
+    "drive",
+    "color",
+    "cmap",
+    "decay",
+    "stroke",
+    "strokeLen",
+  ].some((key) => q.has(key));
+}
+
+function loadPersistedDock(): PersistedDock | null {
+  try {
+    // Retire the v1 blob that could store raw-vector on Pair.
+    window.localStorage.removeItem("nffa.dock.v1");
+    if (urlHasDockOverrides(new URLSearchParams(window.location.search))) {
+      return null;
+    }
+    const raw = window.localStorage.getItem(DOCK_STORAGE_KEY);
+    if (!raw) return null;
+    return parsePersistedDock(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+function savePersistedDock(dock: PersistedDock): void {
+  try {
+    window.localStorage.setItem(DOCK_STORAGE_KEY, JSON.stringify(dock));
+  } catch {
+    // Quota / private mode — dock still works in-session.
+  }
+}
+
 function encodingForView(view: RelationalView): TupleEncoding {
   switch (view) {
     case "rotation":
@@ -201,8 +480,8 @@ function encodingForTuple(
       return { tag: "point" };
     case "pair":
       // Preserve the selected pair quotient. Entering pair mode from another
-      // arity chooses the scale-adjusted observer—the safe flagship—not the
-      // deliberately scale-cheating raw control.
+      // arity chooses the scale-adjusted observer (flagship), not raw
+      // pair-rotation (the easier amplitude-baseline observer).
       return viewForEncoding(current)
         ? current
         : { tag: "pair-rotation-scale-adjusted" };
@@ -326,54 +605,83 @@ function Segmented<T extends string>({
   );
 }
 
-function Sparkline({ data }: { data: readonly number[] }): ReactElement {
-  const width = 104;
-  const height = 20;
+function emaSeries(data: readonly number[], alpha: number): number[] {
+  const out: number[] = [];
+  let ema = Number.NaN;
+  for (const sample of data) {
+    if (!Number.isFinite(sample)) {
+      out.push(ema);
+      continue;
+    }
+    ema = Number.isFinite(ema) ? ema + alpha * (sample - ema) : sample;
+    out.push(ema);
+  }
+  return out;
+}
+
+function Sparkline({
+  data,
+  smoothed,
+  label = "history",
+}: {
+  data: readonly number[];
+  /** Optional second series (e.g. EMA) drawn brighter on top. */
+  smoothed?: readonly number[];
+  label?: string;
+}): ReactElement {
+  const width = 160;
+  const height = 28;
   if (data.length < 2) {
     return (
       <svg
         className="sparkline"
         viewBox={`0 0 ${width} ${height}`}
         role="img"
-        aria-label="Surprise history awaiting samples"
+        aria-label={`${label} awaiting samples`}
       />
     );
   }
 
-  const finite = data.filter(Number.isFinite);
-  if (!finite.length) {
+  const pool = [...data, ...(smoothed ?? [])].filter(Number.isFinite);
+  if (!pool.length) {
     return (
       <svg
         className="sparkline"
         viewBox={`0 0 ${width} ${height}`}
         role="img"
-        aria-label="Surprise history unavailable"
+        aria-label={`${label} unavailable`}
       />
     );
   }
 
-  const lo = Math.min(...finite);
-  const hi = Math.max(...finite);
+  const lo = Math.min(...pool);
+  const hi = Math.max(...pool);
   const flat = hi - lo <= Math.max(Math.abs(hi), 1e-12) * 1e-3;
   const span = Math.max(hi - lo, 1e-30);
-  const points = data
-    .map((sample, index) => {
-      const x = (index / (data.length - 1)) * (width - 2) + 1;
-      const y = flat
-        ? height / 2
-        : height - 2 - ((Number.isFinite(sample) ? sample - lo : 0) / span) * (height - 4);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
+  const toPoints = (series: readonly number[]) =>
+    series
+      .map((sample, index) => {
+        const x = (index / (series.length - 1)) * (width - 2) + 1;
+        const y = flat
+          ? height / 2
+          : height -
+            2 -
+            ((Number.isFinite(sample) ? sample - lo : 0) / span) * (height - 4);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(" ");
 
   return (
     <svg
       className="sparkline"
       viewBox={`0 0 ${width} ${height}`}
       role="img"
-      aria-label={`Surprise trend from ${lo.toExponential(1)} to ${hi.toExponential(1)}`}
+      aria-label={`${label} from ${lo.toExponential(1)} to ${hi.toExponential(1)}`}
     >
-      <polyline points={points} />
+      <polyline className="sparkline-raw" points={toPoints(data)} />
+      {smoothed && smoothed.length >= 2 && (
+        <polyline className="sparkline-smooth" points={toPoints(smoothed)} />
+      )}
     </svg>
   );
 }
@@ -415,23 +723,50 @@ function App(): ReactElement {
   const handleRef = useRef<LoopHandle | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const lastStartedPieceRef = useRef<number | null>(null);
-  const [runtime, setRuntime] = useState<RuntimeConfig>(() => defaultsForPiece(0));
+  const initialDockRef = useRef<PersistedDock | null>(loadPersistedDock());
+  const seededFromStorage = initialDockRef.current !== null;
 
-  const [particles, setParticles] = useState(1_000);
-  const [samples, setSamples] = useState(256);
-  const [maxVelocity, setMaxVelocity] = useState(24);
-  const [drive, setDrive] = useState(0.65);
-  const [generatorLearningRate, setGeneratorLearningRate] = useState(1e-3);
-  const [discriminatorLearningRate, setDiscriminatorLearningRate] = useState(3e-3);
-  const [resetRate, setResetRate] = useState(0.01);
-  const [decay, setDecay] = useState(0);
-  const [look, setLook] = useState<InkLook>("ghost");
-  const [blend, setBlend] = useState(0.5);
-  const [strokeStyle, setStrokeStyle] = useState<SplatStyle>("dot");
-  const [strokeLength, setStrokeLength] = useState(3);
-  const [advWeight, setAdvWeight] = useState(0);
+  const [runtime, setRuntime] = useState<RuntimeConfig>(
+    () => initialDockRef.current?.runtime ?? defaultsForPiece(0)
+  );
+
+  const [particles, setParticles] = useState(
+    () => initialDockRef.current?.particles ?? 1_000
+  );
+  const [samples, setSamples] = useState(
+    () => initialDockRef.current?.samples ?? 256
+  );
+  const [maxVelocity, setMaxVelocity] = useState(
+    () => initialDockRef.current?.maxVelocity ?? 24
+  );
+  const [drive, setDrive] = useState(() => initialDockRef.current?.drive ?? 0.65);
+  const [generatorLearningRate, setGeneratorLearningRate] = useState(
+    () => initialDockRef.current?.generatorLearningRate ?? 1e-3
+  );
+  const [discriminatorLearningRate, setDiscriminatorLearningRate] = useState(
+    () => initialDockRef.current?.discriminatorLearningRate ?? 3e-3
+  );
+  const [resetRate, setResetRate] = useState(
+    () => initialDockRef.current?.resetRate ?? 0.01
+  );
+  const [decay, setDecay] = useState(() => initialDockRef.current?.decay ?? 0);
+  const [look, setLook] = useState<InkLook>(
+    () => initialDockRef.current?.look ?? "ghost"
+  );
+  const [blend, setBlend] = useState(() => initialDockRef.current?.blend ?? 0.5);
+  const [strokeStyle, setStrokeStyle] = useState<SplatStyle>(
+    () => initialDockRef.current?.strokeStyle ?? "dot"
+  );
+  const [strokeLength, setStrokeLength] = useState(
+    () => initialDockRef.current?.strokeLength ?? 3
+  );
+  const [advWeight, setAdvWeight] = useState(
+    () => initialDockRef.current?.advWeight ?? 0
+  );
   const [telemetry, setTelemetry] = useState<AdversaryTelemetry>({ tag: "off" });
-  const [colorMode, setColorMode] = useState<ColorMode>({ tag: "velocity" });
+  const [colorMode, setColorMode] = useState<ColorMode>(
+    () => initialDockRef.current?.colorMode ?? { tag: "velocity" }
+  );
   const [surpriseSpan, setSurpriseSpan] = useState<{
     lo: number;
     mid: number;
@@ -439,14 +774,19 @@ function App(): ReactElement {
     covered: number;
     collapsed: boolean;
   } | null>(null);
-  const [history, setHistory] = useState<number[]>([]);
+  const [discHistory, setDiscHistory] = useState<number[]>([]);
+  const [genHistory, setGenHistory] = useState<number[]>([]);
 
   const piece = GALLERY[runtime.piece];
   const adversary = runtime.adversaryKind !== "off";
   const dockPresets = archDockPresets(piece.archDock ?? "aesthetic");
   const activeArch = (() => {
     if (!piece.fieldArch) return null;
-    if (runtime.archPreset && isArchPresetKey(runtime.archPreset)) {
+    if (
+      piece.archEditable &&
+      runtime.archPreset &&
+      isArchPresetKey(runtime.archPreset)
+    ) {
       return applyArchDockPreset(piece.fieldArch, ARCH[runtime.archPreset]);
     }
     return piece.fieldArch;
@@ -466,15 +806,56 @@ function App(): ReactElement {
       (piece.fieldLoss.W_CENTER ?? 0) !== 0);
   const relationalView = viewForEncoding(runtime.encoding);
 
+  useEffect(() => {
+    savePersistedDock({
+      runtime,
+      particles,
+      samples,
+      maxVelocity,
+      drive,
+      generatorLearningRate,
+      discriminatorLearningRate,
+      resetRate,
+      decay,
+      look,
+      blend,
+      strokeStyle,
+      strokeLength,
+      advWeight,
+      colorMode,
+    });
+  }, [
+    runtime,
+    particles,
+    samples,
+    maxVelocity,
+    drive,
+    generatorLearningRate,
+    discriminatorLearningRate,
+    resetRate,
+    decay,
+    look,
+    blend,
+    strokeStyle,
+    strokeLength,
+    advWeight,
+    colorMode,
+  ]);
+
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // A compile-time control rebuilds the loop for the SAME piece. Preserve
-    // every live dial across that rebuild. Selecting a DIFFERENT gallery piece
-    // intentionally loads the new piece's defaults.
-    const preserveLiveControls = lastStartedPieceRef.current === runtime.piece;
+    // Preserve live dials only across same-piece compile rebuilds (border /
+    // arch / adversary recipe change) and the first paint from localStorage.
+    // Gallery switches adopt the new piece's baked particles / LRs / advWeight /
+    // colorMode — otherwise Pair inherits weight=0 and raw-vector from Spiral.
+    const previousPiece = lastStartedPieceRef.current;
+    const isFirstStart = previousPiece === null;
+    const samePieceRebuild = previousPiece === runtime.piece;
     lastStartedPieceRef.current = runtime.piece;
+    const preserveLiveControls =
+      (isFirstStart && seededFromStorage) || (!isFirstStart && samePieceRebuild);
     cleanupRef.current?.();
     handleRef.current = null;
     let current = true;
@@ -538,7 +919,8 @@ function App(): ReactElement {
   }, [runtime]);
 
   useEffect(() => {
-    setHistory([]);
+    setDiscHistory([]);
+    setGenHistory([]);
     setTelemetry({ tag: "off" });
     setSurpriseSpan(null);
     const poll = window.setInterval(() => {
@@ -549,10 +931,14 @@ function App(): ReactElement {
       setSurpriseSpan(handle.getSurpriseSpan());
       setColorMode(handle.getColorMode());
       if (next.tag === "on") {
-        setHistory((previous) => {
-          const updated = previous.concat(next.surprise);
-          return updated.slice(-SURPRISE_HISTORY);
-        });
+        // D minimizes predLoss; G (disagree) maximizes surprise/payoff residual.
+        // On raw-vector they often track closely; soft-angle / hold modes diverge.
+        setDiscHistory((previous) =>
+          previous.concat(next.predLoss).slice(-SURPRISE_HISTORY)
+        );
+        setGenHistory((previous) =>
+          previous.concat(next.surprise).slice(-SURPRISE_HISTORY)
+        );
       }
     }, 200);
     return () => window.clearInterval(poll);
@@ -813,7 +1199,7 @@ function App(): ReactElement {
                       : hasStructuralFieldLoss
                         ? "GAME + MAX CHAOS"
                         : runtime.loss.tag === "raw-vector"
-                          ? "RAW VECTOR · CHEAT CONTROL"
+                          ? "RAW VECTOR · BASELINE"
                           : "ANGLE OPPONENT GAME"}
                 </strong>
               </div>
@@ -859,7 +1245,8 @@ function App(): ReactElement {
                   {
                     value: "raw-vector",
                     label: "RAW",
-                    title: "Euclidean vector error; explicit amplitude-cheat control",
+                    title:
+                      "Euclidean ‖ŷ−y‖ — easy baseline (amplitude shortcut OK). Compare to ANGLE.",
                   },
                   {
                     value: "soft-angle",
@@ -1196,14 +1583,33 @@ function App(): ReactElement {
             <ControlSection title="diagnostics" testid="adversary-diagnostics">
               {telemetry.tag === "on" ? (
                 <>
-                  <div className="diagnostic-row">
-                    <span className="diagnostic-name">
-                      {runtime.loss.tag === "angle-scale-hold"
-                        ? `D joint · ${telemetry.variant}`
-                        : telemetry.variant}
+                  <div className="diagnostic-row" data-testid="disc-loss-chart">
+                    <span className="diagnostic-name" title="Discriminator objective (minimize)">
+                      D loss
                     </span>
-                    <Sparkline data={history} />
-                    <strong>{telemetry.surprise.toExponential(1)}</strong>
+                    <Sparkline
+                      label="discriminator loss"
+                      data={discHistory}
+                      smoothed={emaSeries(discHistory, HISTORY_SMOOTH)}
+                    />
+                    <strong>{telemetry.predLoss.toExponential(2)}</strong>
+                  </div>
+                  <div className="diagnostic-row" data-testid="gen-loss-chart">
+                    <span
+                      className="diagnostic-name"
+                      title="Generator payoff / residual (disagree maximizes)"
+                    >
+                      G residual
+                    </span>
+                    <Sparkline
+                      label="generator residual"
+                      data={genHistory}
+                      smoothed={emaSeries(genHistory, HISTORY_SMOOTH)}
+                    />
+                    <strong>{telemetry.surprise.toExponential(2)}</strong>
+                  </div>
+                  <div className="chart-legend" aria-hidden="true">
+                    dim=raw · bright=EMA · ~{Math.round((SURPRISE_HISTORY * 0.2) / 60)}m window
                   </div>
                   <div className="diagnostic-row">
                     <span>heads</span>
@@ -1271,7 +1677,9 @@ function App(): ReactElement {
             role="radio"
             aria-checked={index === runtime.piece}
             data-active={index === runtime.piece ? "true" : "false"}
-            onClick={() => setRuntime(defaultsForPiece(index))}
+            onClick={() =>
+              setRuntime((previous) => runtimeForPieceSwitch(previous, index))
+            }
           >
             {galleryPiece.name}
           </button>

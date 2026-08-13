@@ -1789,6 +1789,13 @@ export const GALLERY: ArtPieceConfig[] = [
       tag: "on",
       kind: { tag: "wta", k: 4, relaxEps: 0.05 },
       encoding: { tag: "pair-rotation-scale-adjusted" },
+      // Explicit — do not rely only on the legacy encoding→soft-angle alias.
+      // Soft-angle (direction-only) is what made the pair swirls; raw-vector
+      // on this observer collapses into amplitude / shear cheats.
+      loss: {
+        tag: "soft-angle",
+        tau: ADVERSARY_OBJECTIVE_DEFAULTS.tau,
+      },
       weight: 0.015, // reward units — see the note on the Single piece
     },
     fieldLoss: ZERO_FIELD_LOSS,
@@ -2063,6 +2070,12 @@ export const GALLERY: ArtPieceConfig[] = [
       game: "agree-disagree",
       kind: { tag: "wta", k: 4, relaxEps: 0.05 },
       encoding: { tag: "pair-rotation-scale-adjusted" },
+      // Same observer as Pair — keep the swirl recipe (soft-angle), not the
+      // encoding-only alias that used to look like RAW if the dock carried it.
+      loss: {
+        tag: "soft-angle",
+        tau: ADVERSARY_OBJECTIVE_DEFAULTS.tau,
+      },
       weight: 0.012,
     },
     computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
