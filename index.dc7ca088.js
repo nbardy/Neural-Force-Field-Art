@@ -15,27 +15,41 @@ var n="function"==typeof a[s]&&a[s];if(!r&&n)return n(t,!0);// If there are othe
 if(o)return o(t,!0);// Try the node require function if it exists.
 if(l&&"string"==typeof t)return l(t);var p=Error("Cannot find module '"+t+"'");throw p.code="MODULE_NOT_FOUND",p}d.resolve=function(r){var s=e[t][1][r];return null!=s?s:r},d.cache={};var c=i[t]=new u.Module(t);e[t][0].call(c.exports,d,c,c.exports,this)}return i[t].exports;function d(e){var t=d.resolve(e);return!1===t?{}:u(t)}}u.isParcelRequire=!0,u.Module=function(e){this.id=e,this.bundle=u,this.exports={}},u.modules=e,u.cache=i,u.parent=o,u.register=function(t,r){e[t]=[function(e,t){t.exports=r},{}]},Object.defineProperty(u,"root",{get:function(){return a[s]}}),a[s]=u;for(var p=0;p<t.length;p++)u(t[p]);if(r){// Expose entry point to Node, AMD or browser globals
 // Based on https://github.com/ForbesLindesay/umd/blob/master/template.js
-var c=u(r);"object"==typeof exports&&"undefined"!=typeof module?module.exports=c:"function"==typeof define&&define.amd?define(function(){return c}):n&&(this[n]=c)}}({"4zTVb":[function(e,t,r){var s=e("@parcel/transformer-js/src/esmodule-helpers.js"),n=e("react/jsx-runtime"),a=e("react");s.interopDefault(a);var o=e("react-dom/client"),i=e("./main");e("./ui.css");let l=document.getElementById("app");if(!l)throw Error("Container not found");let u=["inferno","viridis","coolwarm"],p=i.GAME_LEARNING_RATE_RANGE.generator.min,c=i.GAME_LEARNING_RATE_RANGE.generator.max,d=i.GAME_LEARNING_RATE_RANGE.discriminator.min,h=i.GAME_LEARNING_RATE_RANGE.discriminator.max,f=i.ADVERSARY_WEIGHT_RANGE.min,m=i.ADVERSARY_WEIGHT_RANGE.max,g="nffa.dock.v2";function x(e,t){let r="tau"in t?t.tau:i.ADVERSARY_OBJECTIVE_DEFAULTS.tau,s="scaleWeight"in t?t.scaleWeight:i.ADVERSARY_OBJECTIVE_DEFAULTS.scaleWeight,n="energyWeight"in t?t.energyWeight:i.ADVERSARY_OBJECTIVE_DEFAULTS.energyWeight,a="energyTarget"in t?t.energyTarget:i.ADVERSARY_OBJECTIVE_DEFAULTS.energyTarget;switch(e){case"raw-vector":return{tag:e};case"soft-angle":return{tag:e,tau:r};case"angle-relative-scale":case"angle-scale-hold":return{tag:e,tau:r,scaleWeight:s,energyWeight:n,energyTarget:a}}}function v(e){return"angle-relative-scale"===e.tag||"angle-scale-hold"===e.tag}let y=e=>Math.log(Math.min(Math.max(e,200),1e6)/200)/Math.log(5e3),b=e=>{let t=200*Math.pow(5e3,e),r=Math.pow(10,Math.max(0,Math.floor(Math.log10(t))-1));return Math.round(t/r)*r},k=(e,t,r)=>Math.log(Math.min(r,Math.max(t,e))/t)/Math.log(r/t),_=(e,t,r)=>t*Math.pow(r/t,e);function w(e){// URL adversary knobs are intentionally GLOBAL: selecting another gallery
+var c=u(r);"object"==typeof exports&&"undefined"!=typeof module?module.exports=c:"function"==typeof define&&define.amd?define(function(){return c}):n&&(this[n]=c)}}({"4zTVb":[function(e,t,r){var s=e("@parcel/transformer-js/src/esmodule-helpers.js"),n=e("react/jsx-runtime"),a=e("react");s.interopDefault(a);var o=e("react-dom/client"),i=e("./main");e("./ui.css");let l=document.getElementById("app");if(!l)throw Error("Container not found");let u=["inferno","viridis","coolwarm"],p=i.GAME_LEARNING_RATE_RANGE.generator.min,c=i.GAME_LEARNING_RATE_RANGE.generator.max,d=i.GAME_LEARNING_RATE_RANGE.discriminator.min,h=i.GAME_LEARNING_RATE_RANGE.discriminator.max,f=i.ADVERSARY_WEIGHT_RANGE.min,m=i.ADVERSARY_WEIGHT_RANGE.max,g="nffa.dock.v2",x="(max-width: 640px)";/**
+ * Initial collapse decision. Called from a useState initializer, i.e. during
+ * the first render and BEFORE first paint — reading it in an effect instead
+ * would paint the dock expanded over the artwork and then snap it shut, which
+ * on a phone is the whole screen flashing.
+ */function v(){return window.matchMedia(x).matches}function y(e,t){let r="tau"in t?t.tau:i.ADVERSARY_OBJECTIVE_DEFAULTS.tau,s="scaleWeight"in t?t.scaleWeight:i.ADVERSARY_OBJECTIVE_DEFAULTS.scaleWeight,n="energyWeight"in t?t.energyWeight:i.ADVERSARY_OBJECTIVE_DEFAULTS.energyWeight,a="energyTarget"in t?t.energyTarget:i.ADVERSARY_OBJECTIVE_DEFAULTS.energyTarget;switch(e){case"raw-vector":return{tag:e};case"soft-angle":return{tag:e,tau:r};case"angle-relative-scale":case"angle-scale-hold":return{tag:e,tau:r,scaleWeight:s,energyWeight:n,energyTarget:a}}}function b(e){return"angle-relative-scale"===e.tag||"angle-scale-hold"===e.tag}let k=e=>Math.log(Math.min(Math.max(e,200),1e6)/200)/Math.log(5e3),_=e=>{let t=200*Math.pow(5e3,e),r=Math.pow(10,Math.max(0,Math.floor(Math.log10(t))-1));return Math.round(t/r)*r},w=(e,t,r)=>Math.log(Math.min(r,Math.max(t,e))/t)/Math.log(r/t),I=(e,t,r)=>t*Math.pow(r/t,e);function j(e){// URL adversary knobs are intentionally GLOBAL: selecting another gallery
 // piece re-resolves that piece through the same query. This matches
 // startLoop's canonical URL policy and prevents React from masking
 // ?advM/?advK/?advEps by passing the piece defaults back as overrides.
-let t=(0,i.resolveAdversary)(i.GALLERY[e].adversary,new URLSearchParams(window.location.search));return{piece:e,border:{tag:"wrap"},encoding:"on"===t.tag?t.encoding:{tag:"pair-rotation"},target:"on"===t.tag?(0,i.adversaryTargetOf)(t):{tag:"force"},loss:"on"===t.tag?(0,i.adversaryLossOf)(t):{tag:"raw-vector"},adversaryKind:"on"===t.tag?t.kind.tag:"off",k:"on"===t.tag&&"wta"===t.kind.tag?t.kind.k:1,relaxEps:"on"===t.tag&&"wta"===t.kind.tag?t.kind.relaxEps:0,archPreset:null}}function I(e,t,r){return Math.min(r,Math.max(t,e))}function j(e){switch(e.tag){case"pair":case"pair-rotation":return"rotation";case"pair-rotation-scale-raw":return"rotation-scale-raw";case"pair-rotation-scale-adjusted":return"rotation-scale-adjusted";default:return null}}function S({title:e,children:t,testid:r}){return/*#__PURE__*/(0,n.jsxs)("section",{className:"tui-section","aria-label":e,"data-testid":r,children:[/*#__PURE__*/(0,n.jsx)("div",{className:"tui-section-title",children:e}),/*#__PURE__*/(0,n.jsx)("div",{className:"tui-section-body",children:t})]})}function C({label:e,value:t,min:r,max:s,step:a,display:o,onChange:i,testid:l}){return/*#__PURE__*/(0,n.jsxs)("label",{className:"tui-row","data-testid":l,children:[/*#__PURE__*/(0,n.jsx)("span",{className:"tui-label",children:e}),/*#__PURE__*/(0,n.jsx)("input",{className:"block-slider",type:"range",min:r,max:s,step:a,value:t,onChange:e=>i(Number(e.currentTarget.value)),"aria-label":e}),/*#__PURE__*/(0,n.jsx)("output",{className:"tui-value",children:o})]})}function T({label:e,value:t,choices:r,onChange:s,testid:a}){return/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-segment-row","data-testid":a,children:[/*#__PURE__*/(0,n.jsx)("span",{className:"tui-label",children:e}),/*#__PURE__*/(0,n.jsx)("div",{className:"tui-segments",role:"radiogroup","aria-label":e,children:r.map(e=>/*#__PURE__*/(0,n.jsx)("button",{type:"button",className:"tui-chip",role:"radio","aria-checked":t===e.value,"data-active":t===e.value?"true":"false",title:e.title,onClick:()=>s(e.value),children:e.label},e.value))})]})}function N(e,t){let r=[],s=Number.NaN;for(let n of e){if(!Number.isFinite(n)){r.push(s);continue}s=Number.isFinite(s)?s+t*(n-s):n,r.push(s)}return r}function E({data:e,smoothed:t,label:r="history"}){if(e.length<2)return/*#__PURE__*/(0,n.jsx)("svg",{className:"sparkline",viewBox:"0 0 160 28",role:"img","aria-label":`${r} awaiting samples`});let s=[...e,...t??[]].filter(Number.isFinite);if(!s.length)return/*#__PURE__*/(0,n.jsx)("svg",{className:"sparkline",viewBox:"0 0 160 28",role:"img","aria-label":`${r} unavailable`});let a=Math.min(...s),o=Math.max(...s),i=o-a<=.001*Math.max(Math.abs(o),1e-12),l=Math.max(o-a,1e-30),u=e=>e.map((t,r)=>{let s=r/(e.length-1)*158+1,n=i?14:26-(Number.isFinite(t)?t-a:0)/l*24;return`${s.toFixed(1)},${n.toFixed(1)}`}).join(" ");return/*#__PURE__*/(0,n.jsxs)("svg",{className:"sparkline",viewBox:"0 0 160 28",role:"img","aria-label":`${r} from ${a.toExponential(1)} to ${o.toExponential(1)}`,children:[/*#__PURE__*/(0,n.jsx)("polyline",{className:"sparkline-raw",points:u(e)}),t&&t.length>=2&&/*#__PURE__*/(0,n.jsx)("polyline",{className:"sparkline-smooth",points:u(t)})]})}function F({fractions:e}){let t=Math.max(1,e.length),r=.05/t;return/*#__PURE__*/(0,n.jsx)("div",{className:"head-bars","aria-label":"Predictor-head win fractions",children:e.map((e,s)=>/*#__PURE__*/(0,n.jsx)("span",{className:"head-bar","data-starved":e<r?"true":"false",title:`head ${s}: ${(100*e).toFixed(1)}%`,style:{height:`${Math.max(2,Math.min(18,e*t*9))}px`}},s))})}function A(e){switch(e.tag){case"pileup":return"PILEUP";case"separated-unresolved":return"SKEW \xb7 SUPPORT?";case"unresolved":return"UNPROBED";case"ok":return"OK"}}(0,o.createRoot)(l).render(/*#__PURE__*/(0,n.jsx)(function(){let e=(0,a.useRef)(null),t=(0,a.useRef)(null),r=(0,a.useRef)(null),s=(0,a.useRef)(null),o=(0,a.useRef)(null),l=(0,a.useRef)(function(){try{var e;if(// Retire the v1 blob that could store raw-vector on Pair.
-window.localStorage.removeItem("nffa.dock.v1"),e=new URLSearchParams(window.location.search),["adv","advK","advM","advEps","advWeight","advTarget","advLoss","advTau","advScaleWeight","advEnergyWeight","advEnergyTarget","gLR","dLR","drive","color","cmap","decay","stroke","strokeLen"].some(t=>e.has(t)))return null;let t=window.localStorage.getItem(g);if(!t)return null;return function(e){var t,r,s;if(!e||"object"!=typeof e)return null;let n=e.runtime;if(!n)return null;let a=Number(n.piece);if(!Number.isInteger(a)||a<0||a>=i.GALLERY.length||!((t=n.border)&&"object"==typeof t&&"tag"in t&&("wrap"===t.tag||"bounce"===t.tag||"reset"===t.tag))||!function(e){if(!e||"object"!=typeof e||!("tag"in e))return!1;let t=e.tag;return"point"===t||"pair"===t||"pair-rotation"===t||"pair-rotation-scale-raw"===t||"pair-rotation-scale-adjusted"===t||"tri"===t||"quad-labelled"===t}(n.encoding)||!((r=n.target)&&"object"==typeof r&&"tag"in r&&("force"===r.tag||"post-velocity"===r.tag))||!function(e){if(!e||"object"!=typeof e||!("tag"in e))return!1;switch(e.tag){case"raw-vector":return!0;case"soft-angle":return Number.isFinite(e.tau)&&e.tau>0;case"angle-relative-scale":case"angle-scale-hold":return Number.isFinite(e.tau)&&e.tau>0&&Number.isFinite(e.scaleWeight)&&e.scaleWeight>=0&&Number.isFinite(e.energyWeight)&&e.energyWeight>=0&&Number.isFinite(e.energyTarget)&&e.energyTarget>0;default:return!1}}(n.loss)||"off"!==n.adversaryKind&&"single"!==n.adversaryKind&&"wta"!==n.adversaryKind)return null;let o=Number(n.k),l=Number(n.relaxEps);if(!Number.isFinite(o)||!Number.isFinite(l))return null;let g=null===n.archPreset||void 0===n.archPreset?null:(0,i.isArchPresetKey)(n.archPreset)?n.archPreset:null,x=Number(e.particles),v=Number(e.samples),y=Number(e.maxVelocity),b=Number(e.drive),k=Number(e.generatorLearningRate),_=Number(e.discriminatorLearningRate),j=Number(e.resetRate),S=Number(e.decay),C=Number(e.blend),T=Number(e.strokeLength),N=Number(e.advWeight);if(![x,v,y,b,k,_,j,S,C,T,N].every(Number.isFinite)||"ghost"!==e.look&&"clean"!==e.look&&"trails"!==e.look||"dot"!==e.strokeStyle&&"vel"!==e.strokeStyle&&"curl"!==e.strokeStyle||!((s=e.colorMode)&&"object"==typeof s&&"tag"in s&&("velocity"===s.tag||("surprise-raw"===s.tag||"surprise-per-unit"===s.tag)&&u.includes(s.colormap))))return null;// Kind + recipe must match what the restored piece actually runs. An early
+let t=(0,i.resolveAdversary)(i.GALLERY[e].adversary,new URLSearchParams(window.location.search));return{piece:e,border:{tag:"wrap"},encoding:"on"===t.tag?t.encoding:{tag:"pair-rotation"},target:"on"===t.tag?(0,i.adversaryTargetOf)(t):{tag:"force"},loss:"on"===t.tag?(0,i.adversaryLossOf)(t):{tag:"raw-vector"},adversaryKind:"on"===t.tag?t.kind.tag:"off",k:"on"===t.tag&&"wta"===t.kind.tag?t.kind.k:1,relaxEps:"on"===t.tag&&"wta"===t.kind.tag?t.kind.relaxEps:0,archPreset:null}}function S(e,t,r){return Math.min(r,Math.max(t,e))}function C(e){switch(e.tag){case"pair":case"pair-rotation":return"rotation";case"pair-rotation-scale-raw":return"rotation-scale-raw";case"pair-rotation-scale-adjusted":return"rotation-scale-adjusted";default:return null}}function T({title:e,children:t,testid:r}){return/*#__PURE__*/(0,n.jsxs)("section",{className:"tui-section","aria-label":e,"data-testid":r,children:[/*#__PURE__*/(0,n.jsx)("div",{className:"tui-section-title",children:e}),/*#__PURE__*/(0,n.jsx)("div",{className:"tui-section-body",children:t})]})}function N({label:e,value:t,min:r,max:s,step:a,display:o,onChange:i,testid:l}){return/*#__PURE__*/(0,n.jsxs)("label",{className:"tui-row","data-testid":l,children:[/*#__PURE__*/(0,n.jsx)("span",{className:"tui-label",children:e}),/*#__PURE__*/(0,n.jsx)("input",{className:"block-slider",type:"range",min:r,max:s,step:a,value:t,onChange:e=>i(Number(e.currentTarget.value)),"aria-label":e}),/*#__PURE__*/(0,n.jsx)("output",{className:"tui-value",children:o})]})}function E({label:e,value:t,choices:r,onChange:s,testid:a}){return/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-segment-row","data-testid":a,children:[/*#__PURE__*/(0,n.jsx)("span",{className:"tui-label",children:e}),/*#__PURE__*/(0,n.jsx)("div",{className:"tui-segments",role:"radiogroup","aria-label":e,children:r.map(e=>/*#__PURE__*/(0,n.jsx)("button",{type:"button",className:"tui-chip",role:"radio","aria-checked":t===e.value,"data-active":t===e.value?"true":"false",title:e.title,onClick:()=>s(e.value),children:e.label},e.value))})]})}function F(e,t){let r=[],s=Number.NaN;for(let n of e){if(!Number.isFinite(n)){r.push(s);continue}s=Number.isFinite(s)?s+t*(n-s):n,r.push(s)}return r}function A({data:e,smoothed:t,label:r="history"}){if(e.length<2)return/*#__PURE__*/(0,n.jsx)("svg",{className:"sparkline",viewBox:"0 0 160 28",role:"img","aria-label":`${r} awaiting samples`});let s=[...e,...t??[]].filter(Number.isFinite);if(!s.length)return/*#__PURE__*/(0,n.jsx)("svg",{className:"sparkline",viewBox:"0 0 160 28",role:"img","aria-label":`${r} unavailable`});let a=Math.min(...s),o=Math.max(...s),i=o-a<=.001*Math.max(Math.abs(o),1e-12),l=Math.max(o-a,1e-30),u=e=>e.map((t,r)=>{let s=r/(e.length-1)*158+1,n=i?14:26-(Number.isFinite(t)?t-a:0)/l*24;return`${s.toFixed(1)},${n.toFixed(1)}`}).join(" ");return/*#__PURE__*/(0,n.jsxs)("svg",{className:"sparkline",viewBox:"0 0 160 28",role:"img","aria-label":`${r} from ${a.toExponential(1)} to ${o.toExponential(1)}`,children:[/*#__PURE__*/(0,n.jsx)("polyline",{className:"sparkline-raw",points:u(e)}),t&&t.length>=2&&/*#__PURE__*/(0,n.jsx)("polyline",{className:"sparkline-smooth",points:u(t)})]})}function D({fractions:e}){let t=Math.max(1,e.length),r=.05/t;return/*#__PURE__*/(0,n.jsx)("div",{className:"head-bars","aria-label":"Predictor-head win fractions",children:e.map((e,s)=>/*#__PURE__*/(0,n.jsx)("span",{className:"head-bar","data-starved":e<r?"true":"false",title:`head ${s}: ${(100*e).toFixed(1)}%`,style:{height:`${Math.max(2,Math.min(18,e*t*9))}px`}},s))})}function $(e){switch(e.tag){case"pileup":return"PILEUP";case"separated-unresolved":return"SKEW \xb7 SUPPORT?";case"unresolved":return"UNPROBED";case"ok":return"OK"}}(0,o.createRoot)(l).render(/*#__PURE__*/(0,n.jsx)(function(){let e=(0,a.useRef)(null),t=(0,a.useRef)(null),r=(0,a.useRef)(null),s=(0,a.useRef)(null),o=(0,a.useRef)(null),l=(0,a.useRef)(function(){try{var e;if(// Retire the v1 blob that could store raw-vector on Pair.
+window.localStorage.removeItem("nffa.dock.v1"),e=new URLSearchParams(window.location.search),["adv","advK","advM","advEps","advWeight","advTarget","advLoss","advTau","advScaleWeight","advEnergyWeight","advEnergyTarget","gLR","dLR","drive","color","cmap","decay","stroke","strokeLen"].some(t=>e.has(t)))return null;let t=window.localStorage.getItem(g);if(!t)return null;return function(e){var t,r,s;if(!e||"object"!=typeof e)return null;let n=e.runtime;if(!n)return null;let a=Number(n.piece);if(!Number.isInteger(a)||a<0||a>=i.GALLERY.length||!((t=n.border)&&"object"==typeof t&&"tag"in t&&("wrap"===t.tag||"bounce"===t.tag||"reset"===t.tag))||!function(e){if(!e||"object"!=typeof e||!("tag"in e))return!1;let t=e.tag;return"point"===t||"pair"===t||"pair-rotation"===t||"pair-rotation-scale-raw"===t||"pair-rotation-scale-adjusted"===t||"tri"===t||"quad-labelled"===t}(n.encoding)||!((r=n.target)&&"object"==typeof r&&"tag"in r&&("force"===r.tag||"post-velocity"===r.tag))||!function(e){if(!e||"object"!=typeof e||!("tag"in e))return!1;switch(e.tag){case"raw-vector":return!0;case"soft-angle":return Number.isFinite(e.tau)&&e.tau>0;case"angle-relative-scale":case"angle-scale-hold":return Number.isFinite(e.tau)&&e.tau>0&&Number.isFinite(e.scaleWeight)&&e.scaleWeight>=0&&Number.isFinite(e.energyWeight)&&e.energyWeight>=0&&Number.isFinite(e.energyTarget)&&e.energyTarget>0;default:return!1}}(n.loss)||"off"!==n.adversaryKind&&"single"!==n.adversaryKind&&"wta"!==n.adversaryKind)return null;let o=Number(n.k),l=Number(n.relaxEps);if(!Number.isFinite(o)||!Number.isFinite(l))return null;let g=null===n.archPreset||void 0===n.archPreset?null:(0,i.isArchPresetKey)(n.archPreset)?n.archPreset:null,x=Number(e.particles),v=Number(e.samples),y=Number(e.maxVelocity),b=Number(e.drive),k=Number(e.generatorLearningRate),_=Number(e.discriminatorLearningRate),w=Number(e.resetRate),I=Number(e.decay),C=Number(e.blend),T=Number(e.strokeLength),N=Number(e.advWeight);if(![x,v,y,b,k,_,w,I,C,T,N].every(Number.isFinite)||"ghost"!==e.look&&"clean"!==e.look&&"trails"!==e.look||"dot"!==e.strokeStyle&&"vel"!==e.strokeStyle&&"curl"!==e.strokeStyle||!((s=e.colorMode)&&"object"==typeof s&&"tag"in s&&("velocity"===s.tag||("surprise-raw"===s.tag||"surprise-per-unit"===s.tag)&&u.includes(s.colormap))))return null;// Kind + recipe must match what the restored piece actually runs. An early
 // dock build carried raw-vector / weight=0 across gallery clicks and saved
 // that poison onto Pair — Euclidean amplitude games go diagonal and soft-
 // angle swirls vanish. Live dials still come from storage; the piece's
 // baked observer/loss/K win on reload (same policy as gallery switch).
-let E=w(a),F=i.GALLERY[a].adversary,A=F?.tag==="on"?F.weight:0,D=I(N,f,m);return{runtime:{piece:a,border:n.border,encoding:E.encoding,target:E.target,loss:E.loss,adversaryKind:E.adversaryKind,k:E.k,relaxEps:E.relaxEps,archPreset:g},particles:I(Math.round(x),200,1e6),samples:I(Math.round(v),16,1024),maxVelocity:I(y,1,200),drive:I(b,0,1),generatorLearningRate:I(k,p,c),discriminatorLearningRate:I(_,d,h),resetRate:I(j,0,1),decay:I(S,0,.99),look:e.look,blend:I(C,0,1),strokeStyle:e.strokeStyle,strokeLength:I(T,.5,16),advWeight:"off"!==E.adversaryKind&&0===D?A:D,colorMode:e.colorMode}}(JSON.parse(t))}catch{return null}}()),D=null!==l.current,[$,R]=(0,a.useState)(()=>l.current?.runtime??w(0)),[P,M]=(0,a.useState)(()=>l.current?.particles??1e3),[O,B]=(0,a.useState)(()=>l.current?.samples??256),[z,L]=(0,a.useState)(()=>l.current?.maxVelocity??24),[G,V]=(0,a.useState)(()=>l.current?.drive??.65),[U,W]=(0,a.useState)(()=>l.current?.generatorLearningRate??.001),[q,H]=(0,a.useState)(()=>l.current?.discriminatorLearningRate??.003),[K,Y]=(0,a.useState)(()=>l.current?.resetRate??.01),[X,Z]=(0,a.useState)(()=>l.current?.decay??0),[J,Q]=(0,a.useState)(()=>l.current?.look??"ghost"),[ee,et]=(0,a.useState)(()=>l.current?.blend??.5),[er,es]=(0,a.useState)(()=>l.current?.strokeStyle??"dot"),[en,ea]=(0,a.useState)(()=>l.current?.strokeLength??3),[eo,ei]=(0,a.useState)(()=>l.current?.advWeight??0),[el,eu]=(0,a.useState)({tag:"off"}),[ep,ec]=(0,a.useState)(()=>l.current?.colorMode??{tag:"velocity"}),[ed,eh]=(0,a.useState)(null),[ef,em]=(0,a.useState)([]),[eg,ex]=(0,a.useState)([]),ev=i.GALLERY[$.piece],ey="off"!==$.adversaryKind,eb=(0,i.archDockPresets)(ev.archDock??"aesthetic"),ek=ev.fieldArch?ev.archEditable&&$.archPreset&&(0,i.isArchPresetKey)($.archPreset)?(0,i.applyArchDockPreset)(ev.fieldArch,i.ARCH[$.archPreset]):ev.fieldArch:null,e_=(ek?.heads??ev.fieldArch?.heads??(ev.createField?2:1))===2,ew="agree-disagree"===ev.mode,eI="wta"===$.adversaryKind,ej=!!ev.fieldLoss&&(0!==ev.fieldLoss.W_CHAOS||0!==ev.fieldLoss.W_ISO||0!==ev.fieldLoss.W_DIV||0!==ev.fieldLoss.W_SPIRAL||(ev.fieldLoss.W_COVER??0)!==0||(ev.fieldLoss.W_CENTER??0)!==0),eS=j($.encoding);(0,a.useEffect)(()=>{!function(e){try{window.localStorage.setItem(g,JSON.stringify(e))}catch{// Quota / private mode — dock still works in-session.
-}}({runtime:$,particles:P,samples:O,maxVelocity:z,drive:G,generatorLearningRate:U,discriminatorLearningRate:q,resetRate:K,decay:X,look:J,blend:ee,strokeStyle:er,strokeLength:en,advWeight:eo,colorMode:ep})},[$,P,O,z,G,U,q,K,X,J,ee,er,en,eo,ep]),(0,a.useLayoutEffect)(()=>{let n=e.current;if(!n)return;// Preserve live dials only across same-piece compile rebuilds (border /
+let E=j(a),F=i.GALLERY[a].adversary,A=F?.tag==="on"?F.weight:0,D=S(N,f,m);return{runtime:{piece:a,border:n.border,encoding:E.encoding,target:E.target,loss:E.loss,adversaryKind:E.adversaryKind,k:E.k,relaxEps:E.relaxEps,archPreset:g},particles:S(Math.round(x),200,1e6),samples:S(Math.round(v),16,1024),maxVelocity:S(y,1,200),drive:S(b,0,1),generatorLearningRate:S(k,p,c),discriminatorLearningRate:S(_,d,h),resetRate:S(w,0,1),decay:S(I,0,.99),look:e.look,blend:S(C,0,1),strokeStyle:e.strokeStyle,strokeLength:S(T,.5,16),advWeight:"off"!==E.adversaryKind&&0===D?A:D,colorMode:e.colorMode}}(JSON.parse(t))}catch{return null}}()),R=null!==l.current,[P,M]=(0,a.useState)(()=>l.current?.runtime??j(i.DEFAULT_PIECE_INDEX)),[O,B]=(0,a.useState)(()=>l.current?.particles??1e3),[z,L]=(0,a.useState)(()=>l.current?.samples??256),[G,V]=(0,a.useState)(()=>l.current?.maxVelocity??24),[U,W]=(0,a.useState)(()=>l.current?.drive??.65),[q,H]=(0,a.useState)(()=>l.current?.generatorLearningRate??.001),[K,Y]=(0,a.useState)(()=>l.current?.discriminatorLearningRate??.003),[X,Z]=(0,a.useState)(()=>l.current?.resetRate??.01),[J,Q]=(0,a.useState)(()=>l.current?.decay??0),[ee,et]=(0,a.useState)(()=>l.current?.look??"ghost"),[er,es]=(0,a.useState)(()=>l.current?.blend??.5),[en,ea]=(0,a.useState)(()=>l.current?.strokeStyle??(0,i.resolveStrokeStyle)(i.GALLERY[P.piece],new URLSearchParams(window.location.search))),[eo,ei]=(0,a.useState)(()=>l.current?.strokeLength??(0,i.resolveStrokeLength)(i.GALLERY[P.piece],new URLSearchParams(window.location.search))),[el,eu]=(0,a.useState)(()=>l.current?.advWeight??0),[ep,ec]=(0,a.useState)(()=>!v()),[ed,eh]=(0,a.useState)(()=>!v()),[ef,em]=(0,a.useState)({tag:"off"}),[eg,ex]=(0,a.useState)(()=>l.current?.colorMode??{tag:"velocity"}),[ev,ey]=(0,a.useState)(null),[eb,ek]=(0,a.useState)([]),[e_,ew]=(0,a.useState)([]),eI=i.GALLERY[P.piece],ej="off"!==P.adversaryKind,eS=(0,i.archDockPresets)(eI.archDock??"aesthetic"),eC=eI.fieldArch?eI.archEditable&&P.archPreset&&(0,i.isArchPresetKey)(P.archPreset)?(0,i.applyArchDockPreset)(eI.fieldArch,i.ARCH[P.archPreset]):eI.fieldArch:null,eT=(eC?.heads??eI.fieldArch?.heads??(eI.createField?2:1))===2,eN="agree-disagree"===eI.mode,eE="wta"===P.adversaryKind,eF=!!eI.fieldLoss&&(0!==eI.fieldLoss.W_CHAOS||0!==eI.fieldLoss.W_ISO||0!==eI.fieldLoss.W_DIV||0!==eI.fieldLoss.W_SPIRAL||(eI.fieldLoss.W_COVER??0)!==0||(eI.fieldLoss.W_CENTER??0)!==0),eA=C(P.encoding);// Re-apply the regime default when the breakpoint is CROSSED (rotation, a
+// resized window). MediaQueryList fires only when `matches` actually flips,
+// so resizing inside one regime — or a mobile URL bar sliding away — leaves
+// a manual toggle alone; only a real phone↔desktop transition overrides it.
+(0,a.useEffect)(()=>{let e=window.matchMedia(x),t=e=>{ec(!e.matches),eh(!e.matches)};return e.addEventListener("change",t),()=>e.removeEventListener("change",t)},[]),(0,a.useEffect)(()=>{!function(e){try{window.localStorage.setItem(g,JSON.stringify(e))}catch{// Quota / private mode — dock still works in-session.
+}}({runtime:P,particles:O,samples:z,maxVelocity:G,drive:U,generatorLearningRate:q,discriminatorLearningRate:K,resetRate:X,decay:J,look:ee,blend:er,strokeStyle:en,strokeLength:eo,advWeight:el,colorMode:eg})},[P,O,z,G,U,q,K,X,J,ee,er,en,eo,el,eg]),(0,a.useLayoutEffect)(()=>{let n=e.current;if(!n)return;// Preserve live dials only across same-piece compile rebuilds (border /
 // arch / adversary recipe change) and the first paint from localStorage.
 // Gallery switches adopt the new piece's baked particles / LRs / advWeight /
 // colorMode — otherwise Pair inherits weight=0 and raw-vector from Spiral.
-let a=o.current,l=null===a,u=a===$.piece;o.current=$.piece;let p=l&&D||!l&&u;s.current?.(),r.current=null;let c=!0;return s.current=(0,i.startLoop)(n,$.piece,e=>{c&&(r.current=e,p?(e.setParticleCount(P),e.setSampleRate(O),e.setMaxVelocity(z),e.setDrive(G),e.setGeneratorLearningRate(U),e.setDiscriminatorLearningRate(q),e.setResetRate(K),e.setDecay(X),e.setBlend(ee),e.setStrokeStyle(er),e.setStrokeLength(en),e.setAdversaryWeight(eo),e.setColorMode(ep)):(M(e.getParticleCount()),B(e.getSampleRate()),L(e.getMaxVelocity()),V(e.getDrive()),W(e.getGeneratorLearningRate()),H(e.getDiscriminatorLearningRate()),Y(e.getResetRate()),Z(e.getDecay()),Q((0,i.inkLookFromRenderer)(ev.renderer)),et(e.getBlend()),es(e.getStrokeStyle()),ea(e.getStrokeLength()),ei(e.getAdversaryWeight()),ec(e.getColorMode())))},{telemetryHost:t.current??void 0,overrides:{border:$.border,adversaryEncoding:$.encoding,adversaryTarget:$.target,adversaryLoss:$.loss,k:$.k,relaxEps:$.relaxEps,fieldArch:ek??void 0}}),()=>{c=!1,s.current?.(),s.current=null,r.current=null}},[$]),(0,a.useEffect)(()=>{em([]),ex([]),eu({tag:"off"}),eh(null);let e=window.setInterval(()=>{let e=r.current;if(!e)return;let t=e.getAdversaryTelemetry();eu(t),eh(e.getSurpriseSpan()),ec(e.getColorMode()),"on"===t.tag&&(// D minimizes predLoss; G (disagree) maximizes surprise/payoff residual.
+// STROKE follows that same ownership rule (the else-branch below re-reads
+// handle.getStrokeStyle()): a gallery click means "show me that piece", so
+// its declared stroke wins on switch exactly like its renderer-derived ink
+// look does two lines down. The dock control stays live afterwards, and a
+// same-piece rebuild pushes the user's current stroke back in.
+let a=o.current,l=null===a,u=a===P.piece;o.current=P.piece;let p=l&&R||!l&&u;s.current?.(),r.current=null;let c=!0;return s.current=(0,i.startLoop)(n,P.piece,e=>{c&&(r.current=e,p?(e.setParticleCount(O),e.setSampleRate(z),e.setMaxVelocity(G),e.setDrive(U),e.setGeneratorLearningRate(q),e.setDiscriminatorLearningRate(K),e.setResetRate(X),e.setDecay(J),e.setBlend(er),e.setStrokeStyle(en),e.setStrokeLength(eo),e.setAdversaryWeight(el),e.setColorMode(eg)):(B(e.getParticleCount()),L(e.getSampleRate()),V(e.getMaxVelocity()),W(e.getDrive()),H(e.getGeneratorLearningRate()),Y(e.getDiscriminatorLearningRate()),Z(e.getResetRate()),Q(e.getDecay()),et((0,i.inkLookFromRenderer)(eI.renderer)),es(e.getBlend()),ea(e.getStrokeStyle()),ei(e.getStrokeLength()),eu(e.getAdversaryWeight()),ex(e.getColorMode())))},{telemetryHost:t.current??void 0,overrides:{border:P.border,adversaryEncoding:P.encoding,adversaryTarget:P.target,adversaryLoss:P.loss,k:P.k,relaxEps:P.relaxEps,fieldArch:eC??void 0}}),()=>{c=!1,s.current?.(),s.current=null,r.current=null}},[P]),(0,a.useEffect)(()=>{ek([]),ew([]),em({tag:"off"}),ey(null);let e=window.setInterval(()=>{let e=r.current;if(!e)return;let t=e.getAdversaryTelemetry();em(t),ey(e.getSurpriseSpan()),ex(e.getColorMode()),"on"===t.tag&&(// D minimizes predLoss; G (disagree) maximizes surprise/payoff residual.
 // On raw-vector they often track closely; soft-angle / hold modes diverge.
-em(e=>e.concat(t.predLoss).slice(-360)),ex(e=>e.concat(t.surprise).slice(-360)))},200);return()=>window.clearInterval(e)},[$]);let eC=e=>{r.current?.setColorMode(e),ec(e)};return/*#__PURE__*/(0,n.jsxs)("main",{className:"art-shell",children:[/*#__PURE__*/(0,n.jsx)("canvas",{ref:e,id:"myCanvas","aria-label":"Neural force-field artwork"}),/*#__PURE__*/(0,n.jsxs)("aside",{className:"hud-stack","aria-label":"Performance and piece controls",children:[/*#__PURE__*/(0,n.jsx)("div",{ref:t,className:"telemetry-host","data-testid":"telemetry-host","aria-live":"polite"}),/*#__PURE__*/(0,n.jsxs)("div",{className:"config-dock","data-testid":"piece-config-dock",children:[/*#__PURE__*/(0,n.jsx)("header",{className:"dock-header","aria-label":`Controls for ${ev.name}`,children:/*#__PURE__*/(0,n.jsx)("span",{className:"dock-piece",title:ev.name,children:ev.name})}),/*#__PURE__*/(0,n.jsxs)(S,{title:"simulation",testid:"simulation-controls",children:[/*#__PURE__*/(0,n.jsx)(C,{label:"particles",value:y(P),min:0,max:1,step:.002,display:P.toLocaleString(),testid:"particles-control",onChange:e=>{let t=b(e);M(t),r.current?.setParticleCount(t)}}),/*#__PURE__*/(0,n.jsx)(C,{label:"train B",value:O,min:16,max:4096,step:16,display:`${O}`,testid:"samples-control",onChange:e=>{B(e),r.current?.setSampleRate(e)}}),/*#__PURE__*/(0,n.jsx)(C,{label:"max vel",value:z,min:.25,max:80,step:.25,display:z.toFixed(1),testid:"max-velocity-control",onChange:e=>{L(e),r.current?.setMaxVelocity(e)}}),ey&&void 0!==ev.drive&&/*#__PURE__*/(0,n.jsx)(C,{label:"drive",value:G,min:0,max:1,step:.01,display:`${G.toFixed(2)}\xd7 clip`,testid:"drive-control",onChange:e=>{V(e),r.current?.setDrive(e)}}),/*#__PURE__*/(0,n.jsx)(C,{label:"respawn",value:K,min:0,max:.05,step:.001,display:`${(100*K).toFixed(1)}%`,testid:"random-reset-control",onChange:e=>{Y(e),r.current?.setResetRate(e)}}),/*#__PURE__*/(0,n.jsx)(T,{label:"border",value:$.border.tag,testid:"border-control",choices:[{value:"wrap",label:"WRAP",title:"Periodic torus"},{value:"bounce",label:"BOUNCE",title:"Reflect at the box edge"},{value:"reset",label:"RESET",title:"Respawn when leaving the box"}],onChange:e=>R(t=>({...t,border:{tag:e}}))}),/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note restart-note",children:"border is compiled \xb7 changing it restarts"})]}),/*#__PURE__*/(0,n.jsxs)(S,{title:"ink",testid:"ink-controls",children:[ev.lookEditable&&/*#__PURE__*/(0,n.jsx)(T,{label:"look",value:J,testid:"ink-look-control",choices:[{value:"ghost",label:"GHOST",title:"Soft alpha trails"},{value:"clean",label:"CLEAN",title:"No trails"},{value:"trails",label:"TRAILS",title:"Long streak persistence"}],onChange:e=>{let t=i.INK_LOOK_DECAY[e];Q(e),Z(t),r.current?.setDecay(t)}}),/*#__PURE__*/(0,n.jsx)(C,{label:"trails",value:X,min:0,max:.99,step:.005,display:X.toFixed(2),testid:"trails-control",onChange:e=>{Z(e),r.current?.setDecay(e)}}),/*#__PURE__*/(0,n.jsx)(T,{label:"stroke",value:er,testid:"stroke-style-control",choices:[{value:"dot",label:"DOT"},{value:"vel",label:"VEL"},{value:"curl",label:"CURL"}],onChange:e=>{es(e),r.current?.setStrokeStyle(e)}}),"dot"!==er&&/*#__PURE__*/(0,n.jsx)(C,{label:"length",value:en,min:.5,max:16,step:.5,display:en.toFixed(1),testid:"stroke-length-control",onChange:e=>{ea(e),r.current?.setStrokeLength(e)}})]}),ev.fieldArch&&/*#__PURE__*/(0,n.jsxs)(S,{title:"model",testid:"model-arch-controls",children:[/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-note","data-testid":"model-arch-summary",children:[(0,i.describeFieldArch)(ek??ev.fieldArch),ev.fieldLoss?"":" \xb7 train tfjs"]}),ev.archEditable&&/*#__PURE__*/(0,n.jsx)(T,{label:"arch",value:$.archPreset??"default",choices:[{value:"default",label:"default"},...eb.map(e=>({value:e.key,label:e.label}))],onChange:e=>R(t=>({...t,archPreset:"default"===e?null:e})),testid:"model-arch-presets"}),ev.archEditable&&/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note restart-note",children:"arch is compiled \xb7 changing it restarts"})]}),e_&&/*#__PURE__*/(0,n.jsxs)(S,{title:ew?"A/B/C roles":"two-head field",testid:"field-controls",children:[/*#__PURE__*/(0,n.jsx)(C,{label:ew?"blend C":"blend A/B",value:ee,min:0,max:1,step:.01,display:ee.toFixed(2),testid:"head-blend-control",onChange:e=>{et(e),r.current?.setBlend(e)}}),ew?/*#__PURE__*/(0,n.jsxs)("div",{className:"rgb-role-legend","data-testid":"rgb-role-legend",children:[/*#__PURE__*/(0,n.jsx)("span",{className:"role-a",children:"R \xb7 A disagree"}),/*#__PURE__*/(0,n.jsx)("span",{className:"role-b",children:"G \xb7 B agree"}),/*#__PURE__*/(0,n.jsx)("span",{className:"role-c",children:"B \xb7 C blend (no loss)"})]}):/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note",children:"neutral output mix — not order ↔ chaos"})]}),ey&&/*#__PURE__*/(0,n.jsxs)(S,{title:"adversary",testid:"adversary-controls",children:[/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row","data-testid":"objective-contract",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"objective"}),/*#__PURE__*/(0,n.jsx)("strong",{children:"angle-scale-hold"===$.loss.tag?"ANGLE OPPOSE \xb7 SCALE AGREE":"angle-relative-scale"===$.loss.tag?"ANGLE + SCALE OPPOSE \xb7 ENERGY HOLD":ew?"A OPPOSE \xb7 B COOPERATE":ej?"GAME + MAX CHAOS":"raw-vector"===$.loss.tag?"RAW VECTOR \xb7 BASELINE":"ANGLE OPPONENT GAME"})]}),/*#__PURE__*/(0,n.jsx)(T,{label:"target",value:$.target.tag,testid:"adversary-target-control",choices:[{value:"force",label:"FORCE",title:"Predict raw neural field output F(x)"},{value:"post-velocity",label:"POST-V",title:"Predict normalized velocity after force, friction and clip; context includes incoming velocity"}],onChange:e=>R(t=>{let r={tag:e};return"post-velocity"===e?{...t,target:r,encoding:{tag:"point"},loss:v(t.loss)?x("soft-angle",t.loss):t.loss}:{...t,target:r}})}),/*#__PURE__*/(0,n.jsx)(T,{label:"loss",value:$.loss.tag,testid:"adversary-loss-control",choices:[{value:"raw-vector",label:"RAW",title:"Euclidean ‖ŷ−y‖ — easy baseline (amplitude shortcut OK). Compare to ANGLE."},{value:"soft-angle",label:"ANGLE",title:"Exact smooth S\xb2 chord loss with bounded Jacobian"},{value:"angle-relative-scale",label:"A+S ADV",title:"Adversarial direction and relative magnitude contrast"},{value:"angle-scale-hold",label:"A+S HOLD",title:"Direction adversarial; relative scale cooperative; absolute energy held"}],onChange:e=>R(t=>{let r=x(e,t.loss);return v(r)?{...t,target:{tag:"force"},encoding:"point"===t.encoding.tag?{tag:"pair-rotation-scale-adjusted"}:t.encoding,loss:r}:{...t,loss:r}})}),"raw-vector"!==$.loss.tag&&/*#__PURE__*/(0,n.jsx)(C,{label:"soft τ",value:$.loss.tau,min:.005,max:.25,step:.005,display:$.loss.tau.toFixed(3),testid:"adversary-angle-tau-control",onChange:e=>R(t=>({...t,loss:"raw-vector"===t.loss.tag?t.loss:{...t.loss,tau:e}}))}),v($.loss)&&/*#__PURE__*/(0,n.jsxs)(n.Fragment,{children:[/*#__PURE__*/(0,n.jsx)(C,{label:"scale w",value:$.loss.scaleWeight,min:0,max:2,step:.05,display:$.loss.scaleWeight.toFixed(2),testid:"adversary-scale-weight-control",onChange:e=>R(t=>({...t,loss:v(t.loss)?{...t.loss,scaleWeight:e}:t.loss}))}),/*#__PURE__*/(0,n.jsx)(C,{label:"energy w",value:$.loss.energyWeight,min:0,max:1,step:.01,display:$.loss.energyWeight.toFixed(2),testid:"adversary-energy-weight-control",onChange:e=>R(t=>({...t,loss:v(t.loss)?{...t.loss,energyWeight:e}:t.loss}))}),/*#__PURE__*/(0,n.jsx)(C,{label:"energy",value:$.loss.energyTarget,min:.02,max:1,step:.01,display:$.loss.energyTarget.toFixed(2),testid:"adversary-energy-target-control",onChange:e=>R(t=>({...t,loss:v(t.loss)?{...t.loss,energyTarget:e}:t.loss}))})]}),"post-velocity"===$.target.tag&&/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note","data-testid":"post-velocity-contract",children:"context = x + incoming v \xb7 target is pre-border normalized v+"}),v($.loss)&&/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note","data-testid":"relative-scale-contract",children:"scale = within-tuple contrast \xb7 energy fixes absolute RMS"}),"angle-scale-hold"===$.loss.tag&&/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note","data-testid":"scale-hold-diagnostic-contract",children:"displayed D-joint is not G reward \xb7 G raises angle, lowers scale error"}),/*#__PURE__*/(0,n.jsx)(T,{label:"tuple",value:function(e){switch(e.tag){case"point":return"point";case"pair":case"pair-rotation":case"pair-rotation-scale-raw":case"pair-rotation-scale-adjusted":return"pair";case"tri":return"tri";case"quad-labelled":return"quad-labelled"}}($.encoding),testid:"adversary-tuple-control",choices:[{value:"point",label:"1 \xb7 POINT"},{value:"pair",label:"2 \xb7 PAIR"},{value:"tri",label:"3 \xb7 TRI"},{value:"quad-labelled",label:"4L \xb7 QUAD",title:"Four labelled points; translation+rotation quotient only"}],onChange:e=>R(t=>{let r=function(e,t){switch(e){case"point":return{tag:"point"};case"pair":// Preserve the selected pair quotient. Entering pair mode from another
+ek(e=>e.concat(t.predLoss).slice(-360)),ew(e=>e.concat(t.surprise).slice(-360)))},200);return()=>window.clearInterval(e)},[P]);let eD=e=>{r.current?.setColorMode(e),ex(e)};return/*#__PURE__*/(0,n.jsxs)("main",{className:"art-shell",children:[/*#__PURE__*/(0,n.jsx)("canvas",{ref:e,id:"myCanvas","aria-label":"Neural force-field artwork"}),/*#__PURE__*/(0,n.jsxs)("aside",{className:"hud-stack","aria-label":"Performance and piece controls",children:[/*#__PURE__*/(0,n.jsxs)("div",{className:"telemetry-panel","data-testid":"telemetry-panel","data-collapsed":ep?"false":"true",children:[/*#__PURE__*/(0,n.jsxs)("button",{type:"button",className:"hud-toggle","aria-expanded":ep,"aria-controls":"telemetry-host","data-testid":"telemetry-toggle",title:ep?"Hide telemetry":"Show telemetry",onClick:()=>ec(e=>!e),children:[/*#__PURE__*/(0,n.jsx)("span",{className:"hud-toggle-title",children:"fps \xb7 telemetry"}),/*#__PURE__*/(0,n.jsx)("span",{className:"hud-caret","aria-hidden":"true",children:ep?"▾":"▸"})]}),/*#__PURE__*/(0,n.jsx)("div",{ref:t,id:"telemetry-host",className:"telemetry-host","data-testid":"telemetry-host","aria-live":"polite"})]}),/*#__PURE__*/(0,n.jsxs)("div",{className:"config-dock",id:"piece-config-dock","data-testid":"piece-config-dock","data-collapsed":ed?"false":"true",children:[/*#__PURE__*/(0,n.jsx)("header",{className:"dock-header","aria-label":`Controls for ${eI.name}`,children:/*#__PURE__*/(0,n.jsxs)("button",{type:"button",className:"hud-toggle","aria-expanded":ed,"aria-controls":"piece-config-dock","data-testid":"piece-config-toggle",title:`${eI.name} — ${ed?"hide":"show"} controls`,onClick:()=>eh(e=>!e),children:[/*#__PURE__*/(0,n.jsx)("span",{className:"dock-piece",children:eI.name}),/*#__PURE__*/(0,n.jsx)("span",{className:"hud-caret","aria-hidden":"true",children:ed?"▾":"▸"})]})}),/*#__PURE__*/(0,n.jsxs)(T,{title:"simulation",testid:"simulation-controls",children:[/*#__PURE__*/(0,n.jsx)(N,{label:"particles",value:k(O),min:0,max:1,step:.002,display:O.toLocaleString(),testid:"particles-control",onChange:e=>{let t=_(e);B(t),r.current?.setParticleCount(t)}}),/*#__PURE__*/(0,n.jsx)(N,{label:"train B",value:z,min:16,max:4096,step:16,display:`${z}`,testid:"samples-control",onChange:e=>{L(e),r.current?.setSampleRate(e)}}),/*#__PURE__*/(0,n.jsx)(N,{label:"max vel",value:G,min:.25,max:80,step:.25,display:G.toFixed(1),testid:"max-velocity-control",onChange:e=>{V(e),r.current?.setMaxVelocity(e)}}),ej&&void 0!==eI.drive&&/*#__PURE__*/(0,n.jsx)(N,{label:"drive",value:U,min:0,max:1,step:.01,display:`${U.toFixed(2)}\xd7 clip`,testid:"drive-control",onChange:e=>{W(e),r.current?.setDrive(e)}}),/*#__PURE__*/(0,n.jsx)(N,{label:"respawn",value:X,min:0,max:.05,step:.001,display:`${(100*X).toFixed(1)}%`,testid:"random-reset-control",onChange:e=>{Z(e),r.current?.setResetRate(e)}}),/*#__PURE__*/(0,n.jsx)(E,{label:"border",value:P.border.tag,testid:"border-control",choices:[{value:"wrap",label:"WRAP",title:"Periodic torus"},{value:"bounce",label:"BOUNCE",title:"Reflect at the box edge"},{value:"reset",label:"RESET",title:"Respawn when leaving the box"}],onChange:e=>M(t=>({...t,border:{tag:e}}))}),/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note restart-note",children:"border is compiled \xb7 changing it restarts"})]}),/*#__PURE__*/(0,n.jsxs)(T,{title:"ink",testid:"ink-controls",children:[eI.lookEditable&&/*#__PURE__*/(0,n.jsx)(E,{label:"look",value:ee,testid:"ink-look-control",choices:[{value:"ghost",label:"GHOST",title:"Soft alpha trails"},{value:"clean",label:"CLEAN",title:"No trails"},{value:"trails",label:"TRAILS",title:"Long streak persistence"}],onChange:e=>{let t=i.INK_LOOK_DECAY[e];et(e),Q(t),r.current?.setDecay(t)}}),/*#__PURE__*/(0,n.jsx)(N,{label:"trails",value:J,min:0,max:.99,step:.005,display:J.toFixed(2),testid:"trails-control",onChange:e=>{Q(e),r.current?.setDecay(e)}}),/*#__PURE__*/(0,n.jsx)(E,{label:"stroke",value:en,testid:"stroke-style-control",choices:[{value:"dot",label:"DOT"},{value:"vel",label:"VEL"},{value:"curl",label:"CURL"}],onChange:e=>{ea(e),r.current?.setStrokeStyle(e)}}),"dot"!==en&&/*#__PURE__*/(0,n.jsx)(N,{label:"length",value:eo,min:.5,max:16,step:.5,display:eo.toFixed(1),testid:"stroke-length-control",onChange:e=>{ei(e),r.current?.setStrokeLength(e)}})]}),eI.fieldArch&&/*#__PURE__*/(0,n.jsxs)(T,{title:"model",testid:"model-arch-controls",children:[/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-note","data-testid":"model-arch-summary",children:[(0,i.describeFieldArch)(eC??eI.fieldArch),eI.fieldLoss?"":" \xb7 train tfjs"]}),eI.archEditable&&/*#__PURE__*/(0,n.jsx)(E,{label:"arch",value:P.archPreset??"default",choices:[{value:"default",label:"default"},...eS.map(e=>({value:e.key,label:e.label}))],onChange:e=>M(t=>({...t,archPreset:"default"===e?null:e})),testid:"model-arch-presets"}),eI.archEditable&&/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note restart-note",children:"arch is compiled \xb7 changing it restarts"})]}),eT&&/*#__PURE__*/(0,n.jsxs)(T,{title:eN?"A/B/C roles":"two-head field",testid:"field-controls",children:[/*#__PURE__*/(0,n.jsx)(N,{label:eN?"blend C":"blend A/B",value:er,min:0,max:1,step:.01,display:er.toFixed(2),testid:"head-blend-control",onChange:e=>{es(e),r.current?.setBlend(e)}}),eN?/*#__PURE__*/(0,n.jsxs)("div",{className:"rgb-role-legend","data-testid":"rgb-role-legend",children:[/*#__PURE__*/(0,n.jsx)("span",{className:"role-a",children:"R \xb7 A disagree"}),/*#__PURE__*/(0,n.jsx)("span",{className:"role-b",children:"G \xb7 B agree"}),/*#__PURE__*/(0,n.jsx)("span",{className:"role-c",children:"B \xb7 C blend (no loss)"})]}):/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note",children:"neutral output mix — not order ↔ chaos"})]}),ej&&/*#__PURE__*/(0,n.jsxs)(T,{title:"adversary",testid:"adversary-controls",children:[/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row","data-testid":"objective-contract",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"objective"}),/*#__PURE__*/(0,n.jsx)("strong",{children:"angle-scale-hold"===P.loss.tag?"ANGLE OPPOSE \xb7 SCALE AGREE":"angle-relative-scale"===P.loss.tag?"ANGLE + SCALE OPPOSE \xb7 ENERGY HOLD":eN?"A OPPOSE \xb7 B COOPERATE":eF?"GAME + MAX CHAOS":"raw-vector"===P.loss.tag?"RAW VECTOR \xb7 BASELINE":"ANGLE OPPONENT GAME"})]}),/*#__PURE__*/(0,n.jsx)(E,{label:"target",value:P.target.tag,testid:"adversary-target-control",choices:[{value:"force",label:"FORCE",title:"Predict raw neural field output F(x)"},{value:"post-velocity",label:"POST-V",title:"Predict normalized velocity after force, friction and clip; context includes incoming velocity"}],onChange:e=>M(t=>{let r={tag:e};return"post-velocity"===e?{...t,target:r,encoding:{tag:"point"},loss:b(t.loss)?y("soft-angle",t.loss):t.loss}:{...t,target:r}})}),/*#__PURE__*/(0,n.jsx)(E,{label:"loss",value:P.loss.tag,testid:"adversary-loss-control",choices:[{value:"raw-vector",label:"RAW",title:"Euclidean ‖ŷ−y‖ — easy baseline (amplitude shortcut OK). Compare to ANGLE."},{value:"soft-angle",label:"ANGLE",title:"Exact smooth S\xb2 chord loss with bounded Jacobian"},{value:"angle-relative-scale",label:"A+S ADV",title:"Adversarial direction and relative magnitude contrast"},{value:"angle-scale-hold",label:"A+S HOLD",title:"Direction adversarial; relative scale cooperative; absolute energy held"}],onChange:e=>M(t=>{let r=y(e,t.loss);return b(r)?{...t,target:{tag:"force"},encoding:"point"===t.encoding.tag?{tag:"pair-rotation-scale-adjusted"}:t.encoding,loss:r}:{...t,loss:r}})}),"raw-vector"!==P.loss.tag&&/*#__PURE__*/(0,n.jsx)(N,{label:"soft τ",value:P.loss.tau,min:.005,max:.25,step:.005,display:P.loss.tau.toFixed(3),testid:"adversary-angle-tau-control",onChange:e=>M(t=>({...t,loss:"raw-vector"===t.loss.tag?t.loss:{...t.loss,tau:e}}))}),b(P.loss)&&/*#__PURE__*/(0,n.jsxs)(n.Fragment,{children:[/*#__PURE__*/(0,n.jsx)(N,{label:"scale w",value:P.loss.scaleWeight,min:0,max:2,step:.05,display:P.loss.scaleWeight.toFixed(2),testid:"adversary-scale-weight-control",onChange:e=>M(t=>({...t,loss:b(t.loss)?{...t.loss,scaleWeight:e}:t.loss}))}),/*#__PURE__*/(0,n.jsx)(N,{label:"energy w",value:P.loss.energyWeight,min:0,max:1,step:.01,display:P.loss.energyWeight.toFixed(2),testid:"adversary-energy-weight-control",onChange:e=>M(t=>({...t,loss:b(t.loss)?{...t.loss,energyWeight:e}:t.loss}))}),/*#__PURE__*/(0,n.jsx)(N,{label:"energy",value:P.loss.energyTarget,min:.02,max:1,step:.01,display:P.loss.energyTarget.toFixed(2),testid:"adversary-energy-target-control",onChange:e=>M(t=>({...t,loss:b(t.loss)?{...t.loss,energyTarget:e}:t.loss}))})]}),"post-velocity"===P.target.tag&&/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note","data-testid":"post-velocity-contract",children:"context = x + incoming v \xb7 target is pre-border normalized v+"}),b(P.loss)&&/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note","data-testid":"relative-scale-contract",children:"scale = within-tuple contrast \xb7 energy fixes absolute RMS"}),"angle-scale-hold"===P.loss.tag&&/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note","data-testid":"scale-hold-diagnostic-contract",children:"displayed D-joint is not G reward \xb7 G raises angle, lowers scale error"}),/*#__PURE__*/(0,n.jsx)(E,{label:"tuple",value:function(e){switch(e.tag){case"point":return"point";case"pair":case"pair-rotation":case"pair-rotation-scale-raw":case"pair-rotation-scale-adjusted":return"pair";case"tri":return"tri";case"quad-labelled":return"quad-labelled"}}(P.encoding),testid:"adversary-tuple-control",choices:[{value:"point",label:"1 \xb7 POINT"},{value:"pair",label:"2 \xb7 PAIR"},{value:"tri",label:"3 \xb7 TRI"},{value:"quad-labelled",label:"4L \xb7 QUAD",title:"Four labelled points; translation+rotation quotient only"}],onChange:e=>M(t=>{let r=function(e,t){switch(e){case"point":return{tag:"point"};case"pair":// Preserve the selected pair quotient. Entering pair mode from another
     // arity chooses the scale-adjusted observer (flagship), not raw
     // pair-rotation (the easier amplitude-baseline observer).
-    return j(t)?t:{tag:"pair-rotation-scale-adjusted"};case"tri":return{tag:"tri"};case"quad-labelled":return{tag:"quad-labelled"}}}(e,t.encoding);return{...t,encoding:r,target:"point"===e?t.target:{tag:"force"},loss:"point"===e&&v(t.loss)?x("soft-angle",t.loss):t.loss}})}),eS?/*#__PURE__*/(0,n.jsx)(T,{label:"observer",value:eS,testid:"adversary-view-control",choices:[{value:"rotation",label:"R",title:"Quotient translation and rotation; keep scale observable"},{value:"rotation-scale-raw",label:"R+S RAW",title:"Scale-blind context; selecting it also chooses the raw-vector cheat control"},{value:"rotation-scale-adjusted",label:"R+S ADJ",title:"Same scale-blind context; selecting it chooses exact smooth soft-angle"}],onChange:e=>R(t=>({...t,encoding:function(e){switch(e){case"rotation":return{tag:"pair-rotation"};case"rotation-scale-raw":return{tag:"pair-rotation-scale-raw"};case"rotation-scale-adjusted":return{tag:"pair-rotation-scale-adjusted"}}}(e),loss:"rotation-scale-raw"===e?x("raw-vector",t.loss):"rotation-scale-adjusted"===e?x("soft-angle",t.loss):t.loss}))}):/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row","data-testid":"adversary-view-control",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"observer"}),/*#__PURE__*/(0,n.jsx)("strong",{children:function(e,t){switch(e.tag){case"point":return"post-velocity"===t.tag?"POINT \xb7 absolute x + incoming v → pre-border v+":"POINT \xb7 absolute x → F(x)";case"pair":case"pair-rotation":return"PAIR \xb7 rotation quotient";case"pair-rotation-scale-raw":return"PAIR \xb7 similarity-blind context, raw preset";case"pair-rotation-scale-adjusted":return"PAIR \xb7 similarity-blind context, angle preset";case"tri":return"TRI \xb7 unordered E(2); ties inactive";case"quad-labelled":return"QUAD-L \xb7 labelled rotation quotient; raw scale"}}($.encoding,$.target)})]}),/*#__PURE__*/(0,n.jsx)(C,{label:"angle-scale-hold"===$.loss.tag?"game w":"reward",value:eo,min:f,max:m,step:5e-4,display:eo.toFixed(3),testid:"adversary-reward-control",onChange:e=>{ei(e),r.current?.setAdversaryWeight(e)}}),/*#__PURE__*/(0,n.jsx)(C,{label:"G lr",value:k(U,p,c),min:0,max:1,step:.005,display:U.toExponential(1),testid:"generator-learning-rate-control",onChange:e=>{let t=_(e,p,c);W(t),r.current?.setGeneratorLearningRate(t)}}),/*#__PURE__*/(0,n.jsx)(C,{label:"D lr",value:k(q,d,h),min:0,max:1,step:.005,display:q.toExponential(1),testid:"discriminator-learning-rate-control",onChange:e=>{let t=_(e,d,h);H(t),r.current?.setDiscriminatorLearningRate(t)}}),/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row","data-testid":"learning-rate-ratio",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"D / G"}),/*#__PURE__*/(0,n.jsxs)("strong",{children:[(q/U).toFixed(2),"\xd7"]})]}),eI?/*#__PURE__*/(0,n.jsxs)(n.Fragment,{children:[/*#__PURE__*/(0,n.jsx)(C,{label:"guesses K",value:$.k,min:2,max:12,step:1,display:`${$.k}`,testid:"adversary-k-control",onChange:e=>R(t=>({...t,k:Math.round(e)}))}),/*#__PURE__*/(0,n.jsx)(C,{label:"relax ε",value:$.relaxEps,min:0,max:.45,step:.01,display:$.relaxEps.toFixed(2),testid:"adversary-epsilon-control",onChange:e=>R(t=>({...t,relaxEps:e}))})]}):/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"predictor"}),/*#__PURE__*/(0,n.jsx)("strong",{children:"single-head control"})]}),/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note restart-note",children:"target, loss, tuple, observer, K and ε rebuild GPU pipelines"}),ew?/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row","data-testid":"color-mode-control",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"color"}),/*#__PURE__*/(0,n.jsx)("strong",{children:"RGB \xb7 A / B / derived C"})]}):/*#__PURE__*/(0,n.jsx)(T,{label:"color",value:ep.tag,testid:"color-mode-control",choices:[{value:"velocity",label:"VEL"},{value:"surprise-raw",label:"RAW"},{value:"surprise-per-unit",label:"PER UNIT"}],onChange:e=>eC("velocity"===e?{tag:"velocity"}:{tag:e,colormap:"velocity"!==ep.tag?ep.colormap:"inferno"})}),!ew&&"velocity"!==ep.tag&&/*#__PURE__*/(0,n.jsx)(T,{label:"map",value:ep.colormap,testid:"colormap-control",choices:u.map(e=>({value:e,label:e.toUpperCase()})),onChange:e=>eC({...ep,colormap:e})})]}),ey&&/*#__PURE__*/(0,n.jsxs)(S,{title:"diagnostics",testid:"adversary-diagnostics",children:["on"===el.tag?/*#__PURE__*/(0,n.jsxs)(n.Fragment,{children:[/*#__PURE__*/(0,n.jsxs)("div",{className:"diagnostic-row","data-testid":"disc-loss-chart",children:[/*#__PURE__*/(0,n.jsx)("span",{className:"diagnostic-name",title:"Discriminator objective (minimize)",children:"D loss"}),/*#__PURE__*/(0,n.jsx)(E,{label:"discriminator loss",data:ef,smoothed:N(ef,.08)}),/*#__PURE__*/(0,n.jsx)("strong",{children:el.predLoss.toExponential(2)})]}),/*#__PURE__*/(0,n.jsxs)("div",{className:"diagnostic-row","data-testid":"gen-loss-chart",children:[/*#__PURE__*/(0,n.jsx)("span",{className:"diagnostic-name",title:"Generator payoff / residual (disagree maximizes)",children:"G residual"}),/*#__PURE__*/(0,n.jsx)(E,{label:"generator residual",data:eg,smoothed:N(eg,.08)}),/*#__PURE__*/(0,n.jsx)("strong",{children:el.surprise.toExponential(2)})]}),/*#__PURE__*/(0,n.jsxs)("div",{className:"chart-legend","aria-hidden":"true",children:["dim=raw \xb7 bright=EMA \xb7 ~",Math.round(1.2),"m window"]}),/*#__PURE__*/(0,n.jsxs)("div",{className:"diagnostic-row",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"heads"}),/*#__PURE__*/(0,n.jsx)(F,{fractions:el.winFractions}),/*#__PURE__*/(0,n.jsx)("strong",{className:`health health-${el.health.tag}`,"data-testid":"head-health",children:A(el.health)})]}),el.branches&&/*#__PURE__*/(0,n.jsxs)(n.Fragment,{children:[/*#__PURE__*/(0,n.jsxs)("div",{className:"diagnostic-row","data-testid":"disagree-head-health",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"A disagree"}),/*#__PURE__*/(0,n.jsx)(F,{fractions:el.branches.disagree.winFractions}),/*#__PURE__*/(0,n.jsx)("strong",{className:`health health-${el.branches.disagree.health.tag}`,children:A(el.branches.disagree.health)})]}),/*#__PURE__*/(0,n.jsxs)("div",{className:"diagnostic-row","data-testid":"agree-head-health",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"B agree"}),/*#__PURE__*/(0,n.jsx)(F,{fractions:el.branches.agree.winFractions}),/*#__PURE__*/(0,n.jsx)("strong",{className:`health health-${el.branches.agree.health.tag}`,children:A(el.branches.agree.health)})]})]})]}):/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"game"}),/*#__PURE__*/(0,n.jsx)("strong",{children:"initialising…"})]}),"velocity"!==ep.tag&&ed&&/*#__PURE__*/(0,n.jsxs)("div",{className:"span-readout","data-testid":"surprise-span",children:["surprise-raw"===ep.tag?"RAW":"PER UNIT"," \xb7 p2"," ",ed.lo.toExponential(1)," \xb7 p98"," ",ed.hi.toExponential(1)," \xb7"," ",Math.round(100*ed.covered),"%",ed.collapsed?" \xb7 FLAT":""]})]})]})]}),/*#__PURE__*/(0,n.jsx)("nav",{className:"gallery-radio",role:"radiogroup","aria-label":"Art piece","data-testid":"art-piece-gallery",children:(0,i.GALLERY).map((e,t)=>/*#__PURE__*/(0,n.jsx)("button",{type:"button",role:"radio","aria-checked":t===$.piece,"data-active":t===$.piece?"true":"false",onClick:()=>R(e=>/** Switch gallery piece without wiping dock dials. */(function(e,t){if(e.piece===t)return e;let r=w(t);// Re-adopt the piece's baked observer + loss + target + K/ε. Those are the
+    return C(t)?t:{tag:"pair-rotation-scale-adjusted"};case"tri":return{tag:"tri"};case"quad-labelled":return{tag:"quad-labelled"}}}(e,t.encoding);return{...t,encoding:r,target:"point"===e?t.target:{tag:"force"},loss:"point"===e&&b(t.loss)?y("soft-angle",t.loss):t.loss}})}),eA?/*#__PURE__*/(0,n.jsx)(E,{label:"observer",value:eA,testid:"adversary-view-control",choices:[{value:"rotation",label:"R",title:"Quotient translation and rotation; keep scale observable"},{value:"rotation-scale-raw",label:"R+S RAW",title:"Scale-blind context; selecting it also chooses the raw-vector cheat control"},{value:"rotation-scale-adjusted",label:"R+S ADJ",title:"Same scale-blind context; selecting it chooses exact smooth soft-angle"}],onChange:e=>M(t=>({...t,encoding:function(e){switch(e){case"rotation":return{tag:"pair-rotation"};case"rotation-scale-raw":return{tag:"pair-rotation-scale-raw"};case"rotation-scale-adjusted":return{tag:"pair-rotation-scale-adjusted"}}}(e),loss:"rotation-scale-raw"===e?y("raw-vector",t.loss):"rotation-scale-adjusted"===e?y("soft-angle",t.loss):t.loss}))}):/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row","data-testid":"adversary-view-control",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"observer"}),/*#__PURE__*/(0,n.jsx)("strong",{children:function(e,t){switch(e.tag){case"point":return"post-velocity"===t.tag?"POINT \xb7 absolute x + incoming v → pre-border v+":"POINT \xb7 absolute x → F(x)";case"pair":case"pair-rotation":return"PAIR \xb7 rotation quotient";case"pair-rotation-scale-raw":return"PAIR \xb7 similarity-blind context, raw preset";case"pair-rotation-scale-adjusted":return"PAIR \xb7 similarity-blind context, angle preset";case"tri":return"TRI \xb7 unordered E(2); ties inactive";case"quad-labelled":return"QUAD-L \xb7 labelled rotation quotient; raw scale"}}(P.encoding,P.target)})]}),/*#__PURE__*/(0,n.jsx)(N,{label:"angle-scale-hold"===P.loss.tag?"game w":"reward",value:el,min:f,max:m,step:5e-4,display:el.toFixed(3),testid:"adversary-reward-control",onChange:e=>{eu(e),r.current?.setAdversaryWeight(e)}}),/*#__PURE__*/(0,n.jsx)(N,{label:"G lr",value:w(q,p,c),min:0,max:1,step:.005,display:q.toExponential(1),testid:"generator-learning-rate-control",onChange:e=>{let t=I(e,p,c);H(t),r.current?.setGeneratorLearningRate(t)}}),/*#__PURE__*/(0,n.jsx)(N,{label:"D lr",value:w(K,d,h),min:0,max:1,step:.005,display:K.toExponential(1),testid:"discriminator-learning-rate-control",onChange:e=>{let t=I(e,d,h);Y(t),r.current?.setDiscriminatorLearningRate(t)}}),/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row","data-testid":"learning-rate-ratio",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"D / G"}),/*#__PURE__*/(0,n.jsxs)("strong",{children:[(K/q).toFixed(2),"\xd7"]})]}),eE?/*#__PURE__*/(0,n.jsxs)(n.Fragment,{children:[/*#__PURE__*/(0,n.jsx)(N,{label:"guesses K",value:P.k,min:2,max:12,step:1,display:`${P.k}`,testid:"adversary-k-control",onChange:e=>M(t=>({...t,k:Math.round(e)}))}),/*#__PURE__*/(0,n.jsx)(N,{label:"relax ε",value:P.relaxEps,min:0,max:.45,step:.01,display:P.relaxEps.toFixed(2),testid:"adversary-epsilon-control",onChange:e=>M(t=>({...t,relaxEps:e}))})]}):/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"predictor"}),/*#__PURE__*/(0,n.jsx)("strong",{children:"single-head control"})]}),/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note restart-note",children:"target, loss, tuple, observer, K and ε rebuild GPU pipelines"}),eN?/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row","data-testid":"color-mode-control",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"color"}),/*#__PURE__*/(0,n.jsx)("strong",{children:"RGB \xb7 A / B / derived C"})]}):/*#__PURE__*/(0,n.jsx)(E,{label:"color",value:eg.tag,testid:"color-mode-control",choices:[{value:"velocity",label:"VEL"},{value:"surprise-raw",label:"RAW"},{value:"surprise-per-unit",label:"PER UNIT"}],onChange:e=>eD("velocity"===e?{tag:"velocity"}:{tag:e,colormap:"velocity"!==eg.tag?eg.colormap:"inferno"})}),!eN&&"velocity"!==eg.tag&&/*#__PURE__*/(0,n.jsx)(E,{label:"map",value:eg.colormap,testid:"colormap-control",choices:u.map(e=>({value:e,label:e.toUpperCase()})),onChange:e=>eD({...eg,colormap:e})})]}),ej&&/*#__PURE__*/(0,n.jsxs)(T,{title:"diagnostics",testid:"adversary-diagnostics",children:["on"===ef.tag?/*#__PURE__*/(0,n.jsxs)(n.Fragment,{children:[/*#__PURE__*/(0,n.jsxs)("div",{className:"diagnostic-row","data-testid":"disc-loss-chart",children:[/*#__PURE__*/(0,n.jsx)("span",{className:"diagnostic-name",title:"Discriminator objective (minimize)",children:"D loss"}),/*#__PURE__*/(0,n.jsx)(A,{label:"discriminator loss",data:eb,smoothed:F(eb,.08)}),/*#__PURE__*/(0,n.jsx)("strong",{children:ef.predLoss.toExponential(2)})]}),/*#__PURE__*/(0,n.jsxs)("div",{className:"diagnostic-row","data-testid":"gen-loss-chart",children:[/*#__PURE__*/(0,n.jsx)("span",{className:"diagnostic-name",title:"Generator payoff / residual (disagree maximizes)",children:"G residual"}),/*#__PURE__*/(0,n.jsx)(A,{label:"generator residual",data:e_,smoothed:F(e_,.08)}),/*#__PURE__*/(0,n.jsx)("strong",{children:ef.surprise.toExponential(2)})]}),/*#__PURE__*/(0,n.jsxs)("div",{className:"chart-legend","aria-hidden":"true",children:["dim=raw \xb7 bright=EMA \xb7 ~",Math.round(1.2),"m window"]}),/*#__PURE__*/(0,n.jsxs)("div",{className:"diagnostic-row",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"heads"}),/*#__PURE__*/(0,n.jsx)(D,{fractions:ef.winFractions}),/*#__PURE__*/(0,n.jsx)("strong",{className:`health health-${ef.health.tag}`,"data-testid":"head-health",children:$(ef.health)})]}),ef.branches&&/*#__PURE__*/(0,n.jsxs)(n.Fragment,{children:[/*#__PURE__*/(0,n.jsxs)("div",{className:"diagnostic-row","data-testid":"disagree-head-health",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"A disagree"}),/*#__PURE__*/(0,n.jsx)(D,{fractions:ef.branches.disagree.winFractions}),/*#__PURE__*/(0,n.jsx)("strong",{className:`health health-${ef.branches.disagree.health.tag}`,children:$(ef.branches.disagree.health)})]}),/*#__PURE__*/(0,n.jsxs)("div",{className:"diagnostic-row","data-testid":"agree-head-health",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"B agree"}),/*#__PURE__*/(0,n.jsx)(D,{fractions:ef.branches.agree.winFractions}),/*#__PURE__*/(0,n.jsx)("strong",{className:`health health-${ef.branches.agree.health.tag}`,children:$(ef.branches.agree.health)})]})]})]}):/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"game"}),/*#__PURE__*/(0,n.jsx)("strong",{children:"initialising…"})]}),"velocity"!==eg.tag&&ev&&/*#__PURE__*/(0,n.jsxs)("div",{className:"span-readout","data-testid":"surprise-span",children:["surprise-raw"===eg.tag?"RAW":"PER UNIT"," \xb7 p2"," ",ev.lo.toExponential(1)," \xb7 p98"," ",ev.hi.toExponential(1)," \xb7"," ",Math.round(100*ev.covered),"%",ev.collapsed?" \xb7 FLAT":""]})]})]})]}),/*#__PURE__*/(0,n.jsx)("nav",{className:"gallery-radio",role:"radiogroup","aria-label":"Art piece","data-testid":"art-piece-gallery",children:(0,i.GALLERY).map((e,t)=>/*#__PURE__*/(0,n.jsx)("button",{type:"button",role:"radio","aria-checked":t===P.piece,"data-active":t===P.piece?"true":"false",onClick:()=>M(e=>/** Switch gallery piece without wiping dock dials. */(function(e,t){if(e.piece===t)return e;let r=j(t);// Re-adopt the piece's baked observer + loss + target + K/ε. Those are the
             // didactic identity of each gallery entry (Pair = soft-angle, Quad =
             // raw-vector K=6, …). Keeping loss across switches used to strand Pair on
             // RAW after a Quad visit — Euclidean amplitude games go diagonal and look
@@ -114,10 +128,26 @@ console.error(e)}}(),t.exports=e("9223fb8c5161e54b")},{"9223fb8c5161e54b":"bO0Ia
  */s.export(r,"stepScaleOf",()=>H),/**
  * Discriminator step on one detached batch of raw `F(x)`, plus telemetry.
  * Called with no generator tape open: the predictor owns the only variables.
- */s.export(r,"adversaryTrainStep",()=>K),s.export(r,"MAX_CHAOS_FIELD_LOSS",()=>X),s.export(r,"ZERO_FIELD_LOSS",()=>Z),s.export(r,"SPIRAL_FIELD_LOSS",()=>J),s.export(r,"COVER_FIELD_LOSS",()=>Q),s.export(r,"CENTER_FIELD_LOSS",()=>ee),s.export(r,"GALLERY",()=>et),// ---------------------------------------------------------------------------
+ */s.export(r,"adversaryTrainStep",()=>K),s.export(r,"MAX_CHAOS_FIELD_LOSS",()=>X),s.export(r,"ZERO_FIELD_LOSS",()=>Z),s.export(r,"SPIRAL_FIELD_LOSS",()=>J),s.export(r,"COVER_FIELD_LOSS",()=>Q),s.export(r,"CENTER_FIELD_LOSS",()=>ee),s.export(r,"GALLERY",()=>et),s.export(r,"DEFAULT_PIECE_NAME",()=>er),s.export(r,"DEFAULT_PIECE_INDEX",()=>es),// ---------------------------------------------------------------------------
 // Physics step (inside optimizer.minimize — gradients flow through)
 // ---------------------------------------------------------------------------
-s.export(r,"physicsForward",()=>er),s.export(r,"INK_LOOK_DECAY",()=>ea),s.export(r,"inkLookFromRenderer",()=>eo),s.export(r,"decayForRenderer",()=>ei),s.export(r,"startLoop",()=>el);var n=e("@tensorflow/tfjs");e("@tensorflow/tfjs-backend-webgpu");var a=e("./core/field/helmholtz"),o=e("./core/field/arch"),i=e("./core/losses"),l=e("./render/webgpu/points"),u=e("./render/webgpu/splat"),p=e("./render/webgpu/advect"),c=e("./render/webgpu/train"),d=e("./render/webgpu/adversary_train"),h=e("./render/webgpu/pixel_disc_train"),f=e("./render/webgpu/gputime"),m=e("./core/gan/adversary"),g=e("./render/webgpu/surprise_points");// tfjs-backend-webgpu 4.10 calls adapter.requestAdapterInfo(), which current
+s.export(r,"physicsForward",()=>en),s.export(r,"INK_LOOK_DECAY",()=>ei),s.export(r,"inkLookFromRenderer",()=>el),s.export(r,"decayForRenderer",()=>eu),s.export(r,"STROKE_LENGTH_RANGE",()=>ep),/**
+ * κ for the splat stroke style. ONE resolution order, in priority order:
+ *
+ *   1. `?stroke=` — an explicit URL is the user's stated intent and wins.
+ *   2. the piece's declared {@link ArtPieceConfig.stroke} — the artwork's recipe.
+ *   3. "dot" — the shipped look, for the pieces that declare nothing.
+ *
+ * Exported because BOTH the loop and the React dock's first paint need the
+ * same answer; two copies of this ladder would be two chances to disagree.
+ * An unrecognised `?stroke=` is a hard error, exactly like `?adv=` / `?advM=`:
+ * a typo must not silently paint dots and look like the feature is broken.
+ */s.export(r,"resolveStrokeStyle",()=>ec),/**
+ * Stroke length in FRAMES of travel, same ladder: `?strokeLen=` > the piece's
+ * {@link ArtPieceConfig.strokeLen} > 3. `floatParam` (Number.isFinite, not
+ * `|| 3`) so an explicit `?strokeLen=0` clamps to the documented 0.5 floor
+ * instead of silently becoming the default.
+ */s.export(r,"resolveStrokeLength",()=>ed),s.export(r,"startLoop",()=>eh);var n=e("@tensorflow/tfjs");e("@tensorflow/tfjs-backend-webgpu");var a=e("./core/field/helmholtz"),o=e("./core/field/arch"),i=e("./core/losses"),l=e("./render/webgpu/points"),u=e("./render/webgpu/splat"),p=e("./render/webgpu/advect"),c=e("./render/webgpu/train"),d=e("./render/webgpu/adversary_train"),h=e("./render/webgpu/pixel_disc_train"),f=e("./render/webgpu/gputime"),m=e("./core/gan/adversary"),g=e("./render/webgpu/surprise_points");// tfjs-backend-webgpu 4.10 calls adapter.requestAdapterInfo(), which current
 // Chrome removed in favour of the synchronous `adapter.info` property — without
 // this shim the webgpu backend fails to init ("requestAdapterInfo is not a
 // function"). Safe no-op where WebGPU is absent (GPUAdapter undefined).
@@ -288,7 +318,26 @@ name:"Adversary \xb7 Tri WTA K=6",particleCount:6e4,friction:.97,drive:.65,force
 // does not claim permutation or scale invariance.
 name:"Adversary \xb7 Quad WTA K=6",particleCount:6e4,friction:.97,drive:.65,forceMagnitude:w(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.001,backgroundColor:[3,1,12],alphaBlend:.05,renderer:"surprise",colormap:"inferno",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualStd,alpha:.55}),adversary:{tag:"on",kind:{tag:"wta",k:6,relaxEps:.05},encoding:{tag:"quad-labelled"},weight:.012},fieldLoss:Z,computeLoss:z(Z)},// Four Pixel GAN games on soft density drawings (docs/PIXEL_DISC.md).
 // Shared trunk: splat → conv3×3 → codebook. Reverse-mode gen through D(pos').
-{name:"Pixel \xb7 VecField",particleCount:8e4,friction:.97,drive:.65,forceMagnitude:w(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.0015,backgroundColor:[4,6,14],alphaBlend:.05,renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.55}),pixelDisc:{kind:"vec-field",weight:.04,G:16,E:8,K:16,hidden:32,dt:.15},fieldLoss:{W_CHAOS:.2,W_ISO:.6,W_DIV:.1,W_SPIRAL:0,HH:.01,SPIRAL_TURNS:3},computeLoss:z({W_CHAOS:.2,W_ISO:.6,W_DIV:.1,W_SPIRAL:0,HH:.01,SPIRAL_TURNS:3})},{name:"Pixel \xb7 NextFrame",particleCount:8e4,friction:.97,drive:.65,forceMagnitude:w(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.0015,backgroundColor:[4,6,14],alphaBlend:.05,renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.55}),pixelDisc:{kind:"next-frame",weight:.04,G:16,E:8,K:16,hidden:32,dt:.15},fieldLoss:{W_CHAOS:.2,W_ISO:.6,W_DIV:.1,W_SPIRAL:0,HH:.01,SPIRAL_TURNS:3},computeLoss:z({W_CHAOS:.2,W_ISO:.6,W_DIV:.1,W_SPIRAL:0,HH:.01,SPIRAL_TURNS:3})},{name:"Pixel \xb7 RealFake",particleCount:8e4,friction:.97,drive:.65,forceMagnitude:w(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.0015,backgroundColor:[4,6,14],alphaBlend:.05,renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.55}),pixelDisc:{kind:"real-fake",weight:.03,G:16,E:8,K:16,hidden:32,dt:.15},fieldLoss:{W_CHAOS:.2,W_ISO:.6,W_DIV:.1,W_SPIRAL:0,HH:.01,SPIRAL_TURNS:3},computeLoss:z({W_CHAOS:.2,W_ISO:.6,W_DIV:.1,W_SPIRAL:0,HH:.01,SPIRAL_TURNS:3})},{name:"Pixel \xb7 Inpaint",particleCount:8e4,friction:.97,drive:.65,forceMagnitude:w(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.0015,backgroundColor:[4,6,14],alphaBlend:.05,renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.55}),pixelDisc:{kind:"inpaint",weight:.04,G:16,E:8,K:16,hidden:32,dt:.15},fieldLoss:{W_CHAOS:.2,W_ISO:.6,W_DIV:.1,W_SPIRAL:0,HH:.01,SPIRAL_TURNS:3},computeLoss:z({W_CHAOS:.2,W_ISO:.6,W_DIV:.1,W_SPIRAL:0,HH:.01,SPIRAL_TURNS:3})},{// GENERAL-SUM PREDICTOR GAME. Head A opposes the predictor, head B
+//
+// ZERO_FIELD_LOSS IS LOAD-BEARING, exactly as on the relational-adversary
+// pieces above. Pass B computes `g = fieldLossGrad + extGrad` and hands the
+// SUM to Adam (train_wgsl.ts `g = g + extGrad0[t]`), so a game piece that
+// also carries a structural loss is really running two optimizers against
+// one weight buffer — and the loser is invisible, not merely weaker.
+//
+// These four originally shipped W_CHAOS .2 / W_ISO .6 / W_DIV .1. Measured
+// at the gallery dims (tools/pixel_disc_authority_probe.ts): ‖extGrad‖ was
+// 5e-4…1e-2 against a total ‖g‖ of ~8.5, i.e. the critic owned 0.006%–0.12%
+// of every field update. Every pass ran, every gradient was finite, and the
+// artwork was pure W_ISO — which reads as "the pixel adversary does nothing"
+// on any device. It is NOT a mobile bug: the probe measures the same ratio
+// at 390×844 and 1280×800, since the splat normalizes by width/height.
+//
+// Do not reintroduce a structural loss here to "shape" a pixel piece. The
+// knob for that is pixelDisc.weight, and it is only meaningful once the
+// critic is the sole gradient — Adam rescales by sqrt(v), so a small-but-
+// uncontested extGrad still produces full-size steps.
+{name:"Pixel \xb7 VecField",particleCount:8e4,friction:.97,drive:.65,forceMagnitude:w(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.0015,backgroundColor:[4,6,14],alphaBlend:.05,renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.55}),pixelDisc:{kind:"vec-field",weight:.04,G:16,E:8,K:16,hidden:32,dt:.15},fieldLoss:Z,computeLoss:z(Z)},{name:"Pixel \xb7 NextFrame",particleCount:8e4,friction:.97,drive:.65,forceMagnitude:w(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.0015,backgroundColor:[4,6,14],alphaBlend:.05,renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.55}),pixelDisc:{kind:"next-frame",weight:.04,G:16,E:8,K:16,hidden:32,dt:.15},fieldLoss:Z,computeLoss:z(Z)},{name:"Pixel \xb7 RealFake",particleCount:8e4,friction:.97,drive:.65,forceMagnitude:w(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.0015,backgroundColor:[4,6,14],alphaBlend:.05,renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.55}),pixelDisc:{kind:"real-fake",weight:.03,G:16,E:8,K:16,hidden:32,dt:.15},fieldLoss:Z,computeLoss:z(Z)},{name:"Pixel \xb7 Inpaint",particleCount:8e4,friction:.97,drive:.65,forceMagnitude:w(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.0015,backgroundColor:[4,6,14],alphaBlend:.05,renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.55}),pixelDisc:{kind:"inpaint",weight:.04,G:16,E:8,K:16,hidden:32,dt:.15},fieldLoss:Z,computeLoss:z(Z)},{// GENERAL-SUM PREDICTOR GAME. Head A opposes the predictor, head B
 // cooperates with it, and C=(1-beta)A+beta B is derived only for display.
 // There are no C weights, C optimizer, or direct C loss. Stable particle
 // roles render A/B/C as exact red/green/blue.
@@ -309,7 +358,43 @@ name:"Adversary \xb7 Chaos Weave",particleCount:9e4,friction:.97,drive:.75,force
 // The neutral A/B output mix is tuned to 0.45 because that aesthetic blend
 // preserved more legible structure in the screenshot comparison. It is not
 // an order/chaos axis and the two direct-vector heads have no separate roles.
-renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.45}),fieldLoss:X,adversary:{tag:"on",kind:{tag:"wta",k:6,relaxEps:.05},encoding:{tag:"pair-rotation"},weight:.006},computeLoss:z(X)}];function er(e,t,r,s,a,o,i,l=a.maxVelocity,u={tag:"wrap"},p=a.forceMagnitude){let c,d;let h=e.div(n.tensor2d([[o,i]])),f=s?s.forces(h):r.predict(h).sub(.5),m=f.mul(p),g=t.add(m).mul(a.friction).clipByValue(-l,l),x=e.add(g);switch(u.tag){case"wrap":c=x.mod(n.tensor2d([[o,i]])),d=g;break;case"bounce":{let e=n.tensor2d([[o,i]]),t=x.less(0),r=x.greaterEqual(e),s=n.where(t,x.neg(),x);c=n.where(r,e.mul(2).sub(s),s),d=n.where(t.logicalOr(r),g.neg(),g);break}case"reset":{let e=n.tensor2d([[o,i]]),t=x.less(0).logicalOr(x.greaterEqual(e)).any(1).reshape([-1,1]),r=n.randomUniform(x.shape).mul(e);c=n.where(t,r,x),d=n.where(t,n.zerosLike(g),g);break}default:throw Error(`physicsForward: unknown border ${u.tag}`)}return{newPos:c,newVel:d,postUpdateVelocity:g,rawSignal:f,force:m}}// Random reset now lives INSIDE the fused advect kernel (PCG hash per
+renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.45}),fieldLoss:X,adversary:{tag:"on",kind:{tag:"wta",k:6,relaxEps:.05},encoding:{tag:"pair-rotation"},weight:.006},computeLoss:z(X)},// ══ APPEND ONLY — NEVER REORDER OR INSERT ABOVE THIS LINE ══════════════
+// A piece's GALLERY INDEX is persisted in two places outside this file:
+// shareable deep links carry it, and the dock's localStorage blob
+// (DOCK_STORAGE_KEY, src/index.tsx) stores `runtime.piece` as an integer.
+// Reordering or inserting silently re-points saved links and restored
+// sessions at a DIFFERENT artwork — a rename is loud (see
+// DEFAULT_PIECE_INDEX below), a renumber is not. New pieces go at the end.
+{// THE DEFAULT PIECE (see DEFAULT_PIECE_NAME). The Pair WTA K=4 game — the
+// SE(2)-canonicalized pair observer with the explicit soft-angle payoff,
+// which is what makes the swirls — moved onto the HASHGRID dual field.
+// The grid's local features give the generator per-cell freedom instead of
+// one global MLP surface, so the hard-to-predict structure lands as fine
+// filaments; α stays at the Pair piece's 0.55 so the position ENCODING is
+// the only deliberate difference between the two.
+//
+// MEASURED COST OF THE HASHGRID, not of the stroke: the fused adversary
+// kernel refuses hashgrid fields (`fusedAdvOk` in startLoop tests
+// `encoding.kind !== "hashgrid"`), so this piece runs the tfjs autograd
+// adversary and the loop logs that choice. Metal, 70k particles, headless
+// Chrome: ~24 fps / learn ≈ 40 ms here vs 60 fps / ~0.8 ms for the fused
+// raw-MLP Pair piece. Fusing hashgrid backward for the adversary is the
+// one change that would buy it back.
+//
+// renderer "alpha-fade", NOT "surprise" — deliberate, and load-bearing.
+// A surprise piece resolves to a surprise colour mode (resolveColorMode)
+// and the surprise renderer then takes the WHOLE render pass (see the
+// render step in `tick`); the splat, and therefore `stroke`, never runs.
+// Curl strokes are the point of this piece, so it colours by velocity with
+// ghost trails. (The RAW/PER-UNIT diagnostic is fused-only anyway — see the
+// cost note above — so a surprise piece here would have declared an
+// instrument it cannot drive.)
+name:"Adversary \xb7 Pair \xb7 HashGrid \xb7 Curl",particleCount:7e4,friction:.97,drive:.65,forceMagnitude:w(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.001,backgroundColor:[2,3,9],alphaBlend:.05,renderer:"alpha-fade",// Curl: each particle draws its curved per-frame trajectory (2nd-order,
+// curlAmp=1) rather than a dot, so at 24 px/frame the cloud reads as ink.
+stroke:"curl",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualHashgrid,alpha:.55}),adversary:{tag:"on",kind:{tag:"wta",k:4,relaxEps:.05},encoding:{tag:"pair-rotation-scale-adjusted"},// Explicit — do not rely only on the legacy encoding→soft-angle alias.
+// Soft-angle (direction-only) is what made the pair swirls; raw-vector
+// on this observer collapses into amplitude / shear cheats.
+loss:{tag:"soft-angle",tau:N.tau},weight:.015},fieldLoss:Z,computeLoss:z(Z)}],er="Adversary \xb7 Pair \xb7 HashGrid \xb7 Curl",es=(()=>{let e=et.findIndex(e=>e.name===er);if(e<0)throw Error(`DEFAULT_PIECE_NAME "${er}" is not in GALLERY — rename the constant with the piece, or the app would silently open on a different artwork.`);return e})();function en(e,t,r,s,a,o,i,l=a.maxVelocity,u={tag:"wrap"},p=a.forceMagnitude){let c,d;let h=e.div(n.tensor2d([[o,i]])),f=s?s.forces(h):r.predict(h).sub(.5),m=f.mul(p),g=t.add(m).mul(a.friction).clipByValue(-l,l),x=e.add(g);switch(u.tag){case"wrap":c=x.mod(n.tensor2d([[o,i]])),d=g;break;case"bounce":{let e=n.tensor2d([[o,i]]),t=x.less(0),r=x.greaterEqual(e),s=n.where(t,x.neg(),x);c=n.where(r,e.mul(2).sub(s),s),d=n.where(t.logicalOr(r),g.neg(),g);break}case"reset":{let e=n.tensor2d([[o,i]]),t=x.less(0).logicalOr(x.greaterEqual(e)).any(1).reshape([-1,1]),r=n.randomUniform(x.shape).mul(e);c=n.where(t,r,x),d=n.where(t,n.zerosLike(g),g);break}default:throw Error(`physicsForward: unknown border ${u.tag}`)}return{newPos:c,newVel:d,postUpdateVelocity:g,rawSignal:f,force:m}}// Random reset now lives INSIDE the fused advect kernel (PCG hash per
 // particle+frame) — see src/render/webgpu/advect_wgsl.ts. The old tfjs
 // randomReset (~10 dispatches/frame) is gone with the rest of the tfjs
 // advect stage.
@@ -323,17 +408,17 @@ renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualF
 // Main simulation loop
 // ---------------------------------------------------------------------------
 /** Full-screen "needs WebGPU" notice. There is NO Canvas2D/WebGL fallback — by
- *  design (we're WebGPU-only). Shown when the browser has no WebGPU. */function es(){document.documentElement.style.margin="0",document.body.style.margin="0";let e=document.createElement("div");e.style.cssText="position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:#05010f;color:#cbd5ff;text-align:center;font:16px/1.6 ui-monospace,monospace;padding:24px",e.innerHTML='<div style="max-width:560px"><div style="font-size:44px;margin-bottom:12px">⚡</div><div style="font-size:20px;margin-bottom:10px;color:#fff">This needs WebGPU</div><div style="margin-bottom:16px;color:#94a0c8">Neural Force Field Art runs entirely on the GPU (zero-copy tfjs → WebGPU). Your browser doesn\'t have WebGPU enabled.</div><div><a href="https://caniuse.com/webgpu" target="_blank" style="color:#8ab4ff">Go get WebGPU working →</a> <span style="color:#5b6890">(Chrome / Edge / Safari 18+ / Firefox, latest)</span></div></div>',document.body.appendChild(e)}/**
+ *  design (we're WebGPU-only). Shown when the browser has no WebGPU. */function ea(){document.documentElement.style.margin="0",document.body.style.margin="0";let e=document.createElement("div");e.style.cssText="position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:#05010f;color:#cbd5ff;text-align:center;font:16px/1.6 ui-monospace,monospace;padding:24px",e.innerHTML='<div style="max-width:560px"><div style="font-size:44px;margin-bottom:12px">⚡</div><div style="font-size:20px;margin-bottom:10px;color:#fff">This needs WebGPU</div><div style="margin-bottom:16px;color:#94a0c8">Neural Force Field Art runs entirely on the GPU (zero-copy tfjs → WebGPU). Your browser doesn\'t have WebGPU enabled.</div><div><a href="https://caniuse.com/webgpu" target="_blank" style="color:#8ab4ff">Go get WebGPU working →</a> <span style="color:#5b6890">(Chrome / Edge / Safari 18+ / Firefox, latest)</span></div></div>',document.body.appendChild(e)}/**
  * Per-piece trail defaults for the splat renderer, keyed by the piece's
  * declared renderer style (the splat's decay is now the one real trail
  * mechanism behind all three looks): ghost pieces get soft trails,
  * trail-buffer pieces long streaks, clean pieces none. `?decay=F` overrides.
- */let en={"alpha-fade":.94,"trail-buffer":.97,clean:0,// ZERO, deliberately. The surprise mode is an INSTRUMENT: a faded trail shows
+ */let eo={"alpha-fade":.94,"trail-buffer":.97,clean:0,// ZERO, deliberately. The surprise mode is an INSTRUMENT: a faded trail shows
 // a stale residual, so trails would misreport the adversary's current state.
 // (The surprise renderer clears its attachment every frame anyway; this entry
 // is what keeps the splat path honest if a run switches back to it live.)
-surprise:0},ea={ghost:en["alpha-fade"],clean:en.clean,trails:en["trail-buffer"]};function eo(e){switch(e){case"clean":return"clean";case"trail-buffer":return"trails";default:return"ghost"}}function ei(e){return en[e]}function el(e,t,r,s={}){let i,y=!0,b=et[t],_=b.particleCount,I=256,T=b.resetRate,N=b.maxVelocity,$=new URLSearchParams(location.search),R=C(b,$,N),P=R.driveEnabled,M=R.drive,O=R.forceMagnitude,B=R.generatorLearningRate,z=R.discriminatorLearningRate,W=A(b.adversary,$),H="on"===W.tag&&s.overrides?{...W,encoding:s.overrides.adversaryEncoding??W.encoding,target:s.overrides.adversaryTarget??E(W),loss:s.overrides.adversaryLoss??F(W),kind:"wta"===W.kind.tag?{tag:"wta",k:s.overrides.k??W.kind.k,relaxEps:s.overrides.relaxEps??W.kind.relaxEps}:W.kind}:W;"on"===H.tag&&(0,m.objectiveDims)(H.encoding,E(H),F(H));let X=s.overrides?.border??{tag:"wrap"},Z="wrap"===X.tag?"periodic":"euclidean",J=D(b,H,$),Q=Math.max(1,k($,"advEvery",1)),ee=Math.max(0,Math.min(16,parseInt(new URLSearchParams(location.search).get("window")??"0",10)||0)),ea=ee>0?ee:Math.max(1,k($,"trainEvery",1));// WebGPU-only — no Canvas2D/WebGL fallback (by design). Warn + bail if absent.
-if(!(0,l.GpuPointRendererWebGPU).isSupported())return es(),()=>{};// RETINA: the canvas BACKING store is native resolution (devicePixelRatio,
+surprise:0},ei={ghost:eo["alpha-fade"],clean:eo.clean,trails:eo["trail-buffer"]};function el(e){switch(e){case"clean":return"clean";case"trail-buffer":return"trails";default:return"ghost"}}function eu(e){return eo[e]}let ep={min:.5,max:16};function ec(e,t){let r=t.get("stroke");if(null===r)return e.stroke??"dot";if("dot"===r||"vel"===r||"curl"===r)return r;throw Error(`?stroke must be dot, vel or curl, got ${r}`)}function ed(e,t){return Math.max(ep.min,Math.min(ep.max,_(t,"strokeLen",e.strokeLen??3)))}function eh(e,t,r,s={}){let i,y=!0,b=et[t],_=b.particleCount,I=256,T=b.resetRate,N=b.maxVelocity,$=new URLSearchParams(location.search),R=C(b,$,N),P=R.driveEnabled,M=R.drive,O=R.forceMagnitude,B=R.generatorLearningRate,z=R.discriminatorLearningRate,W=A(b.adversary,$),H="on"===W.tag&&s.overrides?{...W,encoding:s.overrides.adversaryEncoding??W.encoding,target:s.overrides.adversaryTarget??E(W),loss:s.overrides.adversaryLoss??F(W),kind:"wta"===W.kind.tag?{tag:"wta",k:s.overrides.k??W.kind.k,relaxEps:s.overrides.relaxEps??W.kind.relaxEps}:W.kind}:W;"on"===H.tag&&(0,m.objectiveDims)(H.encoding,E(H),F(H));let X=s.overrides?.border??{tag:"wrap"},Z="wrap"===X.tag?"periodic":"euclidean",J=D(b,H,$),Q=Math.max(1,k($,"advEvery",1)),ee=Math.max(0,Math.min(16,parseInt(new URLSearchParams(location.search).get("window")??"0",10)||0)),er=ee>0?ee:Math.max(1,k($,"trainEvery",1));// WebGPU-only — no Canvas2D/WebGL fallback (by design). Warn + bail if absent.
+if(!(0,l.GpuPointRendererWebGPU).isSupported())return ea(),()=>{};// RETINA: the canvas BACKING store is native resolution (devicePixelRatio,
 // capped at 2 — 3x phone DPRs quadruple the accumulator for little gain)
 // while the physics WORLD stays w×h CSS pixels: kernels, trainer and losses
 // are untouched; only the backing store and the splat accumulator scale.
@@ -342,47 +427,47 @@ if(!(0,l.GpuPointRendererWebGPU).isSupported())return es(),()=>{};// RETINA: the
 // a row-stride mismatch would shear the image). The quad renderer needs no
 // change: its vertex math is pos/resolution-relative (incl. pointSize, which
 // is in world units), and its fwidth AA sharpens automatically at native res.
-let eo=Math.min(window.devicePixelRatio||1,2),ei=window.innerWidth,el=window.innerHeight;e.width=Math.ceil(ei*eo),e.height=Math.ceil(el*eo),// Full-screen, no scroll (canvas is inline by default -> descender gap).
+let es=Math.min(window.devicePixelRatio||1,2),ei=window.innerWidth,el=window.innerHeight;e.width=Math.ceil(ei*es),e.height=Math.ceil(el*es),// Full-screen, no scroll (canvas is inline by default -> descender gap).
 // Explicit CSS width/height pin the element to CSS pixels so the native
 // backing maps 1:1 onto device pixels.
 e.style.cssText=`display:block;position:fixed;inset:0;width:${ei}px;height:${el}px`,document.documentElement.style.margin="0",document.body.style.cssText="margin:0;overflow:hidden;background:#000";// ALL tensor/model creation is DEFERRED to the async init below: tfjs throws
 // if you build tensors/models before the highest-priority backend (webgpu)
 // has finished initializing (needs await tf.ready()). Assigned there.
-let eu=null,ep=null,ec=null,ed=null,eh=null,ef=null,em=null,eg=null,ex=null,ev=null,ey=null,eb=null,ek=[],e_="particles",ew=0,eI=NaN,ej=null,eS=null,eC=null,eT=null,eN=null,eE={tag:"off"},eF=new Map,eA={tag:"off"},eD=new URLSearchParams(location.search).get("render"),e$=parseFloat(new URLSearchParams(location.search).get("exposure")??"1")||1,eR=new URLSearchParams(location.search).get("stroke"),eP="vel"===eR||"curl"===eR?eR:"dot",eM=new URLSearchParams(location.search).get("strokeLen"),eO=null!==eM?parseFloat(eM):NaN,eB=Number.isFinite(eO)?Math.max(.5,Math.min(16,eO)):3,ez=0,eL=document.createElement("div");eL.dataset.testid="fps-hud",eL.setAttribute("aria-label","Performance telemetry"),eL.style.cssText=(s.telemetryHost?"":"position:fixed;top:8px;right:8px;z-index:9999;")+"font:11px/1.45 ui-monospace,monospace;color:#8f8;background:rgba(0,0,0,.72);padding:6px 9px;border:1px solid rgba(130,170,255,.2);border-radius:5px;white-space:pre;pointer-events:none;letter-spacing:.02em",(s.telemetryHost??document.body).appendChild(eL);let eG=(e,t,r=.12)=>0===e?t:e*(1-r)+t*r,eV=0,eU=0,eW=0,eq=performance.now();// Learning is DECOUPLED from motion: we train the field on a small random
+let eu=null,eh=null,ef=null,em=null,eg=null,ex=null,ev=null,ey=null,eb=null,ek=null,e_=null,ew=null,eI=[],ej="particles",eS=0,eC=NaN,eT=null,eN=null,eE=null,eF=null,eA=null,eD={tag:"off"},e$=new Map,eR={tag:"off"},eP=new URLSearchParams(location.search).get("render"),eM=parseFloat(new URLSearchParams(location.search).get("exposure")??"1")||1,eO=ec(b,$),eB=ed(b,$),ez=0,eL=document.createElement("div");eL.dataset.testid="fps-hud",eL.setAttribute("aria-label","Performance telemetry"),eL.style.cssText=(s.telemetryHost?"":"position:fixed;top:8px;right:8px;z-index:9999;")+"font:11px/1.45 ui-monospace,monospace;color:#8f8;background:rgba(0,0,0,.72);padding:6px 9px;border:1px solid rgba(130,170,255,.2);border-radius:5px;white-space:pre;pointer-events:none;letter-spacing:.02em",(s.telemetryHost??document.body).appendChild(eL);let eG=(e,t,r=.12)=>0===e?t:e*(1-r)+t*r,eV=0,eU=0,eW=0,eq=performance.now();// Learning is DECOUPLED from motion: we train the field on a small random
 // batch each frame (real-time, cheap) while the FUSED WGSL KERNEL advects
 // ALL particles in ONE compute dispatch (MLP forward + integrate + clip +
 // wrap + random reset — was ~40 tfjs dispatches). Weights flow tfjs→kernel
 // as ~10KB of GPU→GPU copies per frame; particle state never touches tfjs,
 // so particle count scales to 1M+ without touching the train cost.
-async function eH(){if(!y||!(ec||eh)||!ed||!eC||!ej)return;ez++;// ONE command encoder for the whole frame. On the FUSED path it records
+async function eH(){if(!y||!(ef||eg)||!em||!eE||!eT)return;ez++;// ONE command encoder for the whole frame. On the FUSED path it records
 // trainer pass A+B, the advect pass, and the render, then submits ONCE —
 // versus the old three-submits-per-frame (train, advect, render). The tfjs
 // legacy path can't share the encoder for its learn (optimizer.minimize
 // does its own internal submits), but advect+render still share this one.
-let e=ej.createCommandEncoder(),t=eS?.writes(0,1),r=eS?.writes(2,3),s=eS?.writes(4,5),a=eS?.writes(6,7),o=performance.now(),l=!1,u=!1,p=!1,c=!1,d=!1;// `?trainEvery=N`: amortize training over N frames — applies to BOTH the
+let e=eT.createCommandEncoder(),t=eN?.writes(0,1),r=eN?.writes(2,3),s=eN?.writes(4,5),a=eN?.writes(6,7),o=performance.now(),l=!1,u=!1,p=!1,c=!1,d=!1;// `?trainEvery=N`: amortize training over N frames — applies to BOTH the
 // fused path (imagined-rollout batch) and the tfjs path (SIREN/Fourier,
 // whose autograd + encoding learn stage is heavy — this is how a Fourier
 // piece reaches 60fps: train every 2-3 frames, advect every frame).
-if(ez%ea!=0);else if(eh){// FUSED ADVERSARY first (when present): discriminator train + generator
+if(ez%er!=0);else if(eg){// FUSED ADVERSARY first (when present): discriminator train + generator
 // reward, recorded BEFORE the field passes so (a) the discriminator sees
 // the pre-update field — the correct minimax ordering, same as the tfjs
 // path below — and (b) extGrads are fresh when the field's pass B adds
 // them. ~0.8 ms at B=512 (tools/train_wta_test.ts §6), so no advEvery
 // amortization is needed on this path.
-if(ef&&"on"===eE.tag){// The top-right "train B" control owns BOTH sides' live batch size.
+if(ex&&"on"===eD.tag){// The top-right "train B" control owns BOTH sides' live batch size.
 // Adversary buffers are compiled to 1024 tuples; particle coverage can
 // reduce effective B further inside AdversaryTrainer.
 let t=S(I,1024),r={width:ei,height:el,forceMagnitude:O,friction:b.friction,maxVelocity:N},s=s=>s.encodeStep(e,r,{b:t,alpha:eu.alpha,lr:z,// A and B see the same tuple indices. Their predictor weights,
     // Adam state, field lane and named generator role are independent.
-    seed:ez,source:"particles",genSeed:s.genSeed(eE.weight,1,t),applyDisc:!0});// Both complete their alternating D→G sequence while field weights
+    seed:ez,source:"particles",genSeed:s.genSeed(eD.weight,1,t),applyDisc:!0});// Both complete their alternating D→G sequence while field weights
 // remain read-only. The ONE field step below then sums the two fresh
 // external gradients and applies exactly one field Adam update.
-s(ef),eg&&s(eg)}if(em&&b.pixelDisc){let t=Math.min(I,512);em.encodeStep(e,{b:t,alpha:eu.alpha,lr:z,genWeight:b.pixelDisc.weight,applyDisc:!0,width:ei,height:el}),p=em.recordStats(e)}eh.encodeStep(e,{width:ei,height:el,forceMagnitude:O,friction:b.friction,maxVelocity:N},{n:I,alpha:eu.alpha,lr:B,seed:ez,source:e_,mixRandom:ew},t,r),ez%30==0&&eh.readLoss().then(e=>eI=e.loss).catch(()=>{})}else"on"===eE.tag&&ez%Q==0&&n.tidy(()=>{let e=n.randomUniform([I,2],0,1).mul(eC),t="on"===eE.tag&&"tfjs"===eE.implementation&&"post-velocity"===eE.adv.cfg.target.tag?n.randomUniform([I,2],-N,N):n.zeros([I,2]),r=er(e,t,ep,eu,b,ei,el,N,X,O);eA=K(eE,e,t,r.postUpdateVelocity,r.rawSignal,ei,el,N)}),// (1b) GENERATOR. varList is the FIELD's weights only, so the predictor
+s(ex),ey&&s(ey)}if(ev&&b.pixelDisc){let t=Math.min(I,512);ev.encodeStep(e,{b:t,alpha:eu.alpha,lr:z,genWeight:b.pixelDisc.weight,applyDisc:!0,width:ei,height:el}),p=ev.recordStats(e)}eg.encodeStep(e,{width:ei,height:el,forceMagnitude:O,friction:b.friction,maxVelocity:N},{n:I,alpha:eu.alpha,lr:B,seed:ez,source:ej,mixRandom:eS},t,r),ez%30==0&&eg.readLoss().then(e=>eC=e.loss).catch(()=>{})}else"on"===eD.tag&&ez%Q==0&&n.tidy(()=>{let e=n.randomUniform([I,2],0,1).mul(eE),t="on"===eD.tag&&"tfjs"===eD.implementation&&"post-velocity"===eD.adv.cfg.target.tag?n.randomUniform([I,2],-N,N):n.zeros([I,2]),r=en(e,t,eh,eu,b,ei,el,N,X,O);eR=K(eD,e,t,r.postUpdateVelocity,r.rawSignal,ei,el,N)}),// (1b) GENERATOR. varList is the FIELD's weights only, so the predictor
 //      heads inside the adversarial term are frozen structurally.
-ec.minimize(()=>n.tidy(()=>{let e=n.randomUniform([I,2],0,1).mul(eC),t="on"===eE.tag&&"tfjs"===eE.implementation&&"post-velocity"===eE.adv.cfg.target.tag?n.randomUniform([I,2],-N,N):n.zeros([I,2]),r=er(e,t,ep,eu,b,ei,el,N,X,O),s=b.computeLoss(r.newPos,ei,el,{force:r.force,field:eu}),a=q(eE,e,t,r.postUpdateVelocity,r.rawSignal,ei,el,N);return s.add(a).asScalar()}),!1,i);let h=performance.now()-o,f=eE;if(ef&&"on"===f.tag&&"fused"===f.implementation){l=ef.encodeStatsRead(e),eg&&(u=eg.encodeStatsRead(e)),ev??=new Y(ej),d=ev.encodeSample(e,ed.velBuffer,ed.count,ez);let t=ef.lastStats,r=eg?.lastStats??null,s=!!t&&t!==ey,n=!!r&&r!==eb,a=(e,t)=>{let r=e.some(e=>e>0);for(let s=0;s<e.length;s++)e[s]=r?e[s]+.02*(t[s]-e[s]):t[s]};// Publish only after every configured branch has produced a real batch.
+ef.minimize(()=>n.tidy(()=>{let e=n.randomUniform([I,2],0,1).mul(eE),t="on"===eD.tag&&"tfjs"===eD.implementation&&"post-velocity"===eD.adv.cfg.target.tag?n.randomUniform([I,2],-N,N):n.zeros([I,2]),r=en(e,t,eh,eu,b,ei,el,N,X,O),s=b.computeLoss(r.newPos,ei,el,{force:r.force,field:eu}),a=q(eD,e,t,r.postUpdateVelocity,r.rawSignal,ei,el,N);return s.add(a).asScalar()}),!1,i);let h=performance.now()-o,f=eD;if(ex&&"on"===f.tag&&"fused"===f.implementation){l=ex.encodeStatsRead(e),ey&&(u=ey.encodeStatsRead(e)),ek??=new Y(eT),d=ek.encodeSample(e,em.velBuffer,em.count,ez);let t=ex.lastStats,r=ey?.lastStats??null,s=!!t&&t!==e_,n=!!r&&r!==ew,a=(e,t)=>{let r=e.some(e=>e>0);for(let s=0;s<e.length;s++)e[s]=r?e[s]+.02*(t[s]-e[s]):t[s]};// Publish only after every configured branch has produced a real batch.
 // Until then the previous/initial telemetry remains visible; no branch
 // is silently substituted for the missing one.
-if(s&&(ey=t,a(f.winEma,t.winCounts)),n&&(eb=r,a(ek,r.winCounts)),(s||n)&&t&&(!eg||r)){let e=e=>{let t=e.reduce((e,t)=>e+t,0)||1;return e.map(e=>e/t)},s=e(f.winEma),n=eg?e(ek):null,a=n?s.map((e,t)=>.5*(e+n[t])):s,o=f.kind,i=!!(eg&&r),l=(e,t,r)=>{let s=r.some(e=>e<.05/f.k),n=e.rewardScaleState();return L(s,t.headSpread,"seeded"===n.tag?{tag:"seeded",rms:n.rms}:{tag:"unseeded"})},u=l(ef,t,s),p=i&&n?l(eg,r,n):null,c="on"===H.tag?` \xb7 ${E(H).tag} \xb7 ${F(H).tag}`:"";eA={tag:"on",variant:i?"wta"===o.tag?`agree+disagree k=${o.k} ε=${o.relaxEps}${c}`:`agree+disagree single${c}`:"wta"===o.tag?`wta k=${o.k} ε=${o.relaxEps}${c}`:`single${c}`,k:f.k,// Aggregate summaries preserve the existing UI shape. The branch
+if(s&&(e_=t,a(f.winEma,t.winCounts)),n&&(ew=r,a(eI,r.winCounts)),(s||n)&&t&&(!ey||r)){let e=e=>{let t=e.reduce((e,t)=>e+t,0)||1;return e.map(e=>e/t)},s=e(f.winEma),n=ey?e(eI):null,a=n?s.map((e,t)=>.5*(e+n[t])):s,o=f.kind,i=!!(ey&&r),l=(e,t,r)=>{let s=r.some(e=>e<.05/f.k),n=e.rewardScaleState();return L(s,t.headSpread,"seeded"===n.tag?{tag:"seeded",rms:n.rms}:{tag:"unseeded"})},u=l(ex,t,s),p=i&&n?l(ey,r,n):null,c="on"===H.tag?` \xb7 ${E(H).tag} \xb7 ${F(H).tag}`:"";eR={tag:"on",variant:i?"wta"===o.tag?`agree+disagree k=${o.k} ε=${o.relaxEps}${c}`:`agree+disagree single${c}`:"wta"===o.tag?`wta k=${o.k} ε=${o.relaxEps}${c}`:`single${c}`,k:f.k,// Aggregate summaries preserve the existing UI shape. The branch
 // records below are the authoritative values for this general-sum
 // game; predictor objective is V_A + V_B.
 surprise:i?.5*(t.surprise+r.surprise):t.surprise,predLoss:i?t.discLoss+r.discLoss:t.discLoss,winFractions:a,// A/B games are diagnosed independently. A measured failure in one
@@ -391,25 +476,25 @@ health:p?G(u,p):u,weight:f.weight,branches:i?{disagree:{surprise:t.surprise,pred
 //     Returns the tfjs weight-sync clones (empty on the fused path); they
 //     must be disposed AFTER submit so their source buffers survive the
 //     in-flight copies.
-let m=ed.encodeStep(e,ez,eu?eu.alpha:0,s),g=0;// A surprise diagnostic takes the whole render pass: colour comes from one
+let m=em.encodeStep(e,ez,eu?eu.alpha:0,s),g=0;// A surprise diagnostic takes the whole render pass: colour comes from one
 // plane of the fused per-particle diagnostic buffer, not from velocity.
-if(x(J)&&ef&&ex){let t=v(J),r=ef.surprisePlane(t),s=performance.now(),n=eF.get(J.colormap);n.span=ex.norm.span,n.encodeRender(e,ed.posBuffer,r.buffer,ed.count,ei,el,a,r.offsetFloats),c=ex.encodeSample(e,r.buffer,ed.count,ez,ef.surpriseCoverage().window,r.offsetFloats),g=performance.now()-s}else if(eT){let t=performance.now(),r=null!==eN&&"quads"!==eD&&("splat"===eD||ed.count>=0);r?(// AUTO-EXPOSURE: accumulated energy scales with particle density and
+if(x(J)&&ex&&eb){let t=v(J),r=ex.surprisePlane(t),s=performance.now(),n=e$.get(J.colormap);n.span=eb.norm.span,n.encodeRender(e,em.posBuffer,r.buffer,em.count,ei,el,a,r.offsetFloats),c=eb.encodeSample(e,r.buffer,em.count,ez,ex.surpriseCoverage().window,r.offsetFloats),g=performance.now()-s}else if(eF){let t=performance.now(),r=null!==eA&&"quads"!==eP&&("splat"===eP||em.count>=0);r?(// AUTO-EXPOSURE: accumulated energy scales with particle density and
 // the trail steady-state 1/(1-decay); normalize so the MEAN displayed
 // energy stays constant across counts (attractor hot-spots still
 // bloom through the tonemap shoulder — that's the aesthetic).
 // The mean is over NATIVE texels — w*h CSS px times dpr² — since each
 // particle's 4096 energy spreads over the dpr-scaled accumulator.
 // `?exposure=F` scales the target.
-eN.exposure=.35*ei*el*eo*eo*(1-Math.min(eN.decay,.995))/Math.max(1,ed.count)*e$,eN.encodeRender(e,ed.posBuffer,ed.velBuffer,ed.count,ei,el,a)):eT.encodeRender(e,ed.posBuffer,ed.velBuffer,ed.count,ei,el,a),g=performance.now()-t}for(let t of(eS&&eS.maybeResolve(e,ez),ej.queue.submit([e.finish()]),m))t.dispose();eS&&eS.afterSubmit(),ef&&ef.afterSubmit(l),eg&&eg.afterSubmit(u),em&&em.afterSubmit(p),ex&&ex.afterSubmit(c),ev&&ev.afterSubmit(d);let k=performance.now();if(eV=eG(eV,k-eq),eq=k,eU=eG(eU,h),eW=eG(eW,g),ez%6==0){let e;let t=`${b.name}
+eA.exposure=.35*ei*el*es*es*(1-Math.min(eA.decay,.995))/Math.max(1,em.count)*eM,eA.encodeRender(e,em.posBuffer,em.velBuffer,em.count,ei,el,a)):eF.encodeRender(e,em.posBuffer,em.velBuffer,em.count,ei,el,a),g=performance.now()-t}for(let t of(eN&&eN.maybeResolve(e,ez),eT.queue.submit([e.finish()]),m))t.dispose();eN&&eN.afterSubmit(),ex&&ex.afterSubmit(l),ey&&ey.afterSubmit(u),ev&&ev.afterSubmit(p),eb&&eb.afterSubmit(c),ek&&ek.afterSubmit(d);let k=performance.now();if(eV=eG(eV,k-eq),eq=k,eU=eG(eU,h),eW=eG(eW,g),ez%6==0){let e;let t=`${b.name}
 backend ${n.getBackend()}  render=${_} train=${I}
 FPS     ${(1e3/eV).toFixed(1)}  (${eV.toFixed(1)} ms)
-`,r=eS?.timings,s=Number.isFinite(eI)?eI.toFixed(3):"warming";e=r&&eh?`rollout ${r.rollout.toFixed(2)} ms  optim ${r.optim.toFixed(2)} ms  loss ${s}
+`,r=eN?.timings,s=Number.isFinite(eC)?eC.toFixed(3):"warming";e=r&&eg?`rollout ${r.rollout.toFixed(2)} ms  optim ${r.optim.toFixed(2)} ms  loss ${s}
 advect  ${r.advect.toFixed(2)} ms  render ${r.render.toFixed(2)} ms  (gpu)
 `:r?`learn   ${eU.toFixed(1)} ms  (cpu\xb7tfjs)
 advect  ${r.advect.toFixed(2)} ms  render ${r.render.toFixed(2)} ms  (gpu)
 `:`learn   ${eU.toFixed(1)} ms${// zero-copy renderer forces webgpu (see the IIFE near the bottom),
 // where tiny-op training is dispatch-bound — worth seeing plainly.
-eh?`  (fused)  loss ${s}`:`  (tfjs\xb7${n.getBackend()})`}
+eg?`  (fused)  loss ${s}`:`  (tfjs\xb7${n.getBackend()})`}
 render  ${eW.toFixed(1)} ms  (cpu-encode)
 `,eL.textContent=t+e+/**
    * Adversary block of the telemetry HUD. Prints the two numbers that can lie
@@ -419,13 +504,13 @@ render  ${eW.toFixed(1)} ms  (cpu-encode)
    * audited instead of trusted (src/draw/robust_norm.ts, SPAN_FLOOR note).
    */function(){// Snapshot into a const: `advTele` is a mutable outer binding, so TypeScript
 // would drop the narrowing inside the .map callback below.
-let e=eA;if("off"===e.tag)return"";// Bar height is the win share RELATIVE TO UNIFORM (1/k), so a healthy
+let e=eR;if("off"===e.tag)return"";// Bar height is the win share RELATIVE TO UNIFORM (1/k), so a healthy
 // mixture reads as a flat row at ▄ whatever k is, and a starved head reads
 // as ▁ next to it. An absolute scale would make every k=8 run look collapsed.
 let t=e.winFractions.map(t=>"▁▂▃▄▅▆▇█"[Math.max(0,Math.min(7,Math.floor(t*e.k*3)))]).join(""),r="on"===H.tag&&"angle-scale-hold"===F(H).tag?"D-joint":"surprise",s=// (post /100 rescale) and toFixed(2) rendered EVERY one of them as
 // "0.01" — the HUD could not tell Chaos Weave (0.006) from Pair K=4
 // (0.015). Caught reading the headless HUD capture, 2026-07-28.
-`adv     ${e.variant}  w ${e.weight.toFixed(3)}${ef?"  (fused)":""}
+`adv     ${e.variant}  w ${e.weight.toFixed(3)}${ex?"  (fused)":""}
 ${r.padEnd(8)} ${e.surprise.toExponential(2)}  pred ${e.predLoss.toFixed(4)}
 heads   ${t}${V(e.health)}
 `;// Fused surprise span. The metric name is load-bearing: raw shared payoff
@@ -433,8 +518,8 @@ heads   ${t}${V(e.health)}
 if(e.branches&&(s+=`A disagree  sur ${e.branches.disagree.surprise.toExponential(2)} pred ${e.branches.disagree.predLoss.toExponential(2)}${V(e.branches.disagree.health)}
 B agree     sur ${e.branches.agree.surprise.toExponential(2)} pred ${e.branches.agree.predLoss.toExponential(2)}${V(e.branches.agree.health)}
 C blend     display only (zero direct loss)
-`),ev&&Number.isFinite(ev.mean)&&(s+=`speed   ${ev.mean.toFixed(2)} px/f  (clip ${N.toFixed(1)})
-`),x(J)&&ef&&ex){let e=ex.norm.raw,t=ef.surpriseCoverage().covered,r=eg?.surpriseCoverage().covered??t,n="surprise-raw"===J.tag?"raw":"per-unit";s+=`span(${n}) p2 ${e.lo.toExponential(2)} p50 ${e.mid.toExponential(2)} p98 ${e.hi.toExponential(2)}  covered ${(100*Math.min(t,r)).toFixed(0)}%
+`),ek&&Number.isFinite(ek.mean)&&(s+=`speed   ${ek.mean.toFixed(2)} px/f  (clip ${N.toFixed(1)})
+`),x(J)&&ex&&eb){let e=eb.norm.raw,t=ex.surpriseCoverage().covered,r=ey?.surpriseCoverage().covered??t,n="surprise-raw"===J.tag?"raw":"per-unit";s+=`span(${n}) p2 ${e.lo.toExponential(2)} p50 ${e.mid.toExponential(2)} p98 ${e.hi.toExponential(2)}  covered ${(100*Math.min(t,r)).toFixed(0)}%
 `}return s}()+`tensors ${n.memory().numTensors}`}requestAnimationFrame(eH)}return(async()=>{// WebGPU backend so tfjs tensors live in GPUBuffers we can render from with
 // zero copy (same GPUDevice). No fallback — warn and bail if it won't init.
 //
@@ -444,22 +529,22 @@ C blend     display only (zero direct loss)
 // nothing it could render from — "supporting" the override would just be a
 // slower way to show the WebGPU warning. The dispatch-cost dial that
 // initBackend's cpu-first ordering used to be is `?handoff=N` below.
-{let e=new URLSearchParams(location.search).get("backend");null!==e&&"webgpu"!==e&&console.warn(`[webgpu] ?backend=${e} ignored — this page is webgpu-only by construction (zero-copy tfjs→render buffers). Use ?handoff=N to move small tfjs ops to the CPU instead.`)}try{await n.setBackend("webgpu"),await n.ready()}catch(e){console.error("[webgpu] backend init failed",e)}if(!y)return;if("webgpu"!==n.getBackend()){es();return}// The shared GPUDevice tfjs created — everything (advect/train/render/timer)
+{let e=new URLSearchParams(location.search).get("backend");null!==e&&"webgpu"!==e&&console.warn(`[webgpu] ?backend=${e} ignored — this page is webgpu-only by construction (zero-copy tfjs→render buffers). Use ?handoff=N to move small tfjs ops to the CPU instead.`)}try{await n.setBackend("webgpu"),await n.ready()}catch(e){console.error("[webgpu] backend init failed",e)}if(!y)return;if("webgpu"!==n.getBackend()){ea();return}// The shared GPUDevice tfjs created — everything (advect/train/render/timer)
 // records onto it. The optional GPU profiler needs the "timestamp-query"
 // feature (main.ts's requestDevice shim appends it when present); when it's
 // absent GpuTimer.create returns null and the HUD keeps its CPU-encode lines.
-ej=n.backend().device,console.log((eS=(0,f.GpuTimer).create(ej))?"[gputime] timestamp-query active — HUD shows per-pass GPU ms":"[gputime] no timestamp-query feature — HUD uses CPU-encode ms");// `?handoff=N`: override tfjs's small-tensor CPU forwarding threshold
+eT=n.backend().device,console.log((eN=(0,f.GpuTimer).create(eT))?"[gputime] timestamp-query active — HUD shows per-pass GPU ms":"[gputime] no timestamp-query feature — HUD uses CPU-encode ms");// `?handoff=N`: override tfjs's small-tensor CPU forwarding threshold
 // (WEBGPU_CPU_HANDOFF_SIZE_THRESHOLD; 0 = force every op onto the GPU).
 // Only affects the tfjs learn path (legacy pieces / ?train=tfjs) — pair
 // with the HUD's learn line to A/B it on real hardware.
 let t=new URLSearchParams(location.search).get("handoff");null!==t&&(n.env().set("WEBGPU_CPU_HANDOFF_SIZE_THRESHOLD",parseInt(t,10)||0),console.log(`[tfjs] CPU handoff threshold -> ${parseInt(t,10)||0}`));// Architecture resolution: declarative fieldArch (piece default or dock
 // override) wins; createField is for load-bearing game recipes that bake
 // semantics the dock must not overwrite. Legacy createModel is last resort.
-let k=s.overrides?.fieldArch,S=k||(b.fieldArch?b.fieldArch:null);ep=(eu=S?(0,o.createFieldFromArch)(S):b.createField?b.createField():null)||!b.createModel?null:b.createModel(),i=eu?eu.trainableWeights:void 0,eC=n.tensor2d([[ei,el]]),n.keep(eC);// Fused advect kernel: WGSL is GENERATED from the live model's layer dims
+let k=s.overrides?.fieldArch,S=k||(b.fieldArch?b.fieldArch:null);eh=(eu=S?(0,o.createFieldFromArch)(S):b.createField?b.createField():null)||!b.createModel?null:b.createModel(),i=eu?eu.trainableWeights:void 0,eE=n.tensor2d([[ei,el]]),n.keep(eE);// Fused advect kernel: WGSL is GENERATED from the live model's layer dims
 // (see advect_wgsl.ts) — works for both the field and legacy MLP pieces.
 // Owns pos/vel as raw GPUBuffers; construction throws loudly on any
 // unsupported architecture instead of silently falling back.
-let C={width:ei,height:el,forceMagnitude:O,friction:b.friction,maxVelocity:N,resetRate:b.resetRate,border:X};ed=eu?(0,p.AdvectKernel).fromField(eu,C,_):(0,p.AdvectKernel).fromModel(ep,C,_);// Field pieces train FUSED by default: the trainer co-owns the advect
+let C={width:ei,height:el,forceMagnitude:O,friction:b.friction,maxVelocity:N,resetRate:b.resetRate,border:X};em=eu?(0,p.AdvectKernel).fromField(eu,C,_):(0,p.AdvectKernel).fromModel(eh,C,_);// Field pieces train FUSED by default: the trainer co-owns the advect
 // kernel's weights buffer and Adam-updates it in place — weights never
 // leave the GPU. tfjs remains only as the (idle) blueprint. Legacy MLP
 // pieces keep the tfjs optimizer (their losses aren't in the kernel yet).
@@ -471,7 +556,7 @@ let A="tfjs"===new URLSearchParams(location.search).get("train"),D="on"===H.tag&
 // measured 0.7-0.8 ms/step at B=512 vs the tfjs path's 19-32 ms.
 // hashgrid/class-aware fields and ?train=tfjs keep the tfjs autograd path,
 // and the loop says which one it picked out loud.
-let G="on"===H.tag&&$>0,V="on"===H.tag&&!G&&!!eu&&!A&&0===ed.layout.classes&&"hashgrid"!==ed.layout.encoding.kind,W="agree-disagree"===ed.layout.spec.kind;if(D&&!W||W&&"on"===H.tag&&!D)throw Error("[adversary] Agree+Disagree game/field mismatch: the game requires the two-head agree-disagree field semantic, and that field semantic must be trained by the two-lane game");// ALL field types (standard/siren/fourier/hashgrid) now train FUSED: the
+let G="on"===H.tag&&$>0,V="on"===H.tag&&!G&&!!eu&&!A&&0===em.layout.classes&&"hashgrid"!==em.layout.encoding.kind,W="agree-disagree"===em.layout.spec.kind;if(D&&!W||W&&"on"===H.tag&&!D)throw Error("[adversary] Agree+Disagree game/field mismatch: the game requires the two-head agree-disagree field semantic, and that field semantic must be trained by the two-lane game");// ALL field types (standard/siren/fourier/hashgrid) now train FUSED: the
 // trainer codegen handles sin backward (pre-act checkpoint), the fourier
 // encoding jacobian, and the hashgrid interp/scatter — each verified vs a
 // tfjs-autograd fixture on Metal at cos=1.0 (tools/train_types_test.ts).
@@ -479,30 +564,30 @@ let G="on"===H.tag&&$>0,V="on"===H.tag&&!G&&!!eu&&!A&&0===ed.layout.classes&&"ha
 // Field pieces with an explicit fieldLoss train FUSED by default
 // (chaos / cover / … compiled into train_wgsl). Aesthetic pieces that
 // omit fieldLoss keep the tfjs computeLoss path.
-if(G?(console.warn("[adversary] disabled for class-conditioned fields: class identity is not yet part of the predictor context, so enabling it would create fake hidden-state surprise."),eE={tag:"off"}):eE=V?U(H,I,Z,z,"fused"):U(H,I,Z,z),"on"===eE.tag&&"tfjs"===eE.implementation&&console.log(`[adversary] ${"on"===H.tag?H.kind.tag:"?"} encoding=${"on"===H.tag?H.encoding.tag:"?"} k=${eE.k} weight=${eE.weight} — tfjs autograd trainer (${A?"?train=tfjs":"field type unsupported by the fused adversary"})`),eu&&void 0!==b.fieldLoss&&!A&&("off"===eE.tag||V)){// `?rollout=K` (1..16, default 1): K-step BPTT rollout — the loss sees
+if(G?(console.warn("[adversary] disabled for class-conditioned fields: class identity is not yet part of the predictor context, so enabling it would create fake hidden-state surprise."),eD={tag:"off"}):eD=V?U(H,I,Z,z,"fused"):U(H,I,Z,z),"on"===eD.tag&&"tfjs"===eD.implementation&&console.log(`[adversary] ${"on"===H.tag?H.kind.tag:"?"} encoding=${"on"===H.tag?H.encoding.tag:"?"} k=${eD.k} weight=${eD.weight} — tfjs autograd trainer (${A?"?train=tfjs":"field type unsupported by the fused adversary"})`),eu&&void 0!==b.fieldLoss&&!A&&("off"===eD.tag||V)){// `?rollout=K` (1..16, default 1): K-step BPTT rollout — the loss sees
 // how particles FLOW through the field (evolving pos+vel), not just one
 // step. K is compiled into the trainer's WGSL. K=1 ≡ the tfjs loss.
 // `?window=K` overrides this (and trainEvery) — see windowK above.
 let e=ee>0?ee:Math.max(1,Math.min(16,parseInt(new URLSearchParams(location.search).get("rollout")??"1",10)||1));// Fused adversary FIRST: the field trainer's pass B needs its extGrads
 // buffer at construction (a codegen flag, not a runtime branch).
-if("random"===new URLSearchParams(location.search).get("batch")&&(e_="random"),// `?mix=F` (0..1): coverage floor — fraction of the particle-sourced
+if("random"===new URLSearchParams(location.search).get("batch")&&(ej="random"),// `?mix=F` (0..1): coverage floor — fraction of the particle-sourced
 // batch replaced by fresh uniform random points each step.
-ew=Math.max(0,Math.min(1,parseFloat(new URLSearchParams(location.search).get("mix")??"0")||0)),V&&"on"===eE.tag&&"fused"===eE.implementation&&"on"===H.tag){let e={tag:H.encoding.tag,target:E(H),loss:F(H),k:(0,m.headCount)(H.kind),relaxEps:"wta"===H.kind.tag?H.kind.relaxEps:0,batchCap:1024,fieldWeightsBuffer:ed.weightsBuffer,particleCount:ed.count,observerGeometry:Z};ef=new d.AdversaryTrainer(ej,ed.layout,{...e,// Ordinary pieces retain the historical blended-field game. In
+eS=Math.max(0,Math.min(1,parseFloat(new URLSearchParams(location.search).get("mix")??"0")||0)),V&&"on"===eD.tag&&"fused"===eD.implementation&&"on"===H.tag){let e={tag:H.encoding.tag,target:E(H),loss:F(H),k:(0,m.headCount)(H.kind),relaxEps:"wta"===H.kind.tag?H.kind.relaxEps:0,batchCap:1024,fieldWeightsBuffer:em.weightsBuffer,particleCount:em.count,observerGeometry:Z};ex=new d.AdversaryTrainer(eT,em.layout,{...e,// Ordinary pieces retain the historical blended-field game. In
 // Agree+Disagree this is A: direct field head 0, predictor opponent.
 fieldLane:D?0:"blend",generatorRole:"disagree",seed:20260727}),D&&(// B owns a separate predictor, optimizer, scratch and statistics.
 // The only shared object is the READ-ONLY field weights buffer.
-eg=new d.AdversaryTrainer(ej,ed.layout,{...e,fieldLane:1,generatorRole:"agree",seed:20260728}),ek=Array((0,m.headCount)(H.kind)).fill(0)),ef.setParticleBuffers(ed.posBuffer,ed.velBuffer,ed.count),eg?.setParticleBuffers(ed.posBuffer,ed.velBuffer,ed.count),ex=new g.GpuSurpriseStats(ej),console.log(D?`[adversary] FUSED Agree+Disagree encoding=${H.encoding.tag} k=${(0,m.headCount)(H.kind)} weight=${eE.weight} — A=lane0/disagree, B=lane1/agree, C=display-only blend; two independent predictors, one summed field update`:`[adversary] FUSED ${H.kind.tag} encoding=${H.encoding.tag} k=${(0,m.headCount)(H.kind)} weight=${eE.weight} — disc train + generator reward in-frame, tfjs idle`)}b.pixelDisc&&eu&&!A&&0===ed.layout.classes&&"hashgrid"!==ed.layout.encoding.kind&&("helmholtz"===ed.layout.spec.kind||"agree-disagree"===ed.layout.spec.kind)&&((em=new h.PixelDiscTrainer(ej,ed.layout,{fieldWeightsBuffer:ed.weightsBuffer,dims:{kind:b.pixelDisc.kind??"vec-field",G:b.pixelDisc.G,E:b.pixelDisc.E,K:b.pixelDisc.K,hidden:b.pixelDisc.hidden,dt:b.pixelDisc.dt},batchCap:512,seed:20260805})).setParticleBuffers(ed.posBuffer,ed.velBuffer,ed.count),console.log(`[pixel-disc] FUSED kind=${em.kind} G=${em.dims.G} E=${em.dims.E} K=${em.dims.K} weight=${b.pixelDisc.weight} — soft density critic + reverse-mode gen path (no JVP)`));let t=[];if(ef&&t.push(ef.extGradsBuf),eg?t.push(eg.extGradsBuf):em&&t.push(em.extGradsBuf),t.length>2)throw Error(`[train] at most 2 extGrad buffers (got ${t.length}); Agree+Disagree + pixel-disc cannot share the same frame yet`);(eh=new c.FusedTrainer(ej,ed.layout,{weightsBuffer:ed.weightsBuffer,batchCap:1024,kSteps:e,extGradBuffers:t,loss:b.fieldLoss,border:X})).uploadWeights(ed.packCurrentWeights()),eh.setParticleBuffers(ed.posBuffer,ed.velBuffer,ed.count),ed.syncFromTfjs=!1,console.log(`[train] fused trainer active (2 dispatches/step, tfjs idle, batch=${e_}, rollout=${e})`)}eh||(ec=n.train.adam(B)),x(J)&&!ef&&(console.warn("[adversary] tfjs is an oracle-only training path; raw/per-unit cloud diagnostics require the fused adversary. Falling back to velocity colour."),J={tag:"velocity"});try{eT=new l.GpuPointRendererWebGPU(e,{pointSize:b.pointSize??2.5,background:b.backgroundColor,maxSpeed:N,classes:R,palette:L});// splat shares the canvas context with the quad renderer (same device/
+ey=new d.AdversaryTrainer(eT,em.layout,{...e,fieldLane:1,generatorRole:"agree",seed:20260728}),eI=Array((0,m.headCount)(H.kind)).fill(0)),ex.setParticleBuffers(em.posBuffer,em.velBuffer,em.count),ey?.setParticleBuffers(em.posBuffer,em.velBuffer,em.count),eb=new g.GpuSurpriseStats(eT),console.log(D?`[adversary] FUSED Agree+Disagree encoding=${H.encoding.tag} k=${(0,m.headCount)(H.kind)} weight=${eD.weight} — A=lane0/disagree, B=lane1/agree, C=display-only blend; two independent predictors, one summed field update`:`[adversary] FUSED ${H.kind.tag} encoding=${H.encoding.tag} k=${(0,m.headCount)(H.kind)} weight=${eD.weight} — disc train + generator reward in-frame, tfjs idle`)}b.pixelDisc&&eu&&!A&&0===em.layout.classes&&"hashgrid"!==em.layout.encoding.kind&&("helmholtz"===em.layout.spec.kind||"agree-disagree"===em.layout.spec.kind)&&((ev=new h.PixelDiscTrainer(eT,em.layout,{fieldWeightsBuffer:em.weightsBuffer,dims:{kind:b.pixelDisc.kind??"vec-field",G:b.pixelDisc.G,E:b.pixelDisc.E,K:b.pixelDisc.K,hidden:b.pixelDisc.hidden,dt:b.pixelDisc.dt},batchCap:512,seed:20260805})).setParticleBuffers(em.posBuffer,em.velBuffer,em.count),console.log(`[pixel-disc] FUSED kind=${ev.kind} G=${ev.dims.G} E=${ev.dims.E} K=${ev.dims.K} weight=${b.pixelDisc.weight} — soft density critic + reverse-mode gen path (no JVP)`));let t=[];if(ex&&t.push(ex.extGradsBuf),ey?t.push(ey.extGradsBuf):ev&&t.push(ev.extGradsBuf),t.length>2)throw Error(`[train] at most 2 extGrad buffers (got ${t.length}); Agree+Disagree + pixel-disc cannot share the same frame yet`);(eg=new c.FusedTrainer(eT,em.layout,{weightsBuffer:em.weightsBuffer,batchCap:1024,kSteps:e,extGradBuffers:t,loss:b.fieldLoss,border:X})).uploadWeights(em.packCurrentWeights()),eg.setParticleBuffers(em.posBuffer,em.velBuffer,em.count),em.syncFromTfjs=!1,console.log(`[train] fused trainer active (2 dispatches/step, tfjs idle, batch=${ej}, rollout=${e})`)}eg||(ef=n.train.adam(B)),x(J)&&!ex&&(console.warn("[adversary] tfjs is an oracle-only training path; raw/per-unit cloud diagnostics require the fused adversary. Falling back to velocity colour."),J={tag:"velocity"});try{eF=new l.GpuPointRendererWebGPU(e,{pointSize:b.pointSize??2.5,background:b.backgroundColor,maxSpeed:N,classes:R,palette:L});// splat shares the canvas context with the quad renderer (same device/
 // format); its passes only run on frames where it's picked.
-let t=new URLSearchParams(location.search).get("decay"),r=new URLSearchParams(location.search).get("dot");eN=new u.SplatRenderer(e,{background:b.backgroundColor,maxSpeed:N,classes:R,palette:L,dpr:eo,// `?dot=F` — radial splat radius in CSS px (default 1.25)
+let t=new URLSearchParams(location.search).get("decay"),r=new URLSearchParams(location.search).get("dot");eA=new u.SplatRenderer(e,{background:b.backgroundColor,maxSpeed:N,classes:R,palette:L,dpr:es,// `?dot=F` — radial splat radius in CSS px (default 1.25)
 radius:null!==r&&parseFloat(r)||1.25,// Trails come from the piece's declared renderer style (the splat's
 // decay is the real mechanism behind all of them); `?decay=F` overrides.
-decay:null!==t?Math.max(0,Math.min(.995,parseFloat(t)||0)):en[b.renderer],// `?stroke=` / `?strokeLen=` — geometric stroke trails (parsed above)
-style:eP,strokeLen:eB})}catch(e){console.error("[webgpu] renderer init failed",e),es();return}/** Lazily build (and cache) the surprise renderer for a colormap. Cached
+decay:null!==t?Math.max(0,Math.min(.995,parseFloat(t)||0)):eo[b.renderer],// `?stroke=` / `?strokeLen=` — geometric stroke trails (parsed above)
+style:eO,strokeLen:eB})}catch(e){console.error("[webgpu] renderer init failed",e),ea();return}/** Lazily build (and cache) the surprise renderer for a colormap. Cached
      *  rather than rebuilt because construction reconfigures the canvas context,
      *  and destroying one would `unconfigure()` the context the splat and quad
-     *  renderers are still using. Three ramps ⇒ at most three pipelines. */let q=t=>{let r=eF.get(t);if(r)return r;let s=new g.GpuSurpriseRendererWebGPU(e,{colormap:t,background:b.backgroundColor,pointSize:2.5,gain:1.5});return eF.set(t,s),s};x(J)&&q(J.colormap),r&&r({field:eu||null,getParticleCount:()=>_,setParticleCount:e=>{ed&&(ed.setParticleCount(e),_=ed.count,eh&&eh.setParticleBuffers(ed.posBuffer,ed.velBuffer,ed.count),ef&&// buffer identity on the next encodeRender, so no extra plumbing
-ef.setParticleBuffers(ed.posBuffer,ed.velBuffer,ed.count),eg&&eg.setParticleBuffers(ed.posBuffer,ed.velBuffer,ed.count),ex?.reset())},getResetRate:()=>T,setResetRate:e=>{T=Math.max(0,Math.min(.2,e)),ed&&ed.setResetRate(T)},getSampleRate:()=>I,setSampleRate:e=>{I=Math.max(1,Math.round(e))},getDecay:()=>eN.decay,setDecay:e=>{eN&&(eN.decay=Math.max(0,Math.min(.99,e)))},getMaxVelocity:()=>N,setMaxVelocity:e=>{N=Math.max(.25,Math.min(200,e)),ed?.setMaxVelocity(N),P&&(O=w(M,N,b.friction),ed?.setForceMagnitude(O)),eT?.setMaxSpeed(N),eN&&(eN.maxSpeed=N)},getDrive:()=>M,setDrive:e=>{P&&(O=w(M=Math.max(0,Math.min(1,e)),N,b.friction),ed?.setForceMagnitude(O))},getGeneratorLearningRate:()=>B,setGeneratorLearningRate:e=>{let t=Math.max(j.generator.min,Math.min(j.generator.max,e));t!==B&&(B=t,!eh&&ec&&(ec.dispose(),ec=n.train.adam(B)))},getDiscriminatorLearningRate:()=>z,setDiscriminatorLearningRate:e=>{let t=Math.max(j.discriminator.min,Math.min(j.discriminator.max,e));t!==z&&(z=t,"on"===eE.tag&&"tfjs"===eE.implementation&&eE.adv.setLearningRate(z))},getBlend:()=>eu instanceof a.HelmholtzField?eu.alpha:0,setBlend:e=>{eu instanceof a.HelmholtzField&&// Single-head arches keep α=0 (no second head to blend).
-(eu.alpha=1===eu.headCount?0:Math.max(0,Math.min(1,e)))},getStrokeStyle:()=>eP,setStrokeStyle:e=>{eP=e,eN&&(eN.style=e)},getStrokeLength:()=>eB,setStrokeLength:e=>{eB=Math.max(.5,Math.min(16,e)),eN&&(eN.strokeLen=eB)},getAdversaryWeight:()=>"on"===eE.tag?eE.weight:0,setAdversaryWeight:e=>{"on"===eE.tag&&(eE.weight=Math.max(0,Math.min(20,e)))},getAdversaryTelemetry:()=>eA,getColorMode:()=>J,setColorMode:e=>{if(x(e)&&"agree-disagree"===b.mode){console.warn("[adversary] surprise colour is disabled for Agree+Disagree; the RGB channels are its A/B/C output contract.");return}if(x(e)&&!ef){console.warn("[adversary] tfjs is an oracle-only training path; raw/per-unit cloud diagnostics require the fused adversary.");return}let t=v(J),r=v(e);x(e)&&q(e.colormap),t!==r&&ex?.reset(),J=e},getSurpriseSpan:()=>ef&&ex&&x(J)?{...ex.norm.raw,covered:Math.min(ef.surpriseCoverage().covered,eg?.surpriseCoverage().covered??1),collapsed:ex.norm.collapsed}:null}),console.log(`starting: ${b.name} (webgpu)`),eH()})(),()=>{for(let e of(y=!1,eT&&eT.destroy(),eN&&eN.destroy?.(),eS&&eS.destroy(),eL.remove(),ec&&ec.dispose(),eC&&eC.dispose(),eh&&eh.destroy(),ef&&ef.destroy(),eg&&eg.destroy(),em&&em.destroy(),ex&&ex.destroy(),ev&&ev.destroy(),ed&&ed.destroy(),ep&&ep.dispose(),eu&&eu.dispose(),"on"===eE.tag&&"tfjs"===eE.implementation&&eE.adv.dispose(),eF.values()))e.destroy();eF.clear()}}},{"@tensorflow/tfjs":"7XM1o","@tensorflow/tfjs-backend-webgpu":"1Q5wH","./core/field/helmholtz":"d98IR","./core/field/arch":"d110f","./core/losses":"h4R8M","./render/webgpu/points":"331Z0","./render/webgpu/splat":"1QuJT","./render/webgpu/advect":"exLSb","./render/webgpu/train":"fJOAS","./render/webgpu/adversary_train":"5CJQf","./render/webgpu/pixel_disc_train":"30QAM","./render/webgpu/gputime":"881SH","./core/gan/adversary":"4C16z","./render/webgpu/surprise_points":"ah9re","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"7XM1o":[function(e,t,r){/**
+     *  renderers are still using. Three ramps ⇒ at most three pipelines. */let q=t=>{let r=e$.get(t);if(r)return r;let s=new g.GpuSurpriseRendererWebGPU(e,{colormap:t,background:b.backgroundColor,pointSize:2.5,gain:1.5});return e$.set(t,s),s};x(J)&&q(J.colormap),r&&r({field:eu||null,getParticleCount:()=>_,setParticleCount:e=>{em&&(em.setParticleCount(e),_=em.count,eg&&eg.setParticleBuffers(em.posBuffer,em.velBuffer,em.count),ex&&// buffer identity on the next encodeRender, so no extra plumbing
+ex.setParticleBuffers(em.posBuffer,em.velBuffer,em.count),ey&&ey.setParticleBuffers(em.posBuffer,em.velBuffer,em.count),eb?.reset())},getResetRate:()=>T,setResetRate:e=>{T=Math.max(0,Math.min(.2,e)),em&&em.setResetRate(T)},getSampleRate:()=>I,setSampleRate:e=>{I=Math.max(1,Math.round(e))},getDecay:()=>eA.decay,setDecay:e=>{eA&&(eA.decay=Math.max(0,Math.min(.99,e)))},getMaxVelocity:()=>N,setMaxVelocity:e=>{N=Math.max(.25,Math.min(200,e)),em?.setMaxVelocity(N),P&&(O=w(M,N,b.friction),em?.setForceMagnitude(O)),eF?.setMaxSpeed(N),eA&&(eA.maxSpeed=N)},getDrive:()=>M,setDrive:e=>{P&&(O=w(M=Math.max(0,Math.min(1,e)),N,b.friction),em?.setForceMagnitude(O))},getGeneratorLearningRate:()=>B,setGeneratorLearningRate:e=>{let t=Math.max(j.generator.min,Math.min(j.generator.max,e));t!==B&&(B=t,!eg&&ef&&(ef.dispose(),ef=n.train.adam(B)))},getDiscriminatorLearningRate:()=>z,setDiscriminatorLearningRate:e=>{let t=Math.max(j.discriminator.min,Math.min(j.discriminator.max,e));t!==z&&(z=t,"on"===eD.tag&&"tfjs"===eD.implementation&&eD.adv.setLearningRate(z))},getBlend:()=>eu instanceof a.HelmholtzField?eu.alpha:0,setBlend:e=>{eu instanceof a.HelmholtzField&&// Single-head arches keep α=0 (no second head to blend).
+(eu.alpha=1===eu.headCount?0:Math.max(0,Math.min(1,e)))},getStrokeStyle:()=>eO,setStrokeStyle:e=>{eO=e,eA&&(eA.style=e)},getStrokeLength:()=>eB,setStrokeLength:e=>{eB=Math.max(ep.min,Math.min(ep.max,e)),eA&&(eA.strokeLen=eB)},getAdversaryWeight:()=>"on"===eD.tag?eD.weight:0,setAdversaryWeight:e=>{"on"===eD.tag&&(eD.weight=Math.max(0,Math.min(20,e)))},getAdversaryTelemetry:()=>eR,getColorMode:()=>J,setColorMode:e=>{if(x(e)&&"agree-disagree"===b.mode){console.warn("[adversary] surprise colour is disabled for Agree+Disagree; the RGB channels are its A/B/C output contract.");return}if(x(e)&&!ex){console.warn("[adversary] tfjs is an oracle-only training path; raw/per-unit cloud diagnostics require the fused adversary.");return}let t=v(J),r=v(e);x(e)&&q(e.colormap),t!==r&&eb?.reset(),J=e},getSurpriseSpan:()=>ex&&eb&&x(J)?{...eb.norm.raw,covered:Math.min(ex.surpriseCoverage().covered,ey?.surpriseCoverage().covered??1),collapsed:eb.norm.collapsed}:null}),console.log(`starting: ${b.name} (webgpu)`),eH()})(),()=>{for(let e of(y=!1,eF&&eF.destroy(),eA&&eA.destroy?.(),eN&&eN.destroy(),eL.remove(),ef&&ef.dispose(),eE&&eE.dispose(),eg&&eg.destroy(),ex&&ex.destroy(),ey&&ey.destroy(),ev&&ev.destroy(),eb&&eb.destroy(),ek&&ek.destroy(),em&&em.destroy(),eh&&eh.dispose(),eu&&eu.dispose(),"on"===eD.tag&&"tfjs"===eD.implementation&&eD.adv.dispose(),e$.values()))e.destroy();e$.clear()}}},{"@tensorflow/tfjs":"7XM1o","@tensorflow/tfjs-backend-webgpu":"1Q5wH","./core/field/helmholtz":"d98IR","./core/field/arch":"d110f","./core/losses":"h4R8M","./render/webgpu/points":"331Z0","./render/webgpu/splat":"1QuJT","./render/webgpu/advect":"exLSb","./render/webgpu/train":"fJOAS","./render/webgpu/adversary_train":"5CJQf","./render/webgpu/pixel_disc_train":"30QAM","./render/webgpu/gputime":"881SH","./core/gan/adversary":"4C16z","./render/webgpu/surprise_points":"ah9re","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"7XM1o":[function(e,t,r){/**
  * @license
  * Copyright 2018 Google LLC. All Rights Reserved.
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -590,7 +675,7 @@ if(!(e in this.registryFactory))return null;{let{asyncInit:t}=this.initializeBac
 this.profiler=new p.Profiler(this.backendInstance),!0}setupRegisteredKernels(){let e=(0,l.getKernelsForBackend)(this.backendName);e.forEach(e=>{null!=e.setupFunc&&e.setupFunc(this.backendInstance)})}disposeRegisteredKernels(e){let t=(0,l.getKernelsForBackend)(e);t.forEach(t=>{null!=t.disposeFunc&&t.disposeFunc(this.registry[e])})}/**
      * Initializes a backend by looking up the backend name in the factory
      * registry and calling the factory method. Returns a boolean representing
-     * whether the initialization of the backend succeeded. Throws an error if
+     * whether the initialization of the backend suceeded. Throws an error if
      * there is no backend in the factory registry.
      */initializeBackend(e){let t=this.registryFactory[e];if(null==t)throw Error(`Cannot initialize backend ${e}, no registration found.`);try{let r=t.factory();/* Test if the factory returns a promise.
             Done in a more liberal way than
@@ -1805,7 +1890,7 @@ let l=null,u=null;function p(e){l=e}function c(e){u=e}function d(e){}class h{con
      * Disposes `tf.Tensor` from memory.
      *
      * @doc {heading: 'Tensors', subheading: 'Classes'}
-     */dispose(){this.isDisposed||(this.kerasMask&&this.kerasMask.dispose(),l().disposeTensor(this),this.isDisposedInternal=!0)}get isDisposed(){return this.isDisposedInternal}throwIfDisposed(){if(this.isDisposed)throw Error("Tensor is disposed.")}/**
+     */dispose(){this.isDisposed||(l().disposeTensor(this),this.isDisposedInternal=!0)}get isDisposed(){return this.isDisposedInternal}throwIfDisposed(){if(this.isDisposed)throw Error("Tensor is disposed.")}/**
      * Prints the `tf.Tensor`. See `tf.print` for details.
      *
      * @param verbose Whether to print verbose information about the tensor,
@@ -1820,7 +1905,7 @@ let l=null,u=null;function p(e){l=e}function c(e){u=e}function d(e){}class h{con
      *
      * @doc {heading: 'Tensors', subheading: 'Classes'}
      */toString(e=!1){let t=this.dataSync();return(0,a.tensorToString)(t,this.shape,this.dtype,e)}cast(e){return this.throwIfDisposed(),u.cast(this,e)}variable(e=!0,t,r){return this.throwIfDisposed(),l().makeVariable(this,e,t,r)}}function f(){// Use getGlobal so that we can augment the Tensor class across package
-// boundaries because the node resolution alg may result in different modules
+// boundaries becase the node resolution alg may result in different modules
 // being returned for this file depending on the path they are loaded from.
 return(0,n.getGlobal)("Tensor",()=>h)}Object.defineProperty(h,Symbol.hasInstance,{value:e=>!!e&&null!=e.data&&null!=e.dataSync&&null!=e.throwIfDisposed}),// Global side effect. Cache global reference to Tensor class
 f();class m extends h{constructor(e,t,r,s){super(e.shape,e.dtype,e.dataId,s),this.trainable=t,this.name=r}/**
@@ -1970,7 +2055,7 @@ try{(0,i.ModelStoreManagerRegistry).registerManager(a.BrowserIndexedDB.URL_SCHEM
  *
  * @param modelPath A unique identifier for the model to be saved. Must be a
  *   non-empty string.
- * @returns An instance of `BrowserIndexedDB` (subclass of `IOHandler`),
+ * @returns An instance of `BrowserIndexedDB` (sublcass of `IOHandler`),
  *   which can be used with, e.g., `tf.Model.save`.
  */s.export(r,"browserIndexedDB",()=>g),s.export(r,"BrowserIndexedDBManager",()=>x),e("../flags");var n=e("../environment"),a=e("./io_utils"),o=e("./router_registry"),i=e("./composite_array_buffer");let l="tensorflowjs",u="models_store",p="model_info_store";async function c(){let e=d();return new Promise((t,r)=>{let s=e.deleteDatabase(l);s.onsuccess=()=>t(),s.onerror=e=>r(e)})}function d(){if(!(0,n.env)().getBool("IS_BROWSER"))//   Maybe point to a doc page on the web and/or automatically determine
 //   the available IOHandlers and print them in the error message.
@@ -2038,7 +2123,7 @@ s.onsuccess=o,s.onerror=e=>(o(),a.close(),r(l.error))}},l.onerror=e=>(a.close(),
  *   - An `Array` of `WeightManifestEntry`s, carrying information including
  *     tensor names, `dtype`s and shapes.
  * @throws Error: on unsupported tensor `dtype`.
- */s.export(r,"encodeWeights",()=>d),/**
+ */s.export(r,"encodeWeights",()=>p),/**
  * Decode flat ArrayBuffer as weights.
  *
  * This function does not handle sharding.
@@ -2053,9 +2138,9 @@ s.onsuccess=o,s.onerror=e=>(o(),a.close(),r(l.error))}},l.onerror=e=>(a.close(),
  * @return A map from tensor name to tensor value, with the names corresponding
  *   to names in `specs`.
  * @throws Error, if any of the tensors has unsupported dtype.
- */s.export(r,"decodeWeights",()=>h),s.export(r,"decodeWeightsStream",()=>x),/**
+ */s.export(r,"decodeWeights",()=>c),/**
  * Concatenate TypedArrays into an ArrayBuffer.
- */s.export(r,"concatenateTypedArrays",()=>v),/**
+ */s.export(r,"concatenateTypedArrays",()=>d),/**
  * Calculate the byte length of a JavaScript string.
  *
  * Note that a JavaScript string can contain wide characters, therefore the
@@ -2063,17 +2148,17 @@ s.onsuccess=o,s.onerror=e=>(o(),a.close(),r(l.error))}},l.onerror=e=>(a.close(),
  *
  * @param str Input string.
  * @returns Byte length.
- */s.export(r,"stringByteLength",()=>b),/**
+ */s.export(r,"stringByteLength",()=>f),/**
  * Encode an ArrayBuffer as a base64 encoded string.
  *
  * @param buffer `ArrayBuffer` to be converted.
  * @returns A string that base64-encodes `buffer`.
- */s.export(r,"arrayBufferToBase64String",()=>k),/**
+ */s.export(r,"arrayBufferToBase64String",()=>m),/**
  * Decode a base64 string as an ArrayBuffer.
  *
  * @param str Base64 string.
  * @returns Decoded `ArrayBuffer`.
- */s.export(r,"base64StringToArrayBuffer",()=>_),/**
+ */s.export(r,"base64StringToArrayBuffer",()=>g),/**
  * Concatenate a number of ArrayBuffers into one.
  *
  * @param buffers An array of ArrayBuffers to concatenate, or a single
@@ -2081,13 +2166,13 @@ s.onsuccess=o,s.onerror=e=>(o(),a.close(),r(l.error))}},l.onerror=e=>(a.close(),
  * @returns Result of concatenating `buffers` in order.
  *
  * @deprecated Use tf.io.CompositeArrayBuffer.join() instead.
- */s.export(r,"concatenateArrayBuffers",()=>w),/**
+ */s.export(r,"concatenateArrayBuffers",()=>x),/**
  * Get the basename of a path.
  *
  * Behaves in a way analogous to Linux's basename command.
  *
  * @param path
- */s.export(r,"basename",()=>I),/**
+ */s.export(r,"basename",()=>v),/**
  * Create `ModelJSON` from `ModelArtifacts`.
  *
  * @param artifacts Model artifacts, describing the model and its weights.
@@ -2095,7 +2180,7 @@ s.onsuccess=o,s.onerror=e=>(o(),a.close(),r(l.error))}},l.onerror=e=>(a.close(),
  *     `ModelArtifacts` are stored, and some metadata about them.
  * @returns Object representing the `model.json` file describing the model
  *     artifacts and weights
- */s.export(r,"getModelJSONForModelArtifacts",()=>j),/**
+ */s.export(r,"getModelJSONForModelArtifacts",()=>y),/**
  * Create `ModelArtifacts` from a JSON file and weights.
  *
  * @param modelJSON Object containing the parsed JSON of `model.json`
@@ -2105,7 +2190,7 @@ s.onsuccess=o,s.onerror=e=>(o(),a.close(),r(l.error))}},l.onerror=e=>(a.close(),
  *     the model corresponding to the weights in weightSpecs. Must be passed if
  *     the modelJSON has a weightsManifest.
  * @returns A Promise of the `ModelArtifacts`, as described by the JSON file.
- */s.export(r,"getModelArtifactsForJSONSync",()=>S),/**
+ */s.export(r,"getModelArtifactsForJSONSync",()=>b),/**
  * Create `ModelArtifacts` from a JSON file.
  *
  * @param modelJSON Object containing the parsed JSON of `model.json`
@@ -2113,36 +2198,29 @@ s.onsuccess=o,s.onerror=e=>(o(),a.close(),r(l.error))}},l.onerror=e=>(a.close(),
  *     reads weights from the listed path(s), and returns a Promise of the
  *     weight manifest entries along with the weights data.
  * @returns A Promise of the `ModelArtifacts`, as described by the JSON file.
- */s.export(r,"getModelArtifactsForJSON",()=>C),/**
+ */s.export(r,"getModelArtifactsForJSON",()=>k),/**
  * Populate ModelArtifactsInfo fields for a model with JSON topology.
  * @param modelArtifacts
  * @returns A ModelArtifactsInfo object.
- */s.export(r,"getModelArtifactsInfoForJSON",()=>T),/**
+ */s.export(r,"getModelArtifactsInfoForJSON",()=>_),/**
  * Concatenate the weights stored in a WeightsManifestConfig into a list of
  * WeightsManifestEntry
  *
  * @param weightsManifest The WeightsManifestConfig to extract weights from.
  * @returns A list of WeightsManifestEntry of the weights in the weightsManifest
- */s.export(r,"getWeightSpecs",()=>N),/**
+ */s.export(r,"getWeightSpecs",()=>w),/**
  * Retrieve a Float16 decoder which will decode a ByteArray of Float16 values
  * to a Float32Array.
  *
  * @returns Function (buffer: Uint16Array) => Float32Array which decodes
  *          the Uint16Array of Float16 bytes to a Float32Array.
- */s.export(r,"getFloat16Decoder",()=>E);var n=e("../ops/complex"),a=e("../ops/tensor"),o=e("../util"),i=e("./types"),l=e("./composite_array_buffer"),u=e("../globals"),p=e("../environment"),c=e("cc5f092a6233570f").Buffer;async function d(e,t){// TODO(adarob, cais): Support quantization.
-let r=[],s=[],n=Array.isArray(e)?e.map(e=>e.name):Object.keys(e);for(let a=0;a<n.length;++a){let o=n[a],i=Array.isArray(e)?e[a].tensor:e[o];if("float32"!==i.dtype&&"int32"!==i.dtype&&"bool"!==i.dtype&&"string"!==i.dtype&&"complex64"!==i.dtype)throw Error(`Unsupported dtype in weight '${o}': ${i.dtype}`);let l={name:o,shape:i.shape,dtype:i.dtype};if("string"===i.dtype){let e=new Promise(async e=>{let t=await i.bytes(),r=t.reduce((e,t)=>e+t.length,0)+4*t.length,s=new Uint8Array(r),n=0;for(let e=0;e<t.length;e++){let r=t[e],a=new Uint8Array(new Uint32Array([r.length]).buffer);s.set(a,n),n+=4,s.set(r,n),n+=r.length}e(s)});s.push(e)}else s.push(i.data());null!=t&&(l.group=t),r.push(l)}let a=await Promise.all(s);return{data:v(a),specs:r}}function h(e,t){// TODO(adarob, cais): Support quantization.
-let r=new l.CompositeArrayBuffer(e),s={},n=0;for(let e of t){let t=function(e,t){let r;let s=(0,o.sizeFromShape)(e.shape);if("quantization"in e){let t=e.quantization;r=i.DTYPE_VALUE_SIZE_MAP[t.dtype]}else if("string"===e.dtype){// Can not statically determine string length.
-let e=0;for(let r=0;r<s;r++)e+=4+new Uint32Array(t(e,e+4))[0];return e}else r=i.DTYPE_VALUE_SIZE_MAP[e.dtype];return s*r}(e,(e,t)=>r.slice(n+e,n+t));s[e.name]=m(e,r.slice(n,n+t)),n+=t}return s}async function f(e,t){let r;let s=(0,o.sizeFromShape)(e.shape);if("quantization"in e){let t=e.quantization;r=i.DTYPE_VALUE_SIZE_MAP[t.dtype]}else if("string"===e.dtype){// Can not statically determine string length.
-let e=0;for(let r=0;r<s;r++)e+=4+new Uint32Array(await t(e,e+4))[0];return e}else r=i.DTYPE_VALUE_SIZE_MAP[e.dtype];return s*r}function m(e,t){let r;let s=e.name,l=e.dtype,u=e.shape,p=(0,o.sizeFromShape)(u),c=0;if("quantization"in e){let n=e.quantization;if("uint8"===n.dtype||"uint16"===n.dtype){if(!("min"in n&&"scale"in n))throw Error(`Weight ${e.name} with quantization ${n.dtype} doesn't have corresponding metadata min and scale.`)}else if("float16"===n.dtype){if("float32"!==l)throw Error(`Weight ${e.name} is quantized with ${n.dtype} which only supports weights of type float32 not ${l}.`)}else throw Error(`Weight ${e.name} has unknown quantization dtype ${n.dtype}. Supported quantization dtypes are: 'uint8', 'uint16', and 'float16'.`);let a=i.DTYPE_VALUE_SIZE_MAP[n.dtype],o="uint8"===n.dtype?new Uint8Array(t):new Uint16Array(t);if("float32"===l){if("uint8"===n.dtype||"uint16"===n.dtype){r=new Float32Array(o.length);for(let e=0;e<o.length;e++){let t=o[e];r[e]=t*n.scale+n.min}}else if("float16"===n.dtype){// TODO: This is inefficient. Make getFloat16Decoder efficient.
-let e=E();r=e(o)}else throw Error(`Unsupported quantization type ${n.dtype} for weight type float32.`)}else if("int32"===l){if("uint8"!==n.dtype&&"uint16"!==n.dtype)throw Error(`Unsupported quantization type ${n.dtype} for weight type int32.`);r=new Int32Array(o.length);for(let e=0;e<o.length;e++){let t=o[e];r[e]=Math.round(t*n.scale+n.min)}}else throw Error(`Unsupported dtype in weight '${s}': ${l}`);c+=p*a}else if("string"===l){let s=(0,o.sizeFromShape)(e.shape);r=[];for(let e=0;e<s;e++){let e=new Uint32Array(t.slice(c,c+4))[0];c+=4;let s=new Uint8Array(t.slice(c,c+e));r.push(s),c+=e}}else{let e=i.DTYPE_VALUE_SIZE_MAP[l];if("float32"===l)r=new Float32Array(t);else if("int32"===l)r=new Int32Array(t);else if("bool"===l)r=new Uint8Array(t);else if("complex64"===l){r=new Float32Array(t);let e=new Float32Array(r.length/2),s=new Float32Array(r.length/2);for(let t=0;t<e.length;t++)e[t]=r[2*t],s[t]=r[2*t+1];let o=(0,a.tensor)(e,u,"float32"),i=(0,a.tensor)(s,u,"float32"),l=(0,n.complex)(o,i);return o.dispose(),i.dispose(),l}else throw Error(`Unsupported dtype in weight '${s}': ${l}`);c+=p*e}return(0,a.tensor)(r,u,l)}async function g(e,t,r){let s=new Uint8Array(t);for(;s.byteLength<r;){let{done:t,value:n}=await e.read();if(t&&null==n){let e=r-s.byteLength;throw Error(`Reader is done but ${e} bytes are still expected`)}// TODO: Don't create a new array every loop.
-let a=new Uint8Array(s.length+n.byteLength);a.set(s,0),a.set(new Uint8Array(n),s.length),s=a}return s.buffer}async function x(e,t){let r={},s=e.getReader(),n=new ArrayBuffer(0);for(let e of t){let t=await f(e,async(e,t)=>(n=await g(s,n,t)).slice(e,t));n=await g(s,n,t);// Slice the tensor out
-let a=n.slice(0,t);n=n.slice(t);let i=m(e,a);// TODO(mattsoulanille): Better way to call uploadToGPU.
-// TODO(mattsoulanille): Make this work for webgl too.
-if(r[e.name]=i,"webgpu"===(0,u.getBackend)()){let e=(0,u.backend)();"uploadToGPU"in e&&(0,o.sizeFromShape)(i.shape)>=(0,p.env)().get("WEBGPU_CPU_HANDOFF_SIZE_THRESHOLD")&&e.uploadToGPU(i.dataId)}}return r}function v(e){// TODO(adarob, cais): Support quantization.
+ */s.export(r,"getFloat16Decoder",()=>I);var n=e("../ops/complex"),a=e("../ops/tensor"),o=e("../util"),i=e("./types"),l=e("./composite_array_buffer"),u=e("cc5f092a6233570f").Buffer;async function p(e,t){// TODO(adarob, cais): Support quantization.
+let r=[],s=[],n=Array.isArray(e)?e.map(e=>e.name):Object.keys(e);for(let a=0;a<n.length;++a){let o=n[a],i=Array.isArray(e)?e[a].tensor:e[o];if("float32"!==i.dtype&&"int32"!==i.dtype&&"bool"!==i.dtype&&"string"!==i.dtype&&"complex64"!==i.dtype)throw Error(`Unsupported dtype in weight '${o}': ${i.dtype}`);let l={name:o,shape:i.shape,dtype:i.dtype};if("string"===i.dtype){let e=new Promise(async e=>{let t=await i.bytes(),r=t.reduce((e,t)=>e+t.length,0)+4*t.length,s=new Uint8Array(r),n=0;for(let e=0;e<t.length;e++){let r=t[e],a=new Uint8Array(new Uint32Array([r.length]).buffer);s.set(a,n),n+=4,s.set(r,n),n+=r.length}e(s)});s.push(e)}else s.push(i.data());null!=t&&(l.group=t),r.push(l)}let a=await Promise.all(s);return{data:d(a),specs:r}}function c(e,t){let r;// TODO(adarob, cais): Support quantization.
+let s=new l.CompositeArrayBuffer(e),u={},p=0;for(let e of t){let t;let l=e.name,c=e.dtype,d=e.shape,h=(0,o.sizeFromShape)(d);if("quantization"in e){let n=e.quantization;if("uint8"===n.dtype||"uint16"===n.dtype){if(!("min"in n&&"scale"in n))throw Error(`Weight ${e.name} with quantization ${n.dtype} doesn't have corresponding metadata min and scale.`)}else if("float16"===n.dtype){if("float32"!==c)throw Error(`Weight ${e.name} is quantized with ${n.dtype} which only supports weights of type float32 not ${c}.`)}else throw Error(`Weight ${e.name} has unknown quantization dtype ${n.dtype}. Supported quantization dtypes are: 'uint8', 'uint16', and 'float16'.`);let a=i.DTYPE_VALUE_SIZE_MAP[n.dtype],o=s.slice(p,p+h*a),u="uint8"===n.dtype?new Uint8Array(o):new Uint16Array(o);if("float32"===c){if("uint8"===n.dtype||"uint16"===n.dtype){t=new Float32Array(u.length);for(let e=0;e<u.length;e++){let r=u[e];t[e]=r*n.scale+n.min}}else if("float16"===n.dtype)void 0===r&&(r=I()),t=r(u);else throw Error(`Unsupported quantization type ${n.dtype} for weight type float32.`)}else if("int32"===c){if("uint8"!==n.dtype&&"uint16"!==n.dtype)throw Error(`Unsupported quantization type ${n.dtype} for weight type int32.`);t=new Int32Array(u.length);for(let e=0;e<u.length;e++){let r=u[e];t[e]=Math.round(r*n.scale+n.min)}}else throw Error(`Unsupported dtype in weight '${l}': ${c}`);p+=h*a}else if("string"===c){let r=(0,o.sizeFromShape)(e.shape);t=[];for(let e=0;e<r;e++){let e=new Uint32Array(s.slice(p,p+4))[0];p+=4;let r=new Uint8Array(s.slice(p,p+e));t.push(r),p+=e}}else{let e=i.DTYPE_VALUE_SIZE_MAP[c],r=s.slice(p,p+h*e);if("float32"===c)t=new Float32Array(r);else if("int32"===c)t=new Int32Array(r);else if("bool"===c)t=new Uint8Array(r);else if("complex64"===c){t=new Float32Array(r);let e=new Float32Array(t.length/2),s=new Float32Array(t.length/2);for(let r=0;r<e.length;r++)e[r]=t[2*r],s[r]=t[2*r+1];let o=(0,a.tensor)(e,d,"float32"),i=(0,a.tensor)(s,d,"float32");u[l]=(0,n.complex)(o,i),o.dispose(),i.dispose()}else throw Error(`Unsupported dtype in weight '${l}': ${c}`);p+=h*e}"complex64"!==c&&(u[l]=(0,a.tensor)(t,d,c))}return u}function d(e){// TODO(adarob, cais): Support quantization.
 if(null===e)throw Error(`Invalid input value: ${JSON.stringify(e)}`);let t=0,r=[];e.forEach(e=>{if(t+=e.byteLength,// tslint:disable:no-any
 r.push(e.byteLength===e.buffer.byteLength?e:new e.constructor(e)),!(e instanceof Float32Array||e instanceof Int32Array||e instanceof Uint8Array))throw Error(`Unsupported TypedArray subtype: ${e.constructor.name}`);// tslint:enable:no-any
 });let s=new Uint8Array(t),n=0;return r.forEach(e=>{s.set(new Uint8Array(e.buffer),n),n+=e.byteLength}),s.buffer}// Use Buffer on Node.js instead of Blob/atob/btoa
-let y=void 0!==c&&("undefined"==typeof Blob||"undefined"==typeof atob||"undefined"==typeof btoa);function b(e){return y?c.byteLength(e,"utf8"):new Blob([e]).size}function k(e){if(y)return c.from(e).toString("base64");let t=new Uint8Array(e),r="";for(let e=0,s=t.length;e<s;e++)r+=String.fromCharCode(t[e]);return btoa(r)}function _(e){if(y){let t=c.from(e,"base64");return t.buffer.slice(t.byteOffset,t.byteOffset+t.byteLength)}let t=atob(e),r=new Uint8Array(t.length);for(let e=0;e<t.length;++e)r.set([t.charCodeAt(e)],e);return r.buffer}function w(e){return(0,l.CompositeArrayBuffer).join(e)}function I(e){for(e=e.trim();e.endsWith("/");)e=e.slice(0,e.length-1);let t=e.split("/");return t[t.length-1]}function j(e,t){let r={modelTopology:e.modelTopology,format:e.format,generatedBy:e.generatedBy,convertedBy:e.convertedBy,weightsManifest:t};return null!=e.signature&&(r.signature=e.signature),null!=e.userDefinedMetadata&&(r.userDefinedMetadata=e.userDefinedMetadata),null!=e.modelInitializer&&(r.modelInitializer=e.modelInitializer),null!=e.initializerSignature&&(r.initializerSignature=e.initializerSignature),null!=e.trainingConfig&&(r.trainingConfig=e.trainingConfig),r}function S(e,t,r){let s={modelTopology:e.modelTopology,format:e.format,generatedBy:e.generatedBy,convertedBy:e.convertedBy};if(null!=e.trainingConfig&&(s.trainingConfig=e.trainingConfig),null!=e.weightsManifest){if(!t)throw Error("modelJSON has weightsManifest but weightSpecs is null");if(!r)throw Error("modelJSON has weightsManifest but weightData is null");s.weightSpecs=t,s.weightData=r}return null!=e.signature&&(s.signature=e.signature),null!=e.userDefinedMetadata&&(s.userDefinedMetadata=e.userDefinedMetadata),null!=e.modelInitializer&&(s.modelInitializer=e.modelInitializer),null!=e.initializerSignature&&(s.initializerSignature=e.initializerSignature),s}async function C(e,t){let r,s;return null!=e.weightsManifest&&([r,s]=await t(e.weightsManifest)),S(e,r,s)}function T(e){if(e.modelTopology instanceof ArrayBuffer)throw Error("Expected JSON model topology, received ArrayBuffer.");return{dateSaved:new Date,modelTopologyType:"JSON",modelTopologyBytes:null==e.modelTopology?0:b(JSON.stringify(e.modelTopology)),weightSpecsBytes:null==e.weightSpecs?0:b(JSON.stringify(e.weightSpecs)),weightDataBytes:null==e.weightData?0:new l.CompositeArrayBuffer(e.weightData).byteLength}}function N(e){let t=[];for(let r of e)t.push(...r.weights);return t}function E(){// Algorithm is based off of
+let h=void 0!==u&&("undefined"==typeof Blob||"undefined"==typeof atob||"undefined"==typeof btoa);function f(e){return h?u.byteLength(e,"utf8"):new Blob([e]).size}function m(e){if(h)return u.from(e).toString("base64");let t=new Uint8Array(e),r="";for(let e=0,s=t.length;e<s;e++)r+=String.fromCharCode(t[e]);return btoa(r)}function g(e){if(h){let t=u.from(e,"base64");return t.buffer.slice(t.byteOffset,t.byteOffset+t.byteLength)}let t=atob(e),r=new Uint8Array(t.length);for(let e=0;e<t.length;++e)r.set([t.charCodeAt(e)],e);return r.buffer}function x(e){return(0,l.CompositeArrayBuffer).join(e)}function v(e){for(e=e.trim();e.endsWith("/");)e=e.slice(0,e.length-1);let t=e.split("/");return t[t.length-1]}function y(e,t){let r={modelTopology:e.modelTopology,format:e.format,generatedBy:e.generatedBy,convertedBy:e.convertedBy,weightsManifest:t};return null!=e.signature&&(r.signature=e.signature),null!=e.userDefinedMetadata&&(r.userDefinedMetadata=e.userDefinedMetadata),null!=e.modelInitializer&&(r.modelInitializer=e.modelInitializer),null!=e.initializerSignature&&(r.initializerSignature=e.initializerSignature),null!=e.trainingConfig&&(r.trainingConfig=e.trainingConfig),r}function b(e,t,r){let s={modelTopology:e.modelTopology,format:e.format,generatedBy:e.generatedBy,convertedBy:e.convertedBy};if(null!=e.trainingConfig&&(s.trainingConfig=e.trainingConfig),null!=e.weightsManifest){if(!t)throw Error("modelJSON has weightsManifest but weightSpecs is null");if(!r)throw Error("modelJSON has weightsManifest but weightData is null");s.weightSpecs=t,s.weightData=r}return null!=e.signature&&(s.signature=e.signature),null!=e.userDefinedMetadata&&(s.userDefinedMetadata=e.userDefinedMetadata),null!=e.modelInitializer&&(s.modelInitializer=e.modelInitializer),null!=e.initializerSignature&&(s.initializerSignature=e.initializerSignature),s}async function k(e,t){let r,s;return null!=e.weightsManifest&&([r,s]=await t(e.weightsManifest)),b(e,r,s)}function _(e){if(e.modelTopology instanceof ArrayBuffer)throw Error("Expected JSON model topology, received ArrayBuffer.");return{dateSaved:new Date,modelTopologyType:"JSON",modelTopologyBytes:null==e.modelTopology?0:f(JSON.stringify(e.modelTopology)),weightSpecsBytes:null==e.weightSpecs?0:f(JSON.stringify(e.weightSpecs)),weightDataBytes:null==e.weightData?0:new l.CompositeArrayBuffer(e.weightData).byteLength}}function w(e){let t=[];for(let r of e)t.push(...r.weights);return t}function I(){// Algorithm is based off of
 // http://www.fox-toolkit.org/ftp/fasthalffloatconversion.pdf
 // Cache lookup tables
 let e=/**
@@ -2160,7 +2238,7 @@ let e=/**
  * See http://www.fox-toolkit.org/ftp/fasthalffloatconversion.pdf
  *
  * @returns Uint32Array, 6d offset values.
- */function(){let e=new Uint32Array(64);for(let t=0;t<64;t++)e[t]=1024;return e[0]=e[32]=0,e}();return s=>{let n=new ArrayBuffer(4*s.length),a=new Uint32Array(n);for(let n=0;n<s.length;n++){let o=s[n],i=e[r[o>>10]+(1023&o)]+t[o>>10];a[n]=i}return new Float32Array(n)}}},{cc5f092a6233570f:"l5Twm","../ops/complex":"3HHBO","../ops/tensor":"cyxcR","../util":"eIDB0","./types":"h3x7N","./composite_array_buffer":"5DRoN","../globals":"h3knK","../environment":"f984i","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],l5Twm:[function(e,t,r){let s=e("9c62938f1dccc73c"),n=e("aceacb6a4531a9d2"),a="function"==typeof Symbol&&"function"// eslint-disable-line dot-notation
+ */function(){let e=new Uint32Array(64);for(let t=0;t<64;t++)e[t]=1024;return e[0]=e[32]=0,e}();return s=>{let n=new ArrayBuffer(4*s.length),a=new Uint32Array(n);for(let n=0;n<s.length;n++){let o=s[n],i=e[r[o>>10]+(1023&o)]+t[o>>10];a[n]=i}return new Float32Array(n)}}},{cc5f092a6233570f:"l5Twm","../ops/complex":"3HHBO","../ops/tensor":"cyxcR","../util":"eIDB0","./types":"h3x7N","./composite_array_buffer":"5DRoN","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],l5Twm:[function(e,t,r){let s=e("9c62938f1dccc73c"),n=e("aceacb6a4531a9d2"),a="function"==typeof Symbol&&"function"// eslint-disable-line dot-notation
 ==typeof Symbol.for?Symbol.for("nodejs.util.inspect.custom")// eslint-disable-line dot-notation
 :null;function o(e){if(e>2147483647)throw RangeError('The value "'+e+'" is invalid for option "size"');// Return an augmented `Uint8Array` instance
 let t=new Uint8Array(e);return Object.setPrototypeOf(t,i.prototype),t}/**
@@ -2342,7 +2420,7 @@ n["-".charCodeAt(0)]=62,n["_".charCodeAt(0)]=63},{}],"6ifNR":[function(e,t,r){/*
  * limitations under the License.
  * =============================================================================
  */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"inferShape",()=>p),s.export(r,"convertToTensor",()=>d),s.export(r,"convertToTensorArray",()=>h);var n=e("./engine"),a=e("./environment"),o=e("./tensor"),i=e("./types"),l=e("./util"),u=e("./util_base");function p(e,t){let r=e;if((0,l.isTypedArray)(e))return"string"===t?[]:[e.length];if((0,i.isWebGLData)(e)){let t=e.channels||"RGBA";return[e.height,e.width*t.length]}if((0,i.isWebGPUData)(e))return[e.buffer.size/(null==t?4:(0,u.bytesPerElement)(t))];if(!Array.isArray(e))return[];// Scalar.
-let s=[];for(;Array.isArray(r)||(0,l.isTypedArray)(r)&&"string"!==t;)s.push(r.length),r=r[0];return Array.isArray(e)&&(0,a.env)().getBool("TENSORLIKE_CHECK_SHAPE_CONSISTENCY")&&function e(t,r,s){if(s=s||[],!Array.isArray(t)&&!(0,l.isTypedArray)(t)){(0,l.assert)(0===r.length,()=>`Element arr[${s.join("][")}] is a primitive, but should be an array/TypedArray of ${r[0]} elements`);return}(0,l.assert)(r.length>0,()=>`Element arr[${s.join("][")}] should be a primitive, but is an array of ${t.length} elements`),(0,l.assert)(t.length===r[0],()=>`Element arr[${s.join("][")}] should have ${r[0]} elements, but has ${t.length} elements`);let n=r.slice(1);for(let r=0;r<t.length;++r)e(t[r],n,s.concat(r))}(e,s,[]),s}function c(e,t,r,s){if("string_or_numeric"!==e){if(null==e)throw Error("Expected dtype cannot be null.");if("numeric"!==e&&e!==t||"numeric"===e&&"string"===t)throw Error(`Argument '${r}' passed to '${s}' must be ${e} tensor, but got ${t} tensor`)}}function d(e,t,r,s="numeric"){if(e instanceof(0,o.getGlobalTensorClass)())return c(s,e.dtype,t,r),e;let a=(0,l.inferDtype)(e);if("string"!==a&&["bool","int32","float32"].indexOf(s)>=0&&(a=s),c(s,a,t,r),null==e||!(0,l.isTypedArray)(e)&&!Array.isArray(e)&&"number"!=typeof e&&"boolean"!=typeof e&&"string"!=typeof e){let s=null==e?"null":e.constructor.name;throw Error(`Argument '${t}' passed to '${r}' must be a Tensor or TensorLike, but got '${s}'`)}let i=p(e,a);(0,l.isTypedArray)(e)||Array.isArray(e)||(e=[e]);let u="string"!==a?(0,l.toTypedArray)(e,a):(0,l.flatten)(e,[],!0);return(0,n.ENGINE).makeTensor(u,i,a)}function h(e,t,r,s="numeric"){if(!Array.isArray(e))throw Error(`Argument ${t} passed to ${r} must be a \`Tensor[]\` or \`TensorLike[]\``);return e.map((e,n)=>d(e,`${t}[${n}]`,r,s))}},{"./engine":"5PvxX","./environment":"f984i","./tensor":"6NCG7","./types":"kH2MZ","./util":"eIDB0","./util_base":"ldriT","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],eb3xr:[function(e,t,r){/**
+let s=[];for(;Array.isArray(r)||(0,l.isTypedArray)(r)&&"string"!==t;)s.push(r.length),r=r[0];return Array.isArray(e)&&(0,a.env)().getBool("TENSORLIKE_CHECK_SHAPE_CONSISTENCY")&&function e(t,r,s){if(s=s||[],!Array.isArray(t)&&!(0,l.isTypedArray)(t)){(0,l.assert)(0===r.length,()=>`Element arr[${s.join("][")}] is a primitive, but should be an array/TypedArray of ${r[0]} elements`);return}(0,l.assert)(r.length>0,()=>`Element arr[${s.join("][")}] should be a primitive, but is an array of ${t.length} elements`),(0,l.assert)(t.length===r[0],()=>`Element arr[${s.join("][")}] should have ${r[0]} elements, but has ${t.length} elements`);let n=r.slice(1);for(let r=0;r<t.length;++r)e(t[r],n,s.concat(r))}(e,s,[]),s}function c(e,t,r,s){if("string_or_numeric"!==e){if(null==e)throw Error("Expected dtype cannot be null.");if("numeric"!==e&&e!==t||"numeric"===e&&"string"===t)throw Error(`Argument '${r}' passed to '${s}' must be ${e} tensor, but got ${t} tensor`)}}function d(e,t,r,s="numeric"){if(e instanceof o.Tensor)return c(s,e.dtype,t,r),e;let a=(0,l.inferDtype)(e);if("string"!==a&&["bool","int32","float32"].indexOf(s)>=0&&(a=s),c(s,a,t,r),null==e||!(0,l.isTypedArray)(e)&&!Array.isArray(e)&&"number"!=typeof e&&"boolean"!=typeof e&&"string"!=typeof e){let s=null==e?"null":e.constructor.name;throw Error(`Argument '${t}' passed to '${r}' must be a Tensor or TensorLike, but got '${s}'`)}let i=p(e,a);(0,l.isTypedArray)(e)||Array.isArray(e)||(e=[e]);let u="string"!==a?(0,l.toTypedArray)(e,a):(0,l.flatten)(e,[],!0);return(0,n.ENGINE).makeTensor(u,i,a)}function h(e,t,r,s="numeric"){if(!Array.isArray(e))throw Error(`Argument ${t} passed to ${r} must be a \`Tensor[]\` or \`TensorLike[]\``);return e.map((e,n)=>d(e,`${t}[${n}]`,r,s))}},{"./engine":"5PvxX","./environment":"f984i","./tensor":"6NCG7","./types":"kH2MZ","./util":"eIDB0","./util_base":"ldriT","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],eb3xr:[function(e,t,r){/**
  * @license
  * Copyright 2018 Google LLC. All Rights Reserved.
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -2529,29 +2607,28 @@ return Object.defineProperty(i,"name",{value:r,configurable:!0}),i}},{"../engine
  * await tf.setBackend(savedBackend);
  * ```
  * @param values The values of the tensor. Can be nested array of numbers,
- * or a flat array, or a `TypedArray`(At the moment it supports Uint8Array,
- * Uint8ClampedArray, Int32Array, Float32Array) data types, or a `WebGLData`
- * object, or a `WebGPUData` object. If the values are strings, they will be
- * encoded as utf-8 and kept as `Uint8Array[]`. If the values is a `WebGLData`
- * object, the dtype could only be 'float32' or 'int32' and the object has to
- * have: 1. texture, a `WebGLTexture`, the texture must share the same
- * `WebGLRenderingContext` with TFJS's WebGL backend (you could create a custom
- * WebGL backend from your texture's canvas) and the internal texture format
- * for the input texture must be floating point or normalized integer; 2.
- * height, the height of the texture; 3. width, the width of the texture; 4.
- * channels, a non-empty subset of 'RGBA', indicating the values of which
- * channels will be passed to the tensor, such as 'R' or 'BR' (The order of the
- * channels affect the order of tensor values. ). (If the values passed from
- * texture is less than the tensor size, zeros will be padded at the rear.). If
- * the values is a `WebGPUData` object, the dtype could only be 'float32' or
- * 'int32 and the object has to have: buffer, a `GPUBuffer`. The buffer must:
- * 1. share the same `GPUDevice` with TFJS's WebGPU backend; 2. buffer.usage
- * should at least support GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC; 3.
- * buffer.size should not be smaller than the byte size of tensor shape.
- * WebGPUData optionally supports zero copy by flag zeroCopy. When zeroCopy is
- * false or undefined(default),this passing GPUBuffer can be destroyed after
- * tensor is created. When zeroCopy is true, this GPUBuffer is bound directly
- * by the tensor, so do not destroy this GPUBuffer until all access is done.
+ *     or a flat array, or a `TypedArray`, or a `WebGLData` object, or a
+ * `WebGPUData` object. If the values are strings, they will be encoded as utf-8
+ * and kept as `Uint8Array[]`. If the values is a `WebGLData` object, the dtype
+ * could only be 'float32' or 'int32' and the object has to have: 1. texture, a
+ * `WebGLTexture`, the texture must share the same `WebGLRenderingContext` with
+ * TFJS's WebGL backend (you could create a custom WebGL backend from your
+ * texture's canvas) and the internal texture format for the input texture must
+ * be floating point or normalized integer; 2. height, the height of the
+ * texture; 3. width, the width of the texture; 4. channels, a non-empty subset
+ * of 'RGBA', indicating the values of which channels will be passed to the
+ * tensor, such as 'R' or 'BR' (The order of the channels affect the order of
+ * tensor values. ). (If the values passed from texture is less than the tensor
+ * size, zeros will be padded at the rear.). If the values is a `WebGPUData`
+ * object, the dtype could only be 'float32' or 'int32 and the object has to
+ * have: buffer, a `GPUBuffer`. The buffer must: 1. share the same `GPUDevice`
+ * with TFJS's WebGPU backend; 2. buffer.usage should at least support
+ * GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC; 3. buffer.size should not
+ * be smaller than the byte size of tensor shape. WebGPUData optionally supports
+ * zero copy by flag zeroCopy. When zeroCopy is false or undefined(default),
+ * this passing GPUBuffer can be destroyed after tensor is created. When
+ * zeroCopy is true, this GPUBuffer is bound directly by the tensor, so do not
+ * destroy this GPUBuffer until all access is done.
  * @param shape The shape of the tensor. Optional. If not provided,
  *   it is inferred from `values`.
  * @param dtype The data type.
@@ -2632,264 +2709,7 @@ if(0===t(this.shards[this.previousShardIndex]))return this.previousShardIndex;//
 // This should almost never end up being used in practice since the weight
 // entries should always be in order.
 let r=o(this.shards,t);return -1===r?-1:(this.previousShardIndex=r,this.previousShardIndex)}}function o(e,t){// Binary search
-let r=0,s=e.length;for(;r<=s;){let n=Math.floor((s-r)/2)+r,a=t(e[n]);if(0===a)return n;a<0?s=n:r=n+1}return -1}},{"../util":"eIDB0","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],h3knK:[function(e,t,r){/**
- * @license
- * Copyright 2018 Google LLC. All Rights Reserved.
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- * =============================================================================
- */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),/**
- * Enables production mode which disables correctness checks in favor of
- * performance.
- *
- * @doc {heading: 'Environment'}
- */s.export(r,"enableProdMode",()=>l),/**
- * Enables debug mode which will log information about all executed kernels:
- * the elapsed time of the kernel execution, as well as the rank, shape, and
- * size of the output tensor.
- *
- * Debug mode will significantly slow down your application as it will
- * download the result of every operation to the CPU. This should not be used in
- * production. Debug mode does not affect the timing information of the kernel
- * execution as we do not measure download time in the kernel execution time.
- *
- * See also: `tf.profile`, `tf.memory`.
- *
- * @doc {heading: 'Environment'}
- */s.export(r,"enableDebugMode",()=>u),/** Globally disables deprecation warnings */s.export(r,"disableDeprecationWarnings",()=>p),/** Warn users about deprecated functionality. */s.export(r,"deprecationWarn",()=>c),/**
- * Dispose all variables kept in backend engine.
- *
- * @doc {heading: 'Environment'}
- */s.export(r,"disposeVariables",()=>d),/**
- * It returns the global engine that keeps track of all tensors and backends.
- *
- * @doc {heading: 'Environment'}
- */s.export(r,"engine",()=>h),/**
- * Returns memory info at the current time in the program. The result is an
- * object with the following properties:
- *
- * - `numBytes`: Number of bytes allocated (undisposed) at this time.
- * - `numTensors`: Number of unique tensors allocated.
- * - `numDataBuffers`: Number of unique data buffers allocated
- *   (undisposed) at this time, which is ≤ the number of tensors
- *   (e.g. `a.reshape(newShape)` makes a new Tensor that shares the same
- *   data buffer with `a`).
- * - `unreliable`: True if the memory usage is unreliable. See `reasons` when
- *    `unreliable` is true.
- * - `reasons`: `string[]`, reasons why the memory is unreliable, present if
- *    `unreliable` is true.
- *
- * WebGL Properties:
- * - `numBytesInGPU`: Number of bytes allocated (undisposed) in the GPU only at
- *     this time.
- *
- * @doc {heading: 'Performance', subheading: 'Memory'}
- */s.export(r,"memory",()=>f),/**
- * Executes the provided function `f()` and returns a promise that resolves
- * with information about the function's memory use:
- * - `newBytes`: the number of new bytes allocated
- * - `newTensors`: the number of new tensors created
- * - `peakBytes`: the peak number of bytes allocated
- * - `kernels`: an array of objects for each kernel involved that reports
- * their input and output shapes, number of bytes used, and number of new
- * tensors created.
- * - `kernelNames`: an array of unique strings with just the names of the
- * kernels in the `kernels` array.
- *
- * ```js
- * const profile = await tf.profile(() => {
- *   const x = tf.tensor1d([1, 2, 3]);
- *   let x2 = x.square();
- *   x2.dispose();
- *   x2 = x.square();
- *   x2.dispose();
- *   return x;
- * });
- *
- * console.log(`newBytes: ${profile.newBytes}`);
- * console.log(`newTensors: ${profile.newTensors}`);
- * console.log(`byte usage over all kernels: ${profile.kernels.map(k =>
- * k.totalBytesSnapshot)}`);
- * ```
- *
- *
- * @doc {heading: 'Performance', subheading: 'Profile'}
- */s.export(r,"profile",()=>m),/**
- * Executes the provided function `fn` and after it is executed, cleans up all
- * intermediate tensors allocated by `fn` except those returned by `fn`.
- * `fn` must not return a Promise (async functions not allowed). The returned
- * result can be a complex object.
- *
- * Using this method helps avoid memory leaks. In general, wrap calls to
- * operations in `tf.tidy` for automatic memory cleanup.
- *
- * NOTE: Variables do *not* get cleaned up when inside a tidy(). If you want to
- * dispose variables, please use `tf.disposeVariables` or call dispose()
- * directly on variables.
- *
- * ```js
- * // y = 2 ^ 2 + 1
- * const y = tf.tidy(() => {
- *   // a, b, and one will be cleaned up when the tidy ends.
- *   const one = tf.scalar(1);
- *   const a = tf.scalar(2);
- *   const b = a.square();
- *
- *   console.log('numTensors (in tidy): ' + tf.memory().numTensors);
- *
- *   // The value returned inside the tidy function will return
- *   // through the tidy, in this case to the variable y.
- *   return b.add(one);
- * });
- *
- * console.log('numTensors (outside tidy): ' + tf.memory().numTensors);
- * y.print();
- * ```
- *
- * @param nameOrFn The name of the closure, or the function to execute.
- *     If a name is provided, the 2nd argument should be the function.
- *     If debug mode is on, the timing and the memory usage of the function
- *     will be tracked and displayed on the console using the provided name.
- * @param fn The function to execute.
- *
- * @doc {heading: 'Performance', subheading: 'Memory'}
- */s.export(r,"tidy",()=>g),/**
- * Disposes any `tf.Tensor`s found within the provided object.
- *
- * @param container an object that may be a `tf.Tensor` or may directly
- *     contain `tf.Tensor`s, such as a `Tensor[]` or `{key: Tensor, ...}`. If
- *     the object is not a `tf.Tensor` or does not contain `Tensors`, nothing
- *     happens. In general it is safe to pass any object here, except that
- *     `Promise`s are not supported.
- *
- * @doc {heading: 'Performance', subheading: 'Memory'}
- */s.export(r,"dispose",()=>x),/**
- * Keeps a `tf.Tensor` generated inside a `tf.tidy` from being disposed
- * automatically.
- *
- * ```js
- * let b;
- * const y = tf.tidy(() => {
- *   const one = tf.scalar(1);
- *   const a = tf.scalar(2);
- *
- *   // b will not be cleaned up by the tidy. a and one will be cleaned up
- *   // when the tidy ends.
- *   b = tf.keep(a.square());
- *
- *   console.log('numTensors (in tidy): ' + tf.memory().numTensors);
- *
- *   // The value returned inside the tidy function will return
- *   // through the tidy, in this case to the variable y.
- *   return b.add(one);
- * });
- *
- * console.log('numTensors (outside tidy): ' + tf.memory().numTensors);
- * console.log('y:');
- * y.print();
- * console.log('b:');
- * b.print();
- * ```
- *
- * @param result The tensor to keep from being disposed.
- *
- * @doc {heading: 'Performance', subheading: 'Memory'}
- */s.export(r,"keep",()=>v),/**
- * Executes `f()` and returns a promise that resolves with timing
- * information.
- *
- * The result is an object with the following properties:
- *
- * - `wallMs`: Wall execution time.
- * - `kernelMs`: Kernel execution time, ignoring data transfer. If using the
- * WebGL backend and the query timer extension is not available, this will
- * return an error object.
- * - On `WebGL` The following additional properties exist:
- *   - `uploadWaitMs`: CPU blocking time on texture uploads.
- *   - `downloadWaitMs`: CPU blocking time on texture downloads (readPixels).
- *
- * ```js
- * const x = tf.randomNormal([20, 20]);
- * const time = await tf.time(() => x.matMul(x));
- *
- * console.log(`kernelMs: ${time.kernelMs}, wallTimeMs: ${time.wallMs}`);
- * ```
- *
- * @param f The function to execute and time.
- *
- * @doc {heading: 'Performance', subheading: 'Timing'}
- */s.export(r,"time",()=>y),/**
- * Sets the backend (cpu, webgl, wasm, etc) responsible for creating tensors and
- * executing operations on those tensors. Returns a promise that resolves
- * to a boolean if the backend initialization was successful.
- *
- * Note this disposes the current backend, if any, as well as any tensors
- * associated with it. A new backend is initialized, even if it is of the
- * same type as the previous one.
- *
- * @param backendName The name of the backend. Currently supports
- *     `'webgl'|'cpu'` in the browser, `'tensorflow'` under node.js
- *     (requires tfjs-node), and `'wasm'` (requires tfjs-backend-wasm).
- *
- * @doc {heading: 'Backends'}
- */s.export(r,"setBackend",()=>b),/**
- * Returns a promise that resolves when the currently selected backend (or the
- * highest priority one) has initialized. Await this promise when you are using
- * a backend that has async initialization.
- *
- * @doc {heading: 'Backends'}
- */s.export(r,"ready",()=>k),/**
- * Returns the current backend name (cpu, webgl, etc). The backend is
- * responsible for creating tensors and executing operations on those tensors.
- *
- * @doc {heading: 'Backends'}
- */s.export(r,"getBackend",()=>_),/**
- * Removes a backend and the registered factory.
- *
- * @doc {heading: 'Backends'}
- */s.export(r,"removeBackend",()=>w),/**
- * Finds the backend registered under the provided name. Returns null if the
- * name is not in the registry, or the registration hasn't finished yet.
- */s.export(r,"findBackend",()=>I),/**
- * Finds the backend factory registered under the provided name. Returns a
- * function that produces a new backend when called. Returns null if the name
- * is not in the registry.
- */s.export(r,"findBackendFactory",()=>j),/**
- * Registers a global backend. The registration should happen when importing
- * a module file (e.g. when importing `backend_webgl.ts`), and is used for
- * modular builds (e.g. custom tfjs bundle with only webgl support).
- *
- * @param factory The backend factory function. When called, it should
- * return a backend instance, or a promise of an instance.
- * @param priority The priority of the backend (higher = more important).
- *     In case multiple backends are registered, the priority is used to find
- *     the best backend. Defaults to 1.
- * @return False if there is already a registered backend under this name, true
- *     if not.
- *
- * @doc {heading: 'Backends'}
- */s.export(r,"registerBackend",()=>S),/**
- * Gets the current backend. If no backends have been initialized, this will
- * attempt to initialize the best backend. Will throw an error if the highest
- * priority backend has async initialization, in which case you should call
- * 'await tf.ready()' before running other code.
- *
- * @doc {heading: 'Backends'}
- */s.export(r,"backend",()=>C),/**
- * Sets the global platform.
- *
- * @param platformName The name of this platform.
- * @param platform A platform implementation.
- */s.export(r,"setPlatform",()=>T);var n=e("./engine"),a=e("./environment"),o=e("./tensor"),i=e("./tensor_util");function l(){(0,a.env)().set("PROD",!0)}function u(){(0,a.env)().set("DEBUG",!0)}function p(){(0,a.env)().set("DEPRECATION_WARNINGS_ENABLED",!1),console.warn("TensorFlow.js deprecation warnings have been disabled.")}function c(e){(0,a.env)().getBool("DEPRECATION_WARNINGS_ENABLED")&&console.warn(e+" You can disable deprecation warnings with tf.disableDeprecationWarnings().")}function d(){(0,n.ENGINE).disposeVariables()}function h(){return n.ENGINE}function f(){return(0,n.ENGINE).memory()}function m(e){return(0,n.ENGINE).profile(e)}function g(e,t){return(0,n.ENGINE).tidy(e,t)}function x(e){let t=(0,i.getTensorsInContainer)(e);t.forEach(e=>e.dispose())}function v(e){return(0,n.ENGINE).keep(e)}function y(e){return(0,n.ENGINE).time(e)}function b(e){return(0,n.ENGINE).setBackend(e)}function k(){return(0,n.ENGINE).ready()}function _(){return n.ENGINE.backendName}function w(e){(0,n.ENGINE).removeBackend(e)}function I(e){return(0,n.ENGINE).findBackend(e)}function j(e){return(0,n.ENGINE).findBackendFactory(e)}function S(e,t,r=1){return(0,n.ENGINE).registerBackend(e,t,r)}function C(){return n.ENGINE.backend}function T(e,t){(0,a.env)().setPlatform(e,t)}(0,o.setDeprecationWarningFn)(c)},{"./engine":"5PvxX","./environment":"f984i","./tensor":"6NCG7","./tensor_util":"70lol","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],d17mt:[function(e,t,r){/**
+let r=0,s=e.length;for(;r<=s;){let n=Math.floor((s-r)/2)+r,a=t(e[n]);if(0===a)return n;a<0?s=n:r=n+1}return -1}},{"../util":"eIDB0","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],d17mt:[function(e,t,r){/**
  * @license
  * Copyright 2018 Google LLC. All Rights Reserved.
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -3377,7 +3197,264 @@ return(0,n.ENGINE).runKernel(a.Identity,{x:t})}})},{"../engine":"5PvxX","../kern
 // This is a getter instead of a property because when it's a property, it
 // prevents the entire class from being tree-shaken.
 return"Adadelta"}constructor(e,t,r=null){super(),this.learningRate=e,this.rho=t,this.epsilon=r,this.accumulatedGrads=[],this.accumulatedUpdates=[],null==r&&(this.epsilon=(0,n.ENGINE).backend.epsilon())}applyGradients(e){let t=Array.isArray(e)?e.map(e=>e.name):Object.keys(e);t.forEach((t,r)=>{let s=n.ENGINE.registeredVariables[t];null==this.accumulatedGrads[r]&&(this.accumulatedGrads[r]={originalName:`${t}/accum_grad`,variable:(0,a.tidy)(()=>(0,c.zerosLike)(s).variable(!1))}),null==this.accumulatedUpdates[r]&&(this.accumulatedUpdates[r]={originalName:`${t}/accum_var`,variable:(0,a.tidy)(()=>(0,c.zerosLike)(s).variable(!1))});let d=Array.isArray(e)?e[r].tensor:e[t];if(null==d)return;let h=this.accumulatedGrads[r].variable,f=this.accumulatedUpdates[r].variable;(0,a.tidy)(()=>{let e=(0,o.add)((0,l.mul)(h,this.rho),(0,l.mul)((0,p.square)(d),1-this.rho)),t=(0,l.mul)((0,i.div)((0,u.sqrt)((0,o.add)(f,this.epsilon)),(0,u.sqrt)((0,o.add)(h,this.epsilon))),d),r=(0,o.add)((0,l.mul)(f,this.rho),(0,l.mul)((0,p.square)(t),1-this.rho));h.assign(e),f.assign(r);let n=(0,o.add)((0,l.mul)(t,-this.learningRate),s);s.assign(n)})}),this.incrementIterations()}dispose(){null!=this.accumulatedUpdates&&((0,a.dispose)(this.accumulatedGrads.map(e=>e.variable)),(0,a.dispose)(this.accumulatedUpdates.map(e=>e.variable)))}async getWeights(){// Order matters for Python compatibility.
-let e=[...this.accumulatedGrads,...this.accumulatedUpdates];return[await this.saveIterations()].concat(e.map(e=>({name:e.originalName,tensor:e.variable})))}async setWeights(e){e=await this.extractIterations(e);let t=e.length/2;this.accumulatedGrads=e.slice(0,t).map(e=>({originalName:e.name,variable:e.tensor.variable(!1)})),this.accumulatedUpdates=e.slice(t,2*t).map(e=>({originalName:e.name,variable:e.tensor.variable(!1)}))}getConfig(){return{learningRate:this.learningRate,rho:this.rho,epsilon:this.epsilon}}/** @nocollapse */static fromConfig(e,t){return new e(t.learningRate,t.rho,t.epsilon)}}},{"../engine":"5PvxX","../globals":"h3knK","../ops/add":"7xBDY","../ops/div":"i2HVO","../ops/mul":"95v1x","../ops/ops":"59PeS","../ops/square":"9pk1v","../ops/zeros_like":"g3ml7","./optimizer":"6ikZ9","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"7xBDY":[function(e,t,r){/**
+let e=[...this.accumulatedGrads,...this.accumulatedUpdates];return[await this.saveIterations()].concat(e.map(e=>({name:e.originalName,tensor:e.variable})))}async setWeights(e){e=await this.extractIterations(e);let t=e.length/2;this.accumulatedGrads=e.slice(0,t).map(e=>({originalName:e.name,variable:e.tensor.variable(!1)})),this.accumulatedUpdates=e.slice(t,2*t).map(e=>({originalName:e.name,variable:e.tensor.variable(!1)}))}getConfig(){return{learningRate:this.learningRate,rho:this.rho,epsilon:this.epsilon}}/** @nocollapse */static fromConfig(e,t){return new e(t.learningRate,t.rho,t.epsilon)}}},{"../engine":"5PvxX","../globals":"h3knK","../ops/add":"7xBDY","../ops/div":"i2HVO","../ops/mul":"95v1x","../ops/ops":"59PeS","../ops/square":"9pk1v","../ops/zeros_like":"g3ml7","./optimizer":"6ikZ9","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],h3knK:[function(e,t,r){/**
+ * @license
+ * Copyright 2018 Google LLC. All Rights Reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * =============================================================================
+ */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),/**
+ * Enables production mode which disables correctness checks in favor of
+ * performance.
+ *
+ * @doc {heading: 'Environment'}
+ */s.export(r,"enableProdMode",()=>l),/**
+ * Enables debug mode which will log information about all executed kernels:
+ * the elapsed time of the kernel execution, as well as the rank, shape, and
+ * size of the output tensor.
+ *
+ * Debug mode will significantly slow down your application as it will
+ * download the result of every operation to the CPU. This should not be used in
+ * production. Debug mode does not affect the timing information of the kernel
+ * execution as we do not measure download time in the kernel execution time.
+ *
+ * See also: `tf.profile`, `tf.memory`.
+ *
+ * @doc {heading: 'Environment'}
+ */s.export(r,"enableDebugMode",()=>u),/** Globally disables deprecation warnings */s.export(r,"disableDeprecationWarnings",()=>p),/** Warn users about deprecated functionality. */s.export(r,"deprecationWarn",()=>c),/**
+ * Dispose all variables kept in backend engine.
+ *
+ * @doc {heading: 'Environment'}
+ */s.export(r,"disposeVariables",()=>d),/**
+ * It returns the global engine that keeps track of all tensors and backends.
+ *
+ * @doc {heading: 'Environment'}
+ */s.export(r,"engine",()=>h),/**
+ * Returns memory info at the current time in the program. The result is an
+ * object with the following properties:
+ *
+ * - `numBytes`: Number of bytes allocated (undisposed) at this time.
+ * - `numTensors`: Number of unique tensors allocated.
+ * - `numDataBuffers`: Number of unique data buffers allocated
+ *   (undisposed) at this time, which is ≤ the number of tensors
+ *   (e.g. `a.reshape(newShape)` makes a new Tensor that shares the same
+ *   data buffer with `a`).
+ * - `unreliable`: True if the memory usage is unreliable. See `reasons` when
+ *    `unreliable` is true.
+ * - `reasons`: `string[]`, reasons why the memory is unreliable, present if
+ *    `unreliable` is true.
+ *
+ * WebGL Properties:
+ * - `numBytesInGPU`: Number of bytes allocated (undisposed) in the GPU only at
+ *     this time.
+ *
+ * @doc {heading: 'Performance', subheading: 'Memory'}
+ */s.export(r,"memory",()=>f),/**
+ * Executes the provided function `f()` and returns a promise that resolves
+ * with information about the function's memory use:
+ * - `newBytes`: the number of new bytes allocated
+ * - `newTensors`: the number of new tensors created
+ * - `peakBytes`: the peak number of bytes allocated
+ * - `kernels`: an array of objects for each kernel involved that reports
+ * their input and output shapes, number of bytes used, and number of new
+ * tensors created.
+ * - `kernelNames`: an array of unique strings with just the names of the
+ * kernels in the `kernels` array.
+ *
+ * ```js
+ * const profile = await tf.profile(() => {
+ *   const x = tf.tensor1d([1, 2, 3]);
+ *   let x2 = x.square();
+ *   x2.dispose();
+ *   x2 = x.square();
+ *   x2.dispose();
+ *   return x;
+ * });
+ *
+ * console.log(`newBytes: ${profile.newBytes}`);
+ * console.log(`newTensors: ${profile.newTensors}`);
+ * console.log(`byte usage over all kernels: ${profile.kernels.map(k =>
+ * k.totalBytesSnapshot)}`);
+ * ```
+ *
+ *
+ * @doc {heading: 'Performance', subheading: 'Profile'}
+ */s.export(r,"profile",()=>m),/**
+ * Executes the provided function `fn` and after it is executed, cleans up all
+ * intermediate tensors allocated by `fn` except those returned by `fn`.
+ * `fn` must not return a Promise (async functions not allowed). The returned
+ * result can be a complex object.
+ *
+ * Using this method helps avoid memory leaks. In general, wrap calls to
+ * operations in `tf.tidy` for automatic memory cleanup.
+ *
+ * NOTE: Variables do *not* get cleaned up when inside a tidy(). If you want to
+ * dispose variables, please use `tf.disposeVariables` or call dispose()
+ * directly on variables.
+ *
+ * ```js
+ * // y = 2 ^ 2 + 1
+ * const y = tf.tidy(() => {
+ *   // a, b, and one will be cleaned up when the tidy ends.
+ *   const one = tf.scalar(1);
+ *   const a = tf.scalar(2);
+ *   const b = a.square();
+ *
+ *   console.log('numTensors (in tidy): ' + tf.memory().numTensors);
+ *
+ *   // The value returned inside the tidy function will return
+ *   // through the tidy, in this case to the variable y.
+ *   return b.add(one);
+ * });
+ *
+ * console.log('numTensors (outside tidy): ' + tf.memory().numTensors);
+ * y.print();
+ * ```
+ *
+ * @param nameOrFn The name of the closure, or the function to execute.
+ *     If a name is provided, the 2nd argument should be the function.
+ *     If debug mode is on, the timing and the memory usage of the function
+ *     will be tracked and displayed on the console using the provided name.
+ * @param fn The function to execute.
+ *
+ * @doc {heading: 'Performance', subheading: 'Memory'}
+ */s.export(r,"tidy",()=>g),/**
+ * Disposes any `tf.Tensor`s found within the provided object.
+ *
+ * @param container an object that may be a `tf.Tensor` or may directly
+ *     contain `tf.Tensor`s, such as a `Tensor[]` or `{key: Tensor, ...}`. If
+ *     the object is not a `tf.Tensor` or does not contain `Tensors`, nothing
+ *     happens. In general it is safe to pass any object here, except that
+ *     `Promise`s are not supported.
+ *
+ * @doc {heading: 'Performance', subheading: 'Memory'}
+ */s.export(r,"dispose",()=>x),/**
+ * Keeps a `tf.Tensor` generated inside a `tf.tidy` from being disposed
+ * automatically.
+ *
+ * ```js
+ * let b;
+ * const y = tf.tidy(() => {
+ *   const one = tf.scalar(1);
+ *   const a = tf.scalar(2);
+ *
+ *   // b will not be cleaned up by the tidy. a and one will be cleaned up
+ *   // when the tidy ends.
+ *   b = tf.keep(a.square());
+ *
+ *   console.log('numTensors (in tidy): ' + tf.memory().numTensors);
+ *
+ *   // The value returned inside the tidy function will return
+ *   // through the tidy, in this case to the variable y.
+ *   return b.add(one);
+ * });
+ *
+ * console.log('numTensors (outside tidy): ' + tf.memory().numTensors);
+ * console.log('y:');
+ * y.print();
+ * console.log('b:');
+ * b.print();
+ * ```
+ *
+ * @param result The tensor to keep from being disposed.
+ *
+ * @doc {heading: 'Performance', subheading: 'Memory'}
+ */s.export(r,"keep",()=>v),/**
+ * Executes `f()` and returns a promise that resolves with timing
+ * information.
+ *
+ * The result is an object with the following properties:
+ *
+ * - `wallMs`: Wall execution time.
+ * - `kernelMs`: Kernel execution time, ignoring data transfer. If using the
+ * WebGL backend and the query timer extension is not available, this will
+ * return an error object.
+ * - On `WebGL` The following additional properties exist:
+ *   - `uploadWaitMs`: CPU blocking time on texture uploads.
+ *   - `downloadWaitMs`: CPU blocking time on texture downloads (readPixels).
+ *
+ * ```js
+ * const x = tf.randomNormal([20, 20]);
+ * const time = await tf.time(() => x.matMul(x));
+ *
+ * console.log(`kernelMs: ${time.kernelMs}, wallTimeMs: ${time.wallMs}`);
+ * ```
+ *
+ * @param f The function to execute and time.
+ *
+ * @doc {heading: 'Performance', subheading: 'Timing'}
+ */s.export(r,"time",()=>y),/**
+ * Sets the backend (cpu, webgl, wasm, etc) responsible for creating tensors and
+ * executing operations on those tensors. Returns a promise that resolves
+ * to a boolean if the backend initialization was successful.
+ *
+ * Note this disposes the current backend, if any, as well as any tensors
+ * associated with it. A new backend is initialized, even if it is of the
+ * same type as the previous one.
+ *
+ * @param backendName The name of the backend. Currently supports
+ *     `'webgl'|'cpu'` in the browser, `'tensorflow'` under node.js
+ *     (requires tfjs-node), and `'wasm'` (requires tfjs-backend-wasm).
+ *
+ * @doc {heading: 'Backends'}
+ */s.export(r,"setBackend",()=>b),/**
+ * Returns a promise that resolves when the currently selected backend (or the
+ * highest priority one) has initialized. Await this promise when you are using
+ * a backend that has async initialization.
+ *
+ * @doc {heading: 'Backends'}
+ */s.export(r,"ready",()=>k),/**
+ * Returns the current backend name (cpu, webgl, etc). The backend is
+ * responsible for creating tensors and executing operations on those tensors.
+ *
+ * @doc {heading: 'Backends'}
+ */s.export(r,"getBackend",()=>_),/**
+ * Removes a backend and the registered factory.
+ *
+ * @doc {heading: 'Backends'}
+ */s.export(r,"removeBackend",()=>w),/**
+ * Finds the backend registered under the provided name. Returns null if the
+ * name is not in the registry, or the registration hasn't finished yet.
+ */s.export(r,"findBackend",()=>I),/**
+ * Finds the backend factory registered under the provided name. Returns a
+ * function that produces a new backend when called. Returns null if the name
+ * is not in the registry.
+ */s.export(r,"findBackendFactory",()=>j),/**
+ * Registers a global backend. The registration should happen when importing
+ * a module file (e.g. when importing `backend_webgl.ts`), and is used for
+ * modular builds (e.g. custom tfjs bundle with only webgl support).
+ *
+ * @param factory The backend factory function. When called, it should
+ * return a backend instance, or a promise of an instance.
+ * @param priority The priority of the backend (higher = more important).
+ *     In case multiple backends are registered, the priority is used to find
+ *     the best backend. Defaults to 1.
+ * @return False if there is already a registered backend under this name, true
+ *     if not.
+ *
+ * @doc {heading: 'Backends'}
+ */s.export(r,"registerBackend",()=>S),/**
+ * Gets the current backend. If no backends have been initialized, this will
+ * attempt to initialize the best backend. Will throw an error if the highest
+ * priority backend has async initialization, in which case you should call
+ * 'await tf.ready()' before running other code.
+ *
+ * @doc {heading: 'Backends'}
+ */s.export(r,"backend",()=>C),/**
+ * Sets the global platform.
+ *
+ * @param platformName The name of this platform.
+ * @param platform A platform implementation.
+ */s.export(r,"setPlatform",()=>T);var n=e("./engine"),a=e("./environment"),o=e("./tensor"),i=e("./tensor_util");function l(){(0,a.env)().set("PROD",!0)}function u(){(0,a.env)().set("DEBUG",!0)}function p(){(0,a.env)().set("DEPRECATION_WARNINGS_ENABLED",!1),console.warn("TensorFlow.js deprecation warnings have been disabled.")}function c(e){(0,a.env)().getBool("DEPRECATION_WARNINGS_ENABLED")&&console.warn(e+" You can disable deprecation warnings with tf.disableDeprecationWarnings().")}function d(){(0,n.ENGINE).disposeVariables()}function h(){return n.ENGINE}function f(){return(0,n.ENGINE).memory()}function m(e){return(0,n.ENGINE).profile(e)}function g(e,t){return(0,n.ENGINE).tidy(e,t)}function x(e){let t=(0,i.getTensorsInContainer)(e);t.forEach(e=>e.dispose())}function v(e){return(0,n.ENGINE).keep(e)}function y(e){return(0,n.ENGINE).time(e)}function b(e){return(0,n.ENGINE).setBackend(e)}function k(){return(0,n.ENGINE).ready()}function _(){return n.ENGINE.backendName}function w(e){(0,n.ENGINE).removeBackend(e)}function I(e){return(0,n.ENGINE).findBackend(e)}function j(e){return(0,n.ENGINE).findBackendFactory(e)}function S(e,t,r=1){return(0,n.ENGINE).registerBackend(e,t,r)}function C(){return n.ENGINE.backend}function T(e,t){(0,a.env)().setPlatform(e,t)}(0,o.setDeprecationWarningFn)(c)},{"./engine":"5PvxX","./environment":"f984i","./tensor":"6NCG7","./tensor_util":"70lol","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"7xBDY":[function(e,t,r){/**
  * @license
  * Copyright 2020 Google LLC. All Rights Reserved.
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -8315,7 +8392,7 @@ function(e,t,r){let s=r.map(e=>e[0]),n=r.map(e=>e[1]),a=e.concat(s,n),o=t.map((e
  *     "ROW_SPLITS": the row_splits tensor from the ragged tensor.
  *     "VALUE_ROWIDS": the value_rowids tensor from the ragged tensor.
  *     "FIRST_DIM_SIZE": if value_rowids is used for the first dimension, then
- *         it is preceded by "FIRST_DIM_SIZE". The tensors are in the order of
+ *         it is preceeded by "FIRST_DIM_SIZE". The tensors are in the order of
  *         the dimensions.
  * @return A Tensor. Has the same type as values.
  * @doc {heading: 'Operations', subheading: 'Ragged'}
@@ -11351,7 +11428,7 @@ let d=o>0?-.5/o:0,h=[],f=[];for(;h.length<r&&c.length>0;){let t=c.pop(),{score:r
 // iouThreshold, we simply ignore the candidate.
 let l=!1;for(let r=h.length-1;r>=i;--r){let n=function(e,t,r){let s=e.subarray(4*t,4*t+4),n=e.subarray(4*r,4*r+4),a=Math.min(s[0],s[2]),o=Math.min(s[1],s[3]),i=Math.max(s[0],s[2]),l=Math.max(s[1],s[3]),u=Math.min(n[0],n[2]),p=Math.min(n[1],n[3]),c=Math.max(n[0],n[2]),d=Math.max(n[1],n[3]),h=(i-a)*(l-o),f=(c-u)*(d-p);if(h<=0||f<=0)return 0;let m=Math.max(a,u),g=Math.max(o,p),x=Math.min(i,c),v=Math.min(l,d),y=Math.max(x-m,0)*Math.max(v-g,0);return y/(h+f-y)}(e,o,h[r]);if(n>=s){l=!0;break}if(t.score=t.score*// A Gaussian penalty function, this method always returns values in [0, 1].
 // The weight is a function of similarity, the more overlap two boxes are, the
-// smaller the weight is,meaning highly overlapping boxes will be significantly
+// smaller the weight is, meaning highly overlapping boxe will be significantly
 // penalized. On the other hand, a non-overlapping box will not be penalized.
 function(e,t,r){let s=Math.exp(t*r*r);return r<=e?s:0}(s,d,n),t.score<=a)break}// At this point, if `candidate.score` has not dropped below
 // `scoreThreshold`, then we know that we went through all of the
@@ -12690,7 +12767,7 @@ tensor:(0,o.scalar)(this.iterations_,"int32")}}async getWeights(){throw Error("g
  *
  * @param cls The class to be registered. It must have a public static member
  *   called `className` defined and the value must be a non-empty string.
- * @param pkg The package name that this class belongs to. This used to define
+ * @param pkg The pakcage name that this class belongs to. This used to define
  *     the key in GlobalCustomObject. If not defined, it defaults to `Custom`.
  * @param name The name that user specified. It defaults to the actual name of
  *     the class as specified by its static `className` property.
@@ -12906,7 +12983,7 @@ s.export(r,"KernelBackend",()=>O.KernelBackend),s.export(r,"DataStorage",()=>O.D
  * =============================================================================
  */// Importing local_storage and indexed_db is necessary for the routers to be
 // registered.
-var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"copyModel",()=>c.copyModel),s.export(r,"listModels",()=>c.listModels),s.export(r,"moveModel",()=>c.moveModel),s.export(r,"removeModel",()=>c.removeModel),s.export(r,"browserFiles",()=>n.browserFiles),s.export(r,"browserHTTPRequest",()=>a.browserHTTPRequest),s.export(r,"CompositeArrayBuffer",()=>p.CompositeArrayBuffer),s.export(r,"concatenateArrayBuffers",()=>o.concatenateArrayBuffers),s.export(r,"decodeWeights",()=>o.decodeWeights),s.export(r,"decodeWeightsStream",()=>o.decodeWeightsStream),s.export(r,"encodeWeights",()=>o.encodeWeights),s.export(r,"fromMemory",()=>i.fromMemory),s.export(r,"fromMemorySync",()=>i.fromMemorySync),s.export(r,"getLoadHandlers",()=>l.getLoadHandlers),s.export(r,"getModelArtifactsForJSON",()=>o.getModelArtifactsForJSON),s.export(r,"getModelArtifactsForJSONSync",()=>o.getModelArtifactsForJSONSync),s.export(r,"getModelArtifactsInfoForJSON",()=>o.getModelArtifactsInfoForJSON),s.export(r,"getSaveHandlers",()=>l.getSaveHandlers),s.export(r,"getWeightSpecs",()=>o.getWeightSpecs),s.export(r,"http",()=>a.http),s.export(r,"isHTTPScheme",()=>a.isHTTPScheme),s.export(r,"loadWeights",()=>u.loadWeights),s.export(r,"registerLoadRouter",()=>l.registerLoadRouter),s.export(r,"registerSaveRouter",()=>l.registerSaveRouter),s.export(r,"weightsLoaderFactory",()=>u.weightsLoaderFactory),s.export(r,"withSaveHandler",()=>i.withSaveHandler),s.export(r,"withSaveHandlerSync",()=>i.withSaveHandlerSync),e("./indexed_db"),e("./local_storage");var n=e("./browser_files"),a=e("./http"),o=e("./io_utils"),i=e("./passthrough"),l=e("./router_registry"),u=e("./weights_loader"),p=e("./composite_array_buffer"),c=e("./model_management")},{"./indexed_db":"6V0l0","./local_storage":"7EX7o","./browser_files":"8NBNF","./http":"3xCbu","./io_utils":"6LFRt","./passthrough":"b0XRM","./router_registry":"d17mt","./weights_loader":"fzINH","./composite_array_buffer":"5DRoN","./model_management":"2cdRF","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"8NBNF":[function(e,t,r){/**
+var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"copyModel",()=>c.copyModel),s.export(r,"listModels",()=>c.listModels),s.export(r,"moveModel",()=>c.moveModel),s.export(r,"removeModel",()=>c.removeModel),s.export(r,"browserFiles",()=>n.browserFiles),s.export(r,"browserHTTPRequest",()=>a.browserHTTPRequest),s.export(r,"CompositeArrayBuffer",()=>p.CompositeArrayBuffer),s.export(r,"concatenateArrayBuffers",()=>o.concatenateArrayBuffers),s.export(r,"decodeWeights",()=>o.decodeWeights),s.export(r,"encodeWeights",()=>o.encodeWeights),s.export(r,"fromMemory",()=>i.fromMemory),s.export(r,"fromMemorySync",()=>i.fromMemorySync),s.export(r,"getLoadHandlers",()=>l.getLoadHandlers),s.export(r,"getModelArtifactsForJSON",()=>o.getModelArtifactsForJSON),s.export(r,"getModelArtifactsForJSONSync",()=>o.getModelArtifactsForJSONSync),s.export(r,"getModelArtifactsInfoForJSON",()=>o.getModelArtifactsInfoForJSON),s.export(r,"getSaveHandlers",()=>l.getSaveHandlers),s.export(r,"getWeightSpecs",()=>o.getWeightSpecs),s.export(r,"http",()=>a.http),s.export(r,"isHTTPScheme",()=>a.isHTTPScheme),s.export(r,"loadWeights",()=>u.loadWeights),s.export(r,"registerLoadRouter",()=>l.registerLoadRouter),s.export(r,"registerSaveRouter",()=>l.registerSaveRouter),s.export(r,"weightsLoaderFactory",()=>u.weightsLoaderFactory),s.export(r,"withSaveHandler",()=>i.withSaveHandler),s.export(r,"withSaveHandlerSync",()=>i.withSaveHandlerSync),e("./indexed_db"),e("./local_storage");var n=e("./browser_files"),a=e("./http"),o=e("./io_utils"),i=e("./passthrough"),l=e("./router_registry"),u=e("./weights_loader"),p=e("./composite_array_buffer"),c=e("./model_management")},{"./indexed_db":"6V0l0","./local_storage":"7EX7o","./browser_files":"8NBNF","./http":"3xCbu","./io_utils":"6LFRt","./passthrough":"b0XRM","./router_registry":"d17mt","./weights_loader":"fzINH","./composite_array_buffer":"5DRoN","./model_management":"2cdRF","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"8NBNF":[function(e,t,r){/**
  * @license
  * Copyright 2018 Google LLC. All Rights Reserved.
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -13075,7 +13152,7 @@ let t=e.target.result;r(t)},n.onerror=t=>s(`Failed to weights data from file of 
  * The following GitHub Gist
  * https://gist.github.com/dsmilkov/1b6046fd6132d7408d5257b0976f7864
  * implements a server based on [flask](https://github.com/pallets/flask) that
- * can receive the request. Upon receiving the model artifacts via the request,
+ * can receive the request. Upon receiving the model artifacts via the requst,
  * this particular server reconstitutes instances of [Keras
  * Models](https://keras.io/models/model/) in memory.
  *
@@ -13113,17 +13190,17 @@ let t=e.target.result;r(t)},n.onerror=t=>s(`Failed to weights data from file of 
  * Deprecated. Use `tf.io.http`.
  * @param path
  * @param loadOptions
- */s.export(r,"browserHTTPRequest",()=>m);var n=e("../environment"),a=e("../util"),o=e("./io_utils"),i=e("./composite_array_buffer"),l=e("./router_registry"),u=e("./weights_loader");class p{constructor(e,t){if(this.DEFAULT_METHOD="POST",null==t&&(t={}),this.weightPathPrefix=t.weightPathPrefix,this.weightUrlConverter=t.weightUrlConverter,null!=t.fetchFunc?((0,a.assert)("function"==typeof t.fetchFunc,()=>"Must pass a function that matches the signature of `fetch` (see https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API)"),this.fetch=t.fetchFunc):this.fetch=(0,n.env)().platform.fetch,(0,a.assert)(null!=e&&e.length>0,()=>"URL path for http must not be null, undefined or empty."),Array.isArray(e)&&(0,a.assert)(2===e.length,()=>`URL paths for http must have a length of 2, (actual length is ${e.length}).`),this.path=e,null!=t.requestInit&&null!=t.requestInit.body)throw Error("requestInit is expected to have no pre-existing body, but has one.");this.requestInit=t.requestInit||{},this.loadOptions=t}async save(e){if(e.modelTopology instanceof ArrayBuffer)throw Error("BrowserHTTPRequest.save() does not support saving model topology in binary formats yet.");let t=Object.assign({method:this.DEFAULT_METHOD},this.requestInit);t.body=new FormData;let r=[{paths:["./model.weights.bin"],weights:e.weightSpecs}],s=(0,o.getModelJSONForModelArtifacts)(e,r);if(t.body.append("model.json",new Blob([JSON.stringify(s)],{type:"application/json"}),"model.json"),null!=e.weightData){// TODO(mattsoulanille): Support saving models over 2GB that exceed
+ */s.export(r,"browserHTTPRequest",()=>m);var n=e("../environment"),a=e("../util"),o=e("./io_utils"),i=e("./composite_array_buffer"),l=e("./router_registry"),u=e("./weights_loader");class p{constructor(e,t){if(this.DEFAULT_METHOD="POST",null==t&&(t={}),this.weightPathPrefix=t.weightPathPrefix,this.onProgress=t.onProgress,this.weightUrlConverter=t.weightUrlConverter,null!=t.fetchFunc?((0,a.assert)("function"==typeof t.fetchFunc,()=>"Must pass a function that matches the signature of `fetch` (see https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API)"),this.fetch=t.fetchFunc):this.fetch=(0,n.env)().platform.fetch,(0,a.assert)(null!=e&&e.length>0,()=>"URL path for http must not be null, undefined or empty."),Array.isArray(e)&&(0,a.assert)(2===e.length,()=>`URL paths for http must have a length of 2, (actual length is ${e.length}).`),this.path=e,null!=t.requestInit&&null!=t.requestInit.body)throw Error("requestInit is expected to have no pre-existing body, but has one.");this.requestInit=t.requestInit||{}}async save(e){if(e.modelTopology instanceof ArrayBuffer)throw Error("BrowserHTTPRequest.save() does not support saving model topology in binary formats yet.");let t=Object.assign({method:this.DEFAULT_METHOD},this.requestInit);t.body=new FormData;let r=[{paths:["./model.weights.bin"],weights:e.weightSpecs}],s=(0,o.getModelJSONForModelArtifacts)(e,r);if(t.body.append("model.json",new Blob([JSON.stringify(s)],{type:"application/json"}),"model.json"),null!=e.weightData){// TODO(mattsoulanille): Support saving models over 2GB that exceed
 // Chrome's ArrayBuffer size limit.
-let r=(0,i.CompositeArrayBuffer).join(e.weightData);t.body.append("model.weights.bin",new Blob([r],{type:"application/octet-stream"}),"model.weights.bin")}let n=await this.fetch(this.path,t);if(n.ok)return{modelArtifactsInfo:(0,o.getModelArtifactsInfoForJSON)(e),responses:[n]};throw Error(`BrowserHTTPRequest.save() failed due to HTTP response status ${n.status}.`)}async loadModelJSON(){let e;let t=await this.fetch(this.path,this.requestInit);if(!t.ok)throw Error(`Request to ${this.path} failed with status code ${t.status}. Please verify this URL points to the model JSON of the model to load.`);try{e=await t.json()}catch(t){let e=`Failed to parse model JSON of response from ${this.path}.`;throw this.path.endsWith(".pb")?e+=" Your path contains a .pb file extension. Support for .pb models have been removed in TensorFlow.js 1.0 in favor of .json models. You can re-convert your Python TensorFlow model using the TensorFlow.js 1.0 conversion scripts or you can convert your.pb models with the 'pb2json'NPM script in the tensorflow/tfjs-converter repository.":e+=" Please make sure the server is serving valid JSON for this request.",Error(e)}// We do not allow both modelTopology and weightsManifest to be missing.
-let r=e.modelTopology,s=e.weightsManifest;if(null==r&&null==s)throw Error(`The JSON from HTTP path ${this.path} contains neither model topology or manifest for weights.`);return e}/**
+let r=(0,i.CompositeArrayBuffer).join(e.weightData);t.body.append("model.weights.bin",new Blob([r],{type:"application/octet-stream"}),"model.weights.bin")}let n=await this.fetch(this.path,t);if(n.ok)return{modelArtifactsInfo:(0,o.getModelArtifactsInfoForJSON)(e),responses:[n]};throw Error(`BrowserHTTPRequest.save() failed due to HTTP response status ${n.status}.`)}/**
      * Load model artifacts via HTTP request(s).
      *
      * See the documentation to `tf.io.http` for details on the saved
      * artifacts.
      *
      * @returns The loaded model artifacts (if loading succeeds).
-     */async load(){if(this.loadOptions.streamWeights)return this.loadStream();let e=await this.loadModelJSON();return(0,o.getModelArtifactsForJSON)(e,e=>this.loadWeights(e))}async loadStream(){let e=await this.loadModelJSON(),t=await this.getWeightUrls(e.weightsManifest),r=(0,o.getWeightSpecs)(e.weightsManifest);return Object.assign(Object.assign({},e),{weightSpecs:r,getWeightStream:()=>(0,u.streamWeights)(t,this.loadOptions)})}async getWeightUrls(e){let t=Array.isArray(this.path)?this.path[1]:this.path,[r,s]=c(t),n=this.weightPathPrefix||r,a=[],o=[];for(let t of e)for(let e of t.paths)null!=this.weightUrlConverter?o.push(this.weightUrlConverter(e)):a.push(n+e+s);return this.weightUrlConverter&&a.push(...await Promise.all(o)),a}async loadWeights(e){let t=await this.getWeightUrls(e),r=(0,o.getWeightSpecs)(e),s=await (0,u.loadWeightsAsArrayBuffer)(t,this.loadOptions);return[r,s]}}function c(e){let t=e.lastIndexOf("/"),r=e.lastIndexOf("?"),s=e.substring(0,t),n=r>t?e.substring(r):"";return[s+"/",n]}function d(e){return null!=e.match(p.URL_SCHEME_REGEX)}p.URL_SCHEME_REGEX=/^https?:\/\//;let h=(e,t)=>{if("undefined"==typeof fetch&&(null==t||null==t.fetchFunc));else if(Array.isArray(e)?e.every(e=>d(e)):d(e))return f(e,t);return null};function f(e,t){return new p(e,t)}function m(e,t){return f(e,t)}(0,l.IORouterRegistry).registerSaveRouter(h),(0,l.IORouterRegistry).registerLoadRouter(h)},{"../environment":"f984i","../util":"eIDB0","./io_utils":"6LFRt","./composite_array_buffer":"5DRoN","./router_registry":"d17mt","./weights_loader":"fzINH","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],fzINH:[function(e,t,r){/**
+     */async load(){let e;let t=await this.fetch(this.path,this.requestInit);if(!t.ok)throw Error(`Request to ${this.path} failed with status code ${t.status}. Please verify this URL points to the model JSON of the model to load.`);try{e=await t.json()}catch(t){let e=`Failed to parse model JSON of response from ${this.path}.`;throw this.path.endsWith(".pb")?e+=" Your path contains a .pb file extension. Support for .pb models have been removed in TensorFlow.js 1.0 in favor of .json models. You can re-convert your Python TensorFlow model using the TensorFlow.js 1.0 conversion scripts or you can convert your.pb models with the 'pb2json'NPM script in the tensorflow/tfjs-converter repository.":e+=" Please make sure the server is serving valid JSON for this request.",Error(e)}// We do not allow both modelTopology and weightsManifest to be missing.
+let r=e.modelTopology,s=e.weightsManifest;if(null==r&&null==s)throw Error(`The JSON from HTTP path ${this.path} contains neither model topology or manifest for weights.`);return(0,o.getModelArtifactsForJSON)(e,e=>this.loadWeights(e))}async loadWeights(e){let t=Array.isArray(this.path)?this.path[1]:this.path,[r,s]=c(t),n=this.weightPathPrefix||r,a=(0,o.getWeightSpecs)(e),i=[],l=[];for(let t of e)for(let e of t.paths)null!=this.weightUrlConverter?l.push(this.weightUrlConverter(e)):i.push(n+e+s);this.weightUrlConverter&&i.push(...await Promise.all(l));let p=await (0,u.loadWeightsAsArrayBuffer)(i,{requestInit:this.requestInit,fetchFunc:this.fetch,onProgress:this.onProgress});return[a,p]}}function c(e){let t=e.lastIndexOf("/"),r=e.lastIndexOf("?"),s=e.substring(0,t),n=r>t?e.substring(r):"";return[s+"/",n]}function d(e){return null!=e.match(p.URL_SCHEME_REGEX)}p.URL_SCHEME_REGEX=/^https?:\/\//;let h=(e,t)=>{if("undefined"==typeof fetch&&(null==t||null==t.fetchFunc));else if(Array.isArray(e)?e.every(e=>d(e)):d(e))return f(e,t);return null};function f(e,t){return new p(e,t)}function m(e,t){return f(e,t)}(0,l.IORouterRegistry).registerSaveRouter(h),(0,l.IORouterRegistry).registerLoadRouter(h)},{"../environment":"f984i","../util":"eIDB0","./io_utils":"6LFRt","./composite_array_buffer":"5DRoN","./router_registry":"d17mt","./weights_loader":"fzINH","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],fzINH:[function(e,t,r){/**
  * @license
  * Copyright 2018 Google LLC. All Rights Reserved.
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -13148,7 +13225,7 @@ let r=e.modelTopology,s=e.weightsManifest;if(null==r&&null==s)throw Error(`The J
  *   before the load is completed.
  * @returns A `Promise` of an Array of `ArrayBuffer`. The Array has the same
  *   length as `fetchURLs`.
- */s.export(r,"loadWeightsAsArrayBuffer",()=>p),s.export(r,"streamWeights",()=>c),/**
+ */s.export(r,"loadWeightsAsArrayBuffer",()=>p),/**
  * Reads a weights manifest JSON configuration, fetches the weights and
  * returns them as `Tensor`s.
  *
@@ -13156,7 +13233,7 @@ let r=e.modelTopology,s=e.weightsManifest;if(null==r&&null==s)throw Error(`The J
  * @param filePathPrefix The path prefix for filenames given in the manifest.
  *     Defaults to the empty string.
  * @param weightNames The names of the weights to be fetched.
- */s.export(r,"loadWeights",()=>d),/**
+ */s.export(r,"loadWeights",()=>c),/**
  * Creates a function, which reads a weights manifest JSON configuration,
  * fetches the weight files using the specified function and returns them as
  * `Tensor`s.
@@ -13179,7 +13256,7 @@ let r=e.modelTopology,s=e.weightsManifest;if(null==r&&null==s)throw Error(`The J
  * ```
  * @param fetchWeightsFunction The function used for fetching the weight files.
  * @returns Weight loading function.
- */s.export(r,"weightsLoaderFactory",()=>h);var n=e("../environment"),a=e("../util"),o=e("./composite_array_buffer"),i=e("./io_utils"),l=e("./progress"),u=e("./types");async function p(e,t){null==t&&(t={});let r=null==t.fetchFunc?(0,n.env)().platform.fetch:t.fetchFunc,s=e.map(e=>r(e,t.requestInit,{isBinary:!0})),a=null==t.onProgress?await Promise.all(s):await (0,l.monitorPromisesProgress)(s,t.onProgress,0,.5),o=a.map(e=>e.arrayBuffer()),i=null==t.onProgress?await Promise.all(o):await (0,l.monitorPromisesProgress)(o,t.onProgress,.5,1);return i}function c(e,t){var r;let s;let a=null==t.fetchFunc?(0,n.env)().platform.fetch:t.fetchFunc,o=0;return null===(r=t.onProgress)||void 0===r||r.call(t,0),new ReadableStream({pull:async r=>{for(var n;o<e.length;){if(!s){let r=(await a(e[o],t.requestInit,{isBinary:!0})).body;s=r.getReader()}let{done:i,value:l}=await s.read();if(i){o++,s=void 0,null===(n=t.onProgress)||void 0===n||n.call(t,o/e.length);continue}r.enqueue(l);return}r.close()}})}async function d(e,t="",r,s){let n=h(e=>p(e,{requestInit:s}));return n(e,t,r)}function h(e){return async(t,r="",s)=>{// Collect all the groups, weights, and their relative offsets to be
+ */s.export(r,"weightsLoaderFactory",()=>d);var n=e("../environment"),a=e("../util"),o=e("./composite_array_buffer"),i=e("./io_utils"),l=e("./progress"),u=e("./types");async function p(e,t){null==t&&(t={});let r=null==t.fetchFunc?(0,n.env)().platform.fetch:t.fetchFunc,s=e.map(e=>r(e,t.requestInit,{isBinary:!0})),a=null==t.onProgress?await Promise.all(s):await (0,l.monitorPromisesProgress)(s,t.onProgress,0,.5),o=a.map(e=>e.arrayBuffer()),i=null==t.onProgress?await Promise.all(o):await (0,l.monitorPromisesProgress)(o,t.onProgress,.5,1);return i}async function c(e,t="",r,s){let n=d(e=>p(e,{requestInit:s}));return n(e,t,r)}function d(e){return async(t,r="",s)=>{// Collect all the groups, weights, and their relative offsets to be
 // fetched.
 let n=t.map(()=>!1),l={},p=null!=s?s.map(()=>!1):[],c=[];if(t.forEach((e,t)=>{let r=0;e.weights.forEach(e=>{let o="quantization"in e?e.quantization.dtype:e.dtype,i=u.DTYPE_VALUE_SIZE_MAP[o]*a.sizeFromShape(e.shape),d=()=>{n[t]=!0,null==l[t]&&(l[t]=[]),l[t].push({manifestEntry:e,groupOffset:r,sizeBytes:i})};null!=s?s.forEach((t,r)=>{t===e.name&&(d(),p[r]=!0)}):d(),c.push(e.name),r+=i})}),!p.every(e=>e)){let e=s.filter((e,t)=>!p[t]);throw Error(`Could not find weights in manifest with names: ${e.join(", ")}. 
 Manifest JSON has weights with names: ${c.join(", ")}.`)}// Convert the one-hot boolean groupId => shouldFetch map to a list of group
@@ -13560,7 +13637,7 @@ r=1,l=!0):i&&n>=0&&(r=d.strides[t]<0?-n:n,l=!0),l){let e;e=0===r||r<0!=d.strides
 // This cannot be done earlier, because it depends on Step 3.
 for(let e=0;e<d.finalShapeGatherIndices.length;++e){let t=d.finalShapeGatherIndices[e];t>=0?x.push(g[t]):-2===t&&x.push(1)}let v=x.filter((e,t)=>-2!==d.finalShapeGatherIndices[t]);return{finalShapeSparse:v,finalShape:x,isIdentity:h,sliceDim0:f,isSimpleSlice:m,begin:d.begin,end:d.end,strides:d.strides}}function b(e,t,r,s,n,a){if(n[t])return r>0?a[t]:a[t+1&1];{let t=e<0?s+e:e;// make negative indices positive
 return t<a[0]?a[0]:t>a[1]?a[1]:t}}},{"../util":"eIDB0","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],a3q20:[function(e,t,r){/** @license See the LICENSE file. */// This code is auto-generated, do not modify this file!
-var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"version",()=>n);let n="4.22.0"},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"9U4xs":[function(e,t,r){/**
+var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"version",()=>n);let n="4.10.0"},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"9U4xs":[function(e,t,r){/**
  * @license
  * Copyright 2018 Google LLC. All Rights Reserved.
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -13942,7 +14019,7 @@ var s=e("@parcel/transformer-js/src/esmodule-helpers.js");function n(e,t,r){let 
  * Extracts even indexed complex values in the given array.
  * @param complex The complex tensor values
  */s.export(r,"complexWithEvenIndex",()=>o),/**
- * Extracts odd indexed complete values in the given array.
+ * Extracts odd indexed comple values in the given array.
  * @param complex The complex tensor values
  */s.export(r,"complexWithOddIndex",()=>i),/**
  * Get the map representing a complex value in the given array.
@@ -14002,7 +14079,7 @@ var s=e("@parcel/transformer-js/src/esmodule-helpers.js");function n(e,t,r){let 
  *
  * @param summedDims indices to the dimensions being summed over.
  * @param idDims A look up table for the dimensions present in each input
- *     tensor.Each constituent array contains indices for the dimensions in the
+ *     tensor. Each consituent array contains indices for the dimensions in the
  *     corresponding input tensor.
  *
  * @return A map with two fields:
@@ -14850,7 +14927,7 @@ return(0,n.ENGINE).runKernel(a.Conv3DBackpropFilterV2,c,{strides:s,pad:i,filterS
  * See the License for the specific language governing permissions and
  * limitations under the License.
  * =============================================================================
- */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"gatherGradConfig",()=>c);var n=e("../kernel_names"),a=e("../ops/axis_util"),o=e("../ops/reshape"),i=e("../ops/stack"),l=e("../ops/transpose"),u=e("../ops/unsorted_segment_sum"),p=e("../util");let c={kernelName:n.GatherV2,inputsToSave:["x","indices"],gradFunc:(e,t,r)=>{let[s,n]=t,{axis:c,batchDims:f}=r,m=(0,p.parseAxisParam)(c,s.shape)[0],g=(e,t,r)=>()=>{let s=e.shape,n=t.size,i=s.slice(0,m),p=i.length,f=s.slice(c,s.length).slice(1),g=f.length,x=d(0,p),v=d(p+1,p+1+g),y=h([i,[n],f]),b=(0,o.reshape)(r,y),k=(0,o.reshape)(t,[n]),_=h([[p],x,v]),w=(0,l.transpose)(b,_),I=(0,u.unsortedSegmentSum)(w,k,e.shape[m]),j=(0,a.getUndoAxesPermutation)(_);return(0,l.transpose)(I,j)};if(1!==f)return{x:g(s,n,e),indices:()=>n};{let t=s.shape[0],r=s.split(t,0);return{x:()=>{let t=(0,i.stack)(r.map((t,r)=>g(t,n.slice(r,1),e.slice(r,1))()));return t.reshape(s.shape)},indices:()=>n}}}};function d(e,t){let r=[];for(let s=e;s<t;++s)r.push(s);return r}function h(e){let t=[];for(let r=0;r<e.length;++r)for(let s=0;s<e[r].length;++s)t.push(e[r][s]);return t}},{"../kernel_names":"70Ctj","../ops/axis_util":"h1XcK","../ops/reshape":"e4N8q","../ops/stack":"eYV5P","../ops/transpose":"jAlzO","../ops/unsorted_segment_sum":"cDnEM","../util":"eIDB0","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],eROuW:[function(e,t,r){/**
+ */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"gatherGradConfig",()=>p);var n=e("../kernel_names"),a=e("../ops/axis_util"),o=e("../ops/reshape"),i=e("../ops/transpose"),l=e("../ops/unsorted_segment_sum"),u=e("../util");let p={kernelName:n.GatherV2,inputsToSave:["x","indices"],gradFunc:(e,t,r)=>{let[s,n]=t,{axis:p}=r,h=(0,u.parseAxisParam)(p,s.shape)[0];return{x:()=>{let t=s.shape,r=n.size,u=t.slice(0,h),f=u.length,m=t.slice(p,t.length).slice(1),g=m.length,x=c(0,f),v=c(f+1,f+1+g),y=d([u,[r],m]),b=(0,o.reshape)(e,y),k=(0,o.reshape)(n,[r]),_=d([[f],x,v]),w=(0,i.transpose)(b,_),I=(0,l.unsortedSegmentSum)(w,k,s.shape[h]),j=(0,a.getUndoAxesPermutation)(_);return(0,i.transpose)(I,j)},indices:()=>n}}};function c(e,t){let r=[];for(let s=e;s<t;++s)r.push(s);return r}function d(e){let t=[];for(let r=0;r<e.length;++r)for(let s=0;s<e[r].length;++s)t.push(e[r][s]);return t}},{"../kernel_names":"70Ctj","../ops/axis_util":"h1XcK","../ops/reshape":"e4N8q","../ops/transpose":"jAlzO","../ops/unsorted_segment_sum":"cDnEM","../util":"eIDB0","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],eROuW:[function(e,t,r){/**
  * @license
  * Copyright 2020 Google LLC. All Rights Reserved.
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18625,11 +18702,11 @@ return this.losses.map(e=>e())}get updates(){return this._updates}get built(){re
      *
      * @exception ValueError in case of mismatch between
      *   the provided inputs and the expectations of the layer.
-     */assertInputCompatibility(e){let t=u.toList(e);if(null==this.inputSpec||0===this.inputSpec.length)return;let r=u.toList(this.inputSpec);if(t.length!==r.length)throw new i.ValueError(`Layer ${this.name} expects ${r.length} inputs, but it received ${t.length} input tensors. Input received: ${e}`);for(let e=0;e<t.length;e++){let s=t[e],n=r[e];if(null==n)continue;// Check ndim.
-let a=s.rank;if(null!=n.ndim&&a!==n.ndim)throw new i.ValueError(`Input ${e} is incompatible with layer ${this.name}: expected ndim=${n.ndim}, found ndim=${a}`);if(null!=n.maxNDim&&a>n.maxNDim)throw new i.ValueError(`Input ${e} is incompatible with layer ${this.name}: expected max_ndim=${n.maxNDim}, found ndim=${a}`);if(null!=n.minNDim&&a<n.minNDim)throw new i.ValueError(`Input ${e} is incompatible with layer ${this.name}: expected min_ndim=${n.minNDim}, found ndim=${a}.`);// Check dtype.
-if(null!=n.dtype&&s.dtype!==n.dtype)throw new i.ValueError(`Input ${e} is incompatible with layer ${this.name} : expected dtype=${n.dtype}, found dtype=${s.dtype}.`);// Check specific shape axes.
-if(n.axes){let t=s.shape;for(let r in n.axes){let s=Number(r),a=n.axes[r],o=s>=0?t[s]:t[t.length+s];if(null!=a&&-1===[a,null].indexOf(o))throw new i.ValueError(`Input ${e} is incompatible with layer ${this.name}: expected axis ${s} of input shape to have value ${a} but got shape ${t}.`)}}// Check shape.
-if(null!=n.shape)for(let t=0;t<n.shape.length;++t){let r=n.shape[t],a=s.shape[t];if(null!=r&&null!=a&&r!==a)throw new i.ValueError(`Input ${e} is incompatible with layer ${this.name}: expected shape=${n.shape}, found shape=${s.shape}.`)}}}/**
+     */assertInputCompatibility(e){if(e=u.toList(e),null==this.inputSpec||0===this.inputSpec.length)return;let t=u.toList(this.inputSpec);if(e.length!==t.length)throw new i.ValueError(`Layer ${this.name} expects ${t.length} inputs, but it received ${e.length} input tensors. Input received: ${e}`);for(let r=0;r<e.length;r++){let s=e[r],n=t[r];if(null==n)continue;// Check ndim.
+let a=s.rank;if(null!=n.ndim&&a!==n.ndim)throw new i.ValueError(`Input ${r} is incompatible with layer ${this.name}: expected ndim=${n.ndim}, found ndim=${a}`);if(null!=n.maxNDim&&a>n.maxNDim)throw new i.ValueError(`Input ${r} is incompatible with layer ${this.name}: expected max_ndim=${n.maxNDim}, found ndim=${a}`);if(null!=n.minNDim&&a<n.minNDim)throw new i.ValueError(`Input ${r} is incompatible with layer ${this.name}: expected min_ndim=${n.minNDim}, found ndim=${a}.`);// Check dtype.
+if(null!=n.dtype&&s.dtype!==n.dtype)throw new i.ValueError(`Input ${r} is incompatible with layer ${this.name} : expected dtype=${n.dtype}, found dtype=${s.dtype}.`);// Check specific shape axes.
+if(n.axes){let e=s.shape;for(let t in n.axes){let s=Number(t),a=n.axes[t],o=s>=0?e[s]:e[e.length+s];if(null!=a&&-1===[a,null].indexOf(o))throw new i.ValueError(`Input ${r} is incompatible with layer ${this.name}: expected axis ${s} of input shape to have value ${a} but got shape ${e}.`)}}// Check shape.
+if(null!=n.shape)for(let e=0;e<n.shape.length;++e){let t=n.shape[e],a=s.shape[e];if(null!=t&&null!=a&&t!==a)throw new i.ValueError(`Input ${r} is incompatible with layer ${this.name}: expected shape=${n.shape}, found shape=${s.shape}.`)}}}/**
      * This is where the layer's logic lives.
      *
      * @param inputs Input tensor, or list/tuple of input tensors.
@@ -18712,7 +18789,7 @@ if(null!=n.shape)for(let t=0;t<n.shape.length;++t){let r=n.shape[t],a=s.shape[t]
      * @doc {heading: 'Models', 'subheading': 'Classes'}
      */// Porting Note: This is a replacement for __call__() in Python.
 apply(e,t){t=t||{},this.assertNotDisposed();// Ensure inputs are all the same type.
-let r=u.toList(e),s=function(e){let t=!0;for(let r of u.toList(e))if(!(r instanceof f)){t=!1;break}return t}(e),n=function(e){let t=!0;for(let r of u.toList(e))if(r instanceof f){t=!1;break}return t}(e);if(s===n)throw new i.ValueError("Arguments to apply() must be all SymbolicTensors or all Tensors");// TODO(michaelterry): nameScope() may not be necessary.
+let r=u.toList(e),s=!0;for(let e of r)if(!(e instanceof f)){s=!1;break}let n=!0;for(let e of r)if(e instanceof f){n=!1;break}if(s===n)throw new i.ValueError("Arguments to apply() must be all SymbolicTensors or all Tensors");// TODO(michaelterry): nameScope() may not be necessary.
 return(0,o.nameScope)(this.name,()=>{// Handle laying building (weight creating, input spec locking).
 if(!this.built){/*
                   Throw exceptions in case the input is not compatible
@@ -18726,9 +18803,7 @@ let t=[];for(let r of u.toList(e))t.push(r.shape);this.build(u.singletonOrArray(
 if(/*
               Throw exceptions in case the input is not compatible
               with the inputSpec set at build time.
-            */this.assertInputCompatibility(e),n){let s=this.call(e,t);this.supportsMasking&&this.setMaskMetadata(e,s);// If the layer returns tensors from its inputs, unmodified,
-// we copy them to avoid loss of tensor metadata.
-let n=u.toList(s),a=[];// TODO(michaelterry): This copying may not be necessary given our eager
+            */this.assertInputCompatibility(e),n){let s=this.call(e,t),n=u.toList(s),a=[];// TODO(michaelterry): This copying may not be necessary given our eager
 // backend.
 for(let e of n)-1!==r.indexOf(e)&&(e=e.clone()),a.push(e);if(s=u.singletonOrArray(a),null!=this.activityRegularizer)throw new i.NotImplementedError("Layer invocation in the presence of activity regularizer(s) is not supported yet.");// TODO(michaelterry): Call addInboundNode()?
 return s}{let r;let s=/**
@@ -18856,7 +18931,7 @@ e=u.toList(e),void 0!==this._losses&&null!==this._losses&&this.losses.push(...e)
      */computeMask(e,t){if(!this.supportsMasking){if(null!=t){if(Array.isArray(t))t.forEach(e=>{if(null!=e)throw TypeError(`Layer ${this.name} does not support masking, but was passed an inputMask.`)});else throw TypeError(`Layer ${this.name} does not support masking, but was passed an inputMask.`)}// masking not explicitly supported: return null as mask
 return null}// if masking is explictly supported, by default
 // carry over the input mask
-return t}setMaskMetadata(e,t,r){if(!this.supportsMasking)return;let s=this.computeMask(e,r),n=u.toList(t),a=u.toList(s);if(n.length!==a.length)throw Error(`${this.name} outputs ${n.length} tensors but ${n.length} masks for those tensors`);for(let e=0;e<n.length;e++)n[e].kerasMask=a[e]}/**
+return t}/**
      * Internal method to create an inbound node for the layer.
      *
      * @param inputTensors List of input tensors.
@@ -22163,7 +22238,7 @@ let r=n.relu(t),s=n.neg(n.abs(t));return n.add(n.sub(r,n.mul(t,e)),n.log1p(n.exp
  * =============================================================================
  *//**
  * Built-in metrics.
- */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"binaryAccuracy",()=>u),s.export(r,"categoricalAccuracy",()=>p),s.export(r,"precision",()=>d),s.export(r,"recall",()=>h),s.export(r,"binaryCrossentropy",()=>f),s.export(r,"sparseCategoricalAccuracy",()=>m),s.export(r,"topKCategoricalAccuracy",()=>g),s.export(r,"sparseTopKCategoricalAccuracy",()=>x),s.export(r,"r2Score",()=>v),s.export(r,"mse",()=>y),s.export(r,"MSE",()=>b),s.export(r,"mae",()=>k),s.export(r,"MAE",()=>_),s.export(r,"mape",()=>w),s.export(r,"MAPE",()=>I),s.export(r,"categoricalCrossentropy",()=>j),s.export(r,"cosine",()=>S),s.export(r,"sparseCategoricalCrossentropy",()=>C),s.export(r,"metricsMap",()=>T),s.export(r,"get",()=>N),/**
+ */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"binaryAccuracy",()=>u),s.export(r,"categoricalAccuracy",()=>p),s.export(r,"precision",()=>d),s.export(r,"recall",()=>h),s.export(r,"binaryCrossentropy",()=>f),s.export(r,"sparseCategoricalAccuracy",()=>m),s.export(r,"topKCategoricalAccuracy",()=>g),s.export(r,"sparseTopKCategoricalAccuracy",()=>x),s.export(r,"mse",()=>v),s.export(r,"MSE",()=>y),s.export(r,"mae",()=>b),s.export(r,"MAE",()=>k),s.export(r,"mape",()=>_),s.export(r,"MAPE",()=>w),s.export(r,"categoricalCrossentropy",()=>I),s.export(r,"cosine",()=>j),s.export(r,"sparseCategoricalCrossentropy",()=>S),s.export(r,"metricsMap",()=>C),s.export(r,"get",()=>T),/**
  * Get the shortcut function name.
  *
  * If the fn name is a string,
@@ -22179,7 +22254,7 @@ let r=n.relu(t),s=n.neg(n.abs(t));return n.add(n.sub(r,n.mul(t,e)),n.log1p(n.exp
  *
  * @param fn loss function, metric function, or short cut name.
  * @returns Loss or Metric name in string.
- */s.export(r,"getLossOrMetricName",()=>E);var n=e("@tensorflow/tfjs-core"),a=e("./backend/tfjs_backend"),o=e("./errors"),i=e("./losses"),l=e("./utils/generic_utils");function u(e,t){return(0,n.tidy)(()=>{let r=n.mul(.5,n.onesLike(t)),s=a.cast(n.greater(t,r),e.dtype);return n.mean(n.equal(e,s),-1)})}function p(e,t){return(0,n.tidy)(()=>a.cast(n.equal(n.argMax(e,-1),n.argMax(t,-1)),"float32"))}function c(e,t){return(0,n.tidy)(()=>n.cast(n.sum(n.logicalAnd(n.equal(e,1),n.equal(t,1))),"float32"))}function d(e,t){return(0,n.tidy)(()=>{let r=c(e,t),s=(0,n.tidy)(()=>n.cast(n.sum(n.logicalAnd(n.equal(e,0),n.equal(t,1))),"float32")),a=n.add(r,s);return n.cast(n.where(n.greater(a,0),n.div(r,a),0),"float32")})}function h(e,t){return(0,n.tidy)(()=>{let r=c(e,t),s=(0,n.tidy)(()=>n.cast(n.sum(n.logicalAnd(n.equal(e,1),n.equal(t,0))),"float32")),a=n.add(r,s);return n.cast(n.where(n.greater(a,0),n.div(r,a),0),"float32")})}function f(e,t){return(0,i.binaryCrossentropy)(e,t)}function m(e,t){return e.rank===t.rank&&(e=n.squeeze(e,[e.rank-1])),(t=n.argMax(t,-1)).dtype!==e.dtype&&(t=n.cast(t,e.dtype)),n.cast(n.equal(e,t),"float32")}function g(e,t){throw new o.NotImplementedError}function x(e,t){throw new o.NotImplementedError}function v(e,t){return(0,n.tidy)(()=>{let r=e.sub(t).square().sum(),s=e.sub(e.mean()).square().sum();return n.scalar(1).sub(r.div(s))})}let y=i.meanSquaredError,b=i.meanSquaredError,k=i.meanAbsoluteError,_=i.meanAbsoluteError,w=i.meanAbsolutePercentageError,I=i.meanAbsolutePercentageError,j=i.categoricalCrossentropy,S=i.cosineProximity,C=i.sparseCategoricalCrossentropy,T={binaryAccuracy:u,categoricalAccuracy:p,precision:d,categoricalCrossentropy:j,sparseCategoricalCrossentropy:C,mse:y,MSE:b,mae:k,MAE:_,mape:w,MAPE:I,cosine:S};function N(e){if("string"==typeof e&&e in T)return T[e];if("string"!=typeof e&&null!=e)return e;throw new o.ValueError(`Unknown metric ${e}`)}function E(e){if(l.assert(null!==e,`Unknown LossOrMetricFn ${e}`),"string"==typeof e)return e;{let t;for(let r of Object.keys(i.lossesMap))if(i.lossesMap[r]===e){t=r;break}if(void 0!==t)return t;for(let r of Object.keys(T))if(T[r]===e){t=r;break}return void 0!==t?t:e.name}}},{"@tensorflow/tfjs-core":"bIDr2","./backend/tfjs_backend":"5OAgA","./errors":"aXD3K","./losses":"b6jAh","./utils/generic_utils":"eM3iY","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"1fLnm":[function(e,t,r){/**
+ */s.export(r,"getLossOrMetricName",()=>N);var n=e("@tensorflow/tfjs-core"),a=e("./backend/tfjs_backend"),o=e("./errors"),i=e("./losses"),l=e("./utils/generic_utils");function u(e,t){return(0,n.tidy)(()=>{let r=n.mul(.5,n.onesLike(t)),s=a.cast(n.greater(t,r),e.dtype);return n.mean(n.equal(e,s),-1)})}function p(e,t){return(0,n.tidy)(()=>a.cast(n.equal(n.argMax(e,-1),n.argMax(t,-1)),"float32"))}function c(e,t){return(0,n.tidy)(()=>n.cast(n.sum(n.logicalAnd(n.equal(e,1),n.equal(t,1))),"float32"))}function d(e,t){return(0,n.tidy)(()=>{let r=c(e,t),s=(0,n.tidy)(()=>n.cast(n.sum(n.logicalAnd(n.equal(e,0),n.equal(t,1))),"float32")),a=n.add(r,s);return n.cast(n.where(n.greater(a,0),n.div(r,a),0),"float32")})}function h(e,t){return(0,n.tidy)(()=>{let r=c(e,t),s=(0,n.tidy)(()=>n.cast(n.sum(n.logicalAnd(n.equal(e,1),n.equal(t,0))),"float32")),a=n.add(r,s);return n.cast(n.where(n.greater(a,0),n.div(r,a),0),"float32")})}function f(e,t){return(0,i.binaryCrossentropy)(e,t)}function m(e,t){return e.rank===t.rank&&(e=n.squeeze(e,[e.rank-1])),(t=n.argMax(t,-1)).dtype!==e.dtype&&(t=n.cast(t,e.dtype)),n.cast(n.equal(e,t),"float32")}function g(e,t){throw new o.NotImplementedError}function x(e,t){throw new o.NotImplementedError}let v=i.meanSquaredError,y=i.meanSquaredError,b=i.meanAbsoluteError,k=i.meanAbsoluteError,_=i.meanAbsolutePercentageError,w=i.meanAbsolutePercentageError,I=i.categoricalCrossentropy,j=i.cosineProximity,S=i.sparseCategoricalCrossentropy,C={binaryAccuracy:u,categoricalAccuracy:p,precision:d,categoricalCrossentropy:I,sparseCategoricalCrossentropy:S,mse:v,MSE:y,mae:b,MAE:k,mape:_,MAPE:w,cosine:j};function T(e){if("string"==typeof e&&e in C)return C[e];if("string"!=typeof e&&null!=e)return e;throw new o.ValueError(`Unknown metric ${e}`)}function N(e){if(l.assert(null!==e,`Unknown LossOrMetricFn ${e}`),"string"==typeof e)return e;{let t;for(let r of Object.keys(i.lossesMap))if(i.lossesMap[r]===e){t=r;break}if(void 0!==t)return t;for(let r of Object.keys(C))if(C[r]===e){t=r;break}return void 0!==t?t:e.name}}},{"@tensorflow/tfjs-core":"bIDr2","./backend/tfjs_backend":"5OAgA","./errors":"aXD3K","./losses":"b6jAh","./utils/generic_utils":"eM3iY","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"1fLnm":[function(e,t,r){/**
  * @license
  * Copyright 2018 Google LLC
  *
@@ -22291,7 +22366,7 @@ e.checkTrainableWeightsConsistency();let p=null!=e.collectedTrainableWeights?(0,
  * @param value The value object.
  * @returns A boolean indicating whether value is a name.
  */function a(e,t,r){return("inboundNodes"===e||"outputLayers"===e||"inputLayers"===e)&&0===t&&"string"==typeof r}},{"../utils/generic_utils":"eM3iY","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"7CFql":[function(e,t,r){/** @license See the LICENSE file. */// This code is auto-generated, do not modify this file!
-var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"version",()=>n);let n="4.22.0"},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"88IRq":[function(e,t,r){/**
+var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"version",()=>n);let n="4.10.0"},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"88IRq":[function(e,t,r){/**
  * @license
  * Copyright 2018 Google LLC
  *
@@ -22305,9 +22380,7 @@ var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r)
  * It is the topological form of a "model". A LayersModel
  * is simply a Container with added training routines.
  *
- */s.export(r,"Container",()=>x);var n=e("@tensorflow/tfjs-core"),a=e("../backend/state"),o=e("../errors"),i=e("../layers/serialization"),l=e("../utils/generic_utils"),u=e("../utils/serialization_utils"),p=e("../utils/types_utils"),c=e("../variables"),d=e("../version"),h=e("./executor"),f=e("./input_layer"),m=e("./topology");// get weights key from tensor map in order to check if it is from keras v3.
-// e.g. dense/0
-let g=e=>{let t=Object.keys(e);if(0===t.length)return!1;let r=t[0].split("/");return!isNaN(parseInt(r[r.length-1],10))};class x extends m.Layer{constructor(e){if(// No args passed to super's constructor.
+ */s.export(r,"Container",()=>g);var n=e("@tensorflow/tfjs-core"),a=e("../backend/state"),o=e("../errors"),i=e("../layers/serialization"),l=e("../utils/generic_utils"),u=e("../utils/serialization_utils"),p=e("../utils/types_utils"),c=e("../variables"),d=e("../version"),h=e("./executor"),f=e("./input_layer"),m=e("./topology");class g extends m.Layer{constructor(e){if(// No args passed to super's constructor.
 super({}),this.containerNodes=new Set,this.name=e.name,null==this.name){let e=this.getClassName().toLowerCase();this.name=(0,a.getUid)(e)}// Check for redundancy in inputs.
 if(this.supportsMasking=!1,this.trainable_=!0,Array.isArray(e.inputs)?this.inputs=e.inputs.slice():this.inputs=[e.inputs],Array.isArray(e.outputs)?this.outputs=e.outputs.slice():this.outputs=[e.outputs],l.unique(this.inputs).length!==this.inputs.length)throw new o.ValueError(`The list of inputs passed to the model is redundant. All inputs should only appear once. Found: ${this.inputs.map(e=>e.name)}`);// TODO(michaelterry): Determine if caching still needed with eager
 // backend.
@@ -22346,24 +22419,24 @@ if(!(r instanceof f.InputLayer))throw TypeError(`Input layers to a LayersModel m
 let t={},r={},s={},n={},i={},u=[],p=(e,t,r,s,n,a)=>{(null==s||null==n||null==a)&&(s=e.sourceLayer,n=e.nodeIndex,a=e.tensorIndex);let l=s.inboundNodes[n];// Prevent cycles.
 if(-1!==r.indexOf(l))throw new o.RuntimeError(`The tensor ${e.name} at layer "${s.name}" is part of a cycle.`);// Don't repeat work for shared subgraphs
 if(-1!==t.indexOf(l))return;// Update containerNodes.
-this.containerNodes.add(x.nodeKey(s,n)),s.id in i||(i[s.id]=Object.keys(i).length),-1===r.indexOf(l)&&r.push(l);// Propagate to all previous tensors connected to this node.
+this.containerNodes.add(g.nodeKey(s,n)),s.id in i||(i[s.id]=Object.keys(i).length),-1===r.indexOf(l)&&r.push(l);// Propagate to all previous tensors connected to this node.
 let c=l.inboundLayers.length;for(let e=0;e<c;e++){let s=l.inputTensors[e],n=l.inboundLayers[e],a=l.nodeIndices[e],o=l.tensorIndices[e];p(s,t,r,n,a,o)}for(t.push(l);r.indexOf(l)>=0;)r.splice(r.indexOf(l),1);u.push(l)},c=[],d=[];for(let e of this.outputs)p(e,c,d);let h=u.slice().reverse();for(let e of h){r[e.id]=e,e.id in t||(t[e.id]=0);let a=t[e.id],o=null==s[e.outboundLayer.id]?0:s[e.outboundLayer.id];/*
               If we've seen this layer before at a higher depth, we should use that
               depth instead of the node depth.  This is necessary for shared layers
               that have inputs at different depth levels in the graph.
             */a=Math.max(a,o),s[e.outboundLayer.id]=a,n[e.outboundLayer.id]=e.outboundLayer,t[e.id]=a;// Update the depth of inbound nodes.
 for(let s=0;s<e.inboundLayers.length;s++){let n=e.inboundLayers[s],o=e.nodeIndices[s],i=n.inboundNodes[o],l=null==t[i.id]?0:t[i.id];t[i.id]=Math.max(a+1,l),r[i.id]=i}}// Build a dict {depth: list of nodes with this depth}
-let g={};for(let e in t){let s=t[e];s in g||(g[s]=[]),g[s].push(r[e])}// Build a dict {depth: list of layers with this depth}
+let x={};for(let e in t){let s=t[e];s in x||(x[s]=[]),x[s].push(r[e])}// Build a dict {depth: list of layers with this depth}
 let v={};for(let e in s){let t=s[e];t in v||(v[t]=[]),v[t].push(n[e])}// Get sorted list of layer depths.
 let y=Object.keys(v).map(e=>parseInt(e,10)).sort(l.reverseNumberCompare);for(let e of(// Set this.layers and this.layersByDepth.
 this.layers=[],y)){let t=v[e];for(let e of(// Container.layers needs to have a deterministic order:
 // here we order them by traversal order.
-t.sort((e,t)=>{let r=i[e.id],s=i[t.id];return r<s?-1:r>s?1:0}),t))e instanceof x&&this.internalContainerRefs.push(e),this.layers.push(e)}this.layersByDepth=v,// Get sorted list of node depths;
-y=Object.keys(g).map(e=>parseInt(e,10)).sort(l.reverseNumberCompare);// Check that all tensors required are computable.
+t.sort((e,t)=>{let r=i[e.id],s=i[t.id];return r<s?-1:r>s?1:0}),t))e instanceof g&&this.internalContainerRefs.push(e),this.layers.push(e)}this.layersByDepth=v,// Get sorted list of node depths;
+y=Object.keys(x).map(e=>parseInt(e,10)).sort(l.reverseNumberCompare);// Check that all tensors required are computable.
 // computable_tensors: all tensors in the graph
 // that can be computed from the inputs provided.
-let b=this.inputs.slice(),k=[];for(let e of y)for(let t of g[e]){let e=t.outboundLayer;if(null!=e){for(let r of t.inputTensors)if(-1===b.indexOf(r))throw new o.RuntimeError(`Graph disconnected: cannot obtain value for tensor ${r} at layer "${e.name}". The following previous layers were accessed without issue: ${k}`);for(let e of t.outputTensors)b.push(e);k.push(e.name)}}// Set this.containerNodes and this.nodesByDepth.
-this.nodesByDepth=g;// Ensure name unicity, which will be crucial for serialization
+let b=this.inputs.slice(),k=[];for(let e of y)for(let t of x[e]){let e=t.outboundLayer;if(null!=e){for(let r of t.inputTensors)if(-1===b.indexOf(r))throw new o.RuntimeError(`Graph disconnected: cannot obtain value for tensor ${r} at layer "${e.name}". The following previous layers were accessed without issue: ${k}`);for(let e of t.outputTensors)b.push(e);k.push(e.name)}}// Set this.containerNodes and this.nodesByDepth.
+this.nodesByDepth=x;// Ensure name unicity, which will be crucial for serialization
 // (since serialized nodes refer to layers by their name).
 let _=this.layers.map(e=>e.name);for(let e of _){let t=_.filter(t=>t===e).length;if(1!==t)throw new o.RuntimeError(`The name "${e}" is used ${t} times in the model. All layer names should be unique. Layer names: `+JSON.stringify(_))}// Layer parameters.
 // The new container starts with a single inbound node
@@ -22418,14 +22491,14 @@ if(this._trainableWeights.length>0)throw new o.ValueError("Container instance un
      * @param strict Require that the provided weights exactly match those
      *   required by the container.  Default: `true`.  Passing `false` means that
      *   extra weights and missing weights will be silently ignored.
-     */loadWeights(e,t=!0){let r={},s=0,n=g(e);// Check if weights from keras v3.
-for(let t of(n&&this.parseWeights(e),this.layers))for(let[e,a]of t.weights.entries()){// Parse the name to layerName/index.
+     */loadWeights(e,t=!0){let r={},s=0,n=Object.keys(e)[0].split("/"),a=!isNaN(parseInt(n[n.length-1],10));// Check if weights from keras v3.
+for(let e of this.layers)for(let[t,n]of e.weights.entries()){// Parse the name to layerName/index.
 // e.g. dense/0, dense/1, dense_1/0, dense_1/1
-let t=n?`${a.name.split("/").slice(0,-1).join("/")+"/"}${e}`:a.originalName;if(null!=r[t])throw new o.ValueError(`Duplicate weight name: ${t}`);r[t]=a,s++}let a=[];for(let s in e){// TF 2.2.0 added cell name to the weight name in the format of
+let e=a?`${n.name.split("/").slice(0,-1).join("/")+"/"}${t}`:n.originalName;if(null!=r[e])throw new o.ValueError(`Duplicate weight name: ${e}`);r[e]=n,s++}let i=[];for(let s in e){// TF 2.2.0 added cell name to the weight name in the format of
 // layer_name/cell_name/weight_name, we need to remove
 // the inner cell name.
-let n=s;if(null==r[s]){let e=s.split("/"),t=e.slice(0,-2).concat([e[e.length-1]]);n=t.join("/")}if(null!=r[n])a.push([r[n],e[s]]);else if(t)throw new o.ValueError(`Provided weight data has no target variable: ${s}`);delete r[n]}if(t){// Check that all weights are set.
-let e=[];for(let t in r)e.push(t);if(e.length>0)throw new o.ValueError(`${e.length} of ${s} weights are not set: ${e}`)}(0,c.batchSetValue)(a)}parseWeights(e){for(let t in Object.keys(e)){let r=t.split("/"),s=["vars","layer_checkpoint_dependencies"],n=r.map(e=>e.startsWith("_")?e.slice(1):e).filter(e=>!s.includes(e)).join("/");n!==t&&(e[n]=e[t],delete e[t])}}/**
+let n=s;if(null==r[s]){let e=s.split("/"),t=e.slice(0,-2).concat([e[e.length-1]]);n=t.join("/")}if(null!=r[n])i.push([r[n],e[s]]);else if(t)throw new o.ValueError(`Provided weight data has no target variable: ${s}`);delete r[n]}if(t){// Check that all weights are set.
+let e=[];for(let t in r)e.push(t);if(e.length>0)throw new o.ValueError(`${e.length} of ${s} weights are not set: ${e}`)}(0,c.batchSetValue)(i)}/**
      * Util shared between different serialization methods.
      * @returns LayersModel config with Keras version information added.
      */updatedConfig(){let e=this.getConfig(),t={};return t.className=this.getClassName(),t.config=e,t.kerasVersion=`tfjs-layers ${d.version}`,// TODO(nielsene): Replace something like K.backend() once
@@ -22502,7 +22575,7 @@ return[n,a,i]}/**
      * improve readability.
      * @param layers An array of Layers in the model.
      * @returns Map of Node Keys to index order within the layer.
-     */buildNodeConversionMap(e){let t;let r={};for(let e of this.layers){t=e instanceof x?1:0;for(let s=0;s<e.inboundNodes.length;s++){let n=x.nodeKey(e,s);this.containerNodes.has(n)&&(// i.e. we mark it to be saved
+     */buildNodeConversionMap(e){let t;let r={};for(let e of this.layers){t=e instanceof g?1:0;for(let s=0;s<e.inboundNodes.length;s++){let n=g.nodeKey(e,s);this.containerNodes.has(n)&&(// i.e. we mark it to be saved
 r[n]=t,t+=1)}}return r}getLayer(e,t){if(null!=t)return this.findLayer(t);if(null==e)throw new o.ValueError("Provide either a layer name or layer index");if("number"==typeof e)return this.findLayer(e);for(let t of this.layers)if(t.name===e)return t;throw new o.ValueError(`No such layer: ${e}`)}findLayer(e){if(!(this.layers.length<=e))return this.layers[e];throw new o.ValueError(`Was asked to retrieve layer at index ${e}, but model only has ${this.layers.length} layer(s).`)}/**
      * Retrieves the Container's current loss values.
      *
@@ -22511,11 +22584,11 @@ r[n]=t,t+=1)}}return r}getLayer(e,t){if(null!=t)return this.findLayer(t);if(null
 //   In PyKeras, Container.loss returns symbolic tensors. Here a concrete
 //   Tensor (specifically Scalar) values are returned. This is due to the
 //   imperative backend.
-return(0,n.tidy)(()=>{let e=[];for(let t of this.layers)for(let r=0;r<t.inboundNodes.length;++r){let s=x.nodeKey(t,r);this.containerNodes.has(s)&&e.push(...t.calculateLosses())}// TODO(cais): Add any unconditional model-level losses?
-return e})}getConfig(){let e={name:this.name},t=this.buildNodeConversionMap(this.layers),r=[];for(let e of this.layers){let s=e.getClassName(),n=e.getConfig(),a=[];for(let r=0;r<e.inboundNodes.length;r++){let s=e.inboundNodes[r],n=x.nodeKey(e,r),o={};if(this.containerNodes.has(n)){// The node is relevant to the model:
+return(0,n.tidy)(()=>{let e=[];for(let t of this.layers)for(let r=0;r<t.inboundNodes.length;++r){let s=g.nodeKey(t,r);this.containerNodes.has(s)&&e.push(...t.calculateLosses())}// TODO(cais): Add any unconditional model-level losses?
+return e})}getConfig(){let e={name:this.name},t=this.buildNodeConversionMap(this.layers),r=[];for(let e of this.layers){let s=e.getClassName(),n=e.getConfig(),a=[];for(let r=0;r<e.inboundNodes.length;r++){let s=e.inboundNodes[r],n=g.nodeKey(e,r),o={};if(this.containerNodes.has(n)){// The node is relevant to the model:
 // add to filteredInboundNodes.
-if(s.callArgs)try{JSON.stringify(s.callArgs),o=s.callArgs}catch(t){console.warn(`Layer ${e.name} was passed non-serializable keyword arguments: ${s.callArgs}. They will not be included in the serialized model (and thus will be missing at deserialization time).`),o={}}if(s.inboundLayers.length>0){let e=[];for(let r=0;r<s.inboundLayers.length;r++){let n=s.inboundLayers[r],a=s.nodeIndices[r],i=s.tensorIndices[r],l=x.nodeKey(n,a),u=t[l];null==u&&(u=0),e.push([n.name,u,i,o])}a.push(e)}}}let o={};o.name=e.name,o.className=s,o.config=n,o.inboundNodes=a,r.push(o)}e.layers=r;// Gather info about inputs and outputs
-let s=[];for(let e=0;e<this.inputLayers.length;e++){let r=this.inputLayers[e],n=this.inputLayersNodeIndices[e],a=x.nodeKey(r,n);if(!this.containerNodes.has(a))continue;let o=t[a];null==o&&(o=0);let i=this.inputLayersTensorIndices[e];s.push([r.name,o,i])}e.inputLayers=s;let n=[];for(let e=0;e<this.outputLayers.length;e++){let r=this.outputLayers[e],s=this.outputLayersNodeIndices[e],a=x.nodeKey(r,s);if(!this.containerNodes.has(a))continue;let o=t[a];null==o&&(o=0);let i=this.outputLayersTensorIndices[e];n.push([r.name,o,i])}return e.outputLayers=n,e}/**
+if(s.callArgs)try{JSON.stringify(s.callArgs),o=s.callArgs}catch(t){console.warn(`Layer ${e.name} was passed non-serializable keyword arguments: ${s.callArgs}. They will not be included in the serialized model (and thus will be missing at deserialization time).`),o={}}if(s.inboundLayers.length>0){let e=[];for(let r=0;r<s.inboundLayers.length;r++){let n=s.inboundLayers[r],a=s.nodeIndices[r],i=s.tensorIndices[r],l=g.nodeKey(n,a),u=t[l];null==u&&(u=0),e.push([n.name,u,i,o])}a.push(e)}}}let o={};o.name=e.name,o.className=s,o.config=n,o.inboundNodes=a,r.push(o)}e.layers=r;// Gather info about inputs and outputs
+let s=[];for(let e=0;e<this.inputLayers.length;e++){let r=this.inputLayers[e],n=this.inputLayersNodeIndices[e],a=g.nodeKey(r,n);if(!this.containerNodes.has(a))continue;let o=t[a];null==o&&(o=0);let i=this.inputLayersTensorIndices[e];s.push([r.name,o,i])}e.inputLayers=s;let n=[];for(let e=0;e<this.outputLayers.length;e++){let r=this.outputLayers[e],s=this.outputLayersNodeIndices[e],a=g.nodeKey(r,s);if(!this.containerNodes.has(a))continue;let o=t[a];null==o&&(o=0);let i=this.outputLayersTensorIndices[e];n.push([r.name,o,i])}return e.outputLayers=n,e}/**
      * Instantiates a LayersModel from its config (output of `get_config()`).
      * @param cls the class to create
      * @param config LayersModel config dictionary.
@@ -23237,13 +23310,7 @@ let e=[];for(let t of this.layers){let r={};r.className=t.getClassName(),r.confi
  *//**
  *  Advanced activation layers.
  */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"ReLU",()=>d),s.export(r,"LeakyReLU",()=>h),s.export(r,"PReLU",()=>f),s.export(r,"ELU",()=>m),s.export(r,"ThresholdedReLU",()=>g),s.export(r,"Softmax",()=>x);var n=e("@tensorflow/tfjs-core"),a=e("../activations"),o=e("../constraints"),i=e("../engine/topology"),l=e("../errors"),u=e("../initializers"),p=e("../regularizers"),c=e("../utils/types_utils");class d extends i.Layer{constructor(e){super(null==e?{}:e),this.supportsMasking=!0,null!=e&&(this.maxValue=e.maxValue)}call(e,t){e=(0,c.getExactlyOneTensor)(e);let r=(0,n.relu)(e);return null!=this.maxValue&&(r=(0,n.clipByValue)(r,0,this.maxValue)),r}computeOutputShape(e){return e}getConfig(){let e={maxValue:this.maxValue},t=super.getConfig();return Object.assign(e,t),e}}/** @nocollapse */d.className="ReLU",(0,n.serialization).registerClass(d);class h extends i.Layer{constructor(e){super(null==e?{}:e),this.DEFAULT_ALPHA=.3,null==e&&(e={}),this.alpha=null==e.alpha?this.DEFAULT_ALPHA:e.alpha}call(e,t){let r=(0,c.getExactlyOneTensor)(e);return(0,n.leakyRelu)(r,this.alpha)}computeOutputShape(e){return e}getConfig(){let e={alpha:this.alpha},t=super.getConfig();return Object.assign(e,t),e}}/** @nocollapse */h.className="LeakyReLU",(0,n.serialization).registerClass(h);class f extends i.Layer{constructor(e){if(super(null==e?{}:e),this.DEFAULT_ALPHA_INITIALIZER="zeros",null==e&&(e={}),this.supportsMasking=!0,this.alphaInitializer=(0,u.getInitializer)(e.alphaInitializer||this.DEFAULT_ALPHA_INITIALIZER),this.alphaRegularizer=(0,p.getRegularizer)(e.alphaRegularizer),this.alphaConstraint=(0,o.getConstraint)(e.alphaConstraint),null==e.sharedAxes)this.sharedAxes=null;else if(Array.isArray(e.sharedAxes))this.sharedAxes=e.sharedAxes;else if("number"==typeof e.sharedAxes)this.sharedAxes=[e.sharedAxes];else throw new l.ValueError(`Expected sharedAxes to be a number or an array of numbers, but got ${e.sharedAxes}`)}build(e){e=(0,c.getExactlyOneShape)(e);let t=e.slice(1);if(null!=this.sharedAxes)for(let e of this.sharedAxes)t[e-1]=1;this.alpha=this.addWeight("alpha",t,"float32",this.alphaInitializer,this.alphaRegularizer,!0,this.alphaConstraint);// Set input spec.
-let r={};if(null!=this.sharedAxes)for(let t=1;t<e.length;++t)r[t]=e[t];this.inputSpec=[new i.InputSpec({ndim:e.length,axes:r})],this.built=!0}call(e,t){return e=(0,c.getExactlyOneTensor)(e),(0,n.prelu)(e,this.alpha.read())}getConfig(){let e={alphaInitializer:(0,u.serializeInitializer)(this.alphaInitializer),alphaRegularizer:(0,p.serializeRegularizer)(this.alphaRegularizer),alphaConstraint:(0,o.serializeConstraint)(this.alphaConstraint),sharedAxes:this.sharedAxes},t=super.getConfig();return Object.assign(e,t),e}}/** @nocollapse */f.className="PReLU",(0,n.serialization).registerClass(f);class m extends i.Layer{constructor(e){if(super(null==e?{}:e),this.DEFAULT_ALPHA=1,null==e&&(e={}),null!=e.alpha&&e.alpha!==this.DEFAULT_ALPHA)throw new l.NotImplementedError(`Non-default alpha value (${e.alpha}) is not supported by the ELU layer yet.`);this.alpha=null==e.alpha?this.DEFAULT_ALPHA:e.alpha}call(e,t){let r=(0,c.getExactlyOneTensor)(e);return(0,n.elu)(r)}computeOutputShape(e){return e}getConfig(){let e={alpha:this.alpha},t=super.getConfig();return Object.assign(e,t),e}}/** @nocollapse */m.className="ELU",(0,n.serialization).registerClass(m);class g extends i.Layer{constructor(e){super(null==e?{}:e),this.DEFAULT_THETA=1,null==e&&(e={}),this.theta=null==e.theta?this.DEFAULT_THETA:e.theta}call(e,t){let r=(0,c.getExactlyOneTensor)(e);return(0,n.mul)(r,(0,n.cast)((0,n.greater)(r,this.theta),"float32"))}computeOutputShape(e){return e}getConfig(){let e={theta:this.theta},t=super.getConfig();return Object.assign(e,t),e}}/** @nocollapse */g.className="ThresholdedReLU",(0,n.serialization).registerClass(g);class x extends i.Layer{constructor(e){super(null==e?{}:e),this.DEFAULT_AXIS=1,null==e&&(e={}),this.softmax=new a.Softmax().apply,this.axis=null==e.axis?this.DEFAULT_AXIS:e.axis}call(e,t){// TODO(pforderique): Add tests for when `this.axis` is a number[].
-return(0,n.tidy)(()=>{let r=(0,c.getExactlyOneTensor)(e),s=t.mask;if(null!=s){// Since mask is 1.0 for positions we want to keep and 0.0 for masked
-// positions, this operation will create a tensor which is 0.0 for
-// positions we want to attend and -1e.9 for masked positions.
-let e=(0,n.mul)((0,n.sub)((0,n.ones)(r.shape),(0,n.cast)(s,r.dtype)),(0,n.scalar)(-1e9));// Since we are adding it to the raw scores before the softmax, this
-// is effectively the same as removing these entirely.
-r=(0,n.add)(r,e)}return this.axis instanceof Array?this.axis.length>1?(0,n.exp)((0,n.sub)(r,(0,n.logSumExp)(r,this.axis,!0))):this.softmax(r,this.axis[0]):this.softmax(r,this.axis)})}computeOutputShape(e){return e}getConfig(){let e={axis:this.axis},t=super.getConfig();return Object.assign(e,t),e}}/** @nocollapse */x.className="Softmax",(0,n.serialization).registerClass(x)},{"@tensorflow/tfjs-core":"bIDr2","../activations":"kmDxS","../constraints":"li2CP","../engine/topology":"68kMV","../errors":"aXD3K","../initializers":"3n5oW","../regularizers":"gOABK","../utils/types_utils":"eu81I","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],kmDxS:[function(e,t,r){/**
+let r={};if(null!=this.sharedAxes)for(let t=1;t<e.length;++t)r[t]=e[t];this.inputSpec=[new i.InputSpec({ndim:e.length,axes:r})],this.built=!0}call(e,t){return e=(0,c.getExactlyOneTensor)(e),(0,n.prelu)(e,this.alpha.read())}getConfig(){let e={alphaInitializer:(0,u.serializeInitializer)(this.alphaInitializer),alphaRegularizer:(0,p.serializeRegularizer)(this.alphaRegularizer),alphaConstraint:(0,o.serializeConstraint)(this.alphaConstraint),sharedAxes:this.sharedAxes},t=super.getConfig();return Object.assign(e,t),e}}/** @nocollapse */f.className="PReLU",(0,n.serialization).registerClass(f);class m extends i.Layer{constructor(e){if(super(null==e?{}:e),this.DEFAULT_ALPHA=1,null==e&&(e={}),null!=e.alpha&&e.alpha!==this.DEFAULT_ALPHA)throw new l.NotImplementedError(`Non-default alpha value (${e.alpha}) is not supported by the ELU layer yet.`);this.alpha=null==e.alpha?this.DEFAULT_ALPHA:e.alpha}call(e,t){let r=(0,c.getExactlyOneTensor)(e);return(0,n.elu)(r)}computeOutputShape(e){return e}getConfig(){let e={alpha:this.alpha},t=super.getConfig();return Object.assign(e,t),e}}/** @nocollapse */m.className="ELU",(0,n.serialization).registerClass(m);class g extends i.Layer{constructor(e){super(null==e?{}:e),this.DEFAULT_THETA=1,null==e&&(e={}),this.theta=null==e.theta?this.DEFAULT_THETA:e.theta}call(e,t){let r=(0,c.getExactlyOneTensor)(e);return(0,n.mul)(r,(0,n.cast)((0,n.greater)(r,this.theta),"float32"))}computeOutputShape(e){return e}getConfig(){let e={theta:this.theta},t=super.getConfig();return Object.assign(e,t),e}}/** @nocollapse */g.className="ThresholdedReLU",(0,n.serialization).registerClass(g);class x extends i.Layer{constructor(e){super(null==e?{}:e),this.DEFAULT_AXIS=1,null==e&&(e={}),this.softmax=new a.Softmax().apply,this.axis=null==e.axis?this.DEFAULT_AXIS:e.axis}call(e,t){let r=(0,c.getExactlyOneTensor)(e);return this.softmax(r,this.axis)}computeOutputShape(e){return e}getConfig(){let e={axis:this.axis},t=super.getConfig();return Object.assign(e,t),e}}/** @nocollapse */x.className="Softmax",(0,n.serialization).registerClass(x)},{"@tensorflow/tfjs-core":"bIDr2","../activations":"kmDxS","../constraints":"li2CP","../engine/topology":"68kMV","../errors":"aXD3K","../initializers":"3n5oW","../regularizers":"gOABK","../utils/types_utils":"eu81I","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],kmDxS:[function(e,t,r){/**
  * @license
  * Copyright 2018 Google LLC
  *
@@ -23258,7 +23325,7 @@ var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r)
  * Special note: due to cross-language compatibility reasons, the
  * static readonly className field in this family of classes must be set to
  * the initialLowerCamelCase name of the activation.
- */s.export(r,"Activation",()=>i),s.export(r,"Elu",()=>l),s.export(r,"Selu",()=>u),s.export(r,"Relu",()=>p),s.export(r,"Relu6",()=>c),s.export(r,"Linear",()=>d),s.export(r,"Sigmoid",()=>h),s.export(r,"HardSigmoid",()=>f),s.export(r,"Softplus",()=>m),s.export(r,"Softsign",()=>g),s.export(r,"Tanh",()=>x),s.export(r,"Softmax",()=>v),s.export(r,"LogSoftmax",()=>y),s.export(r,"Gelu",()=>b),s.export(r,"GeluNew",()=>k),s.export(r,"Mish",()=>_),s.export(r,"Swish",()=>w),s.export(r,"serializeActivation",()=>I),s.export(r,"deserializeActivation",()=>j),s.export(r,"getActivation",()=>S);var n=e("@tensorflow/tfjs-core"),a=e("./backend/tfjs_backend"),o=e("./utils/generic_utils");class i extends n.serialization.Serializable{getConfig(){return{}}}/**
+ */s.export(r,"Activation",()=>i),s.export(r,"Elu",()=>l),s.export(r,"Selu",()=>u),s.export(r,"Relu",()=>p),s.export(r,"Relu6",()=>c),s.export(r,"Linear",()=>d),s.export(r,"Sigmoid",()=>h),s.export(r,"HardSigmoid",()=>f),s.export(r,"Softplus",()=>m),s.export(r,"Softsign",()=>g),s.export(r,"Tanh",()=>x),s.export(r,"Softmax",()=>v),s.export(r,"LogSoftmax",()=>y),s.export(r,"Swish",()=>b),s.export(r,"Mish",()=>k),s.export(r,"serializeActivation",()=>_),s.export(r,"deserializeActivation",()=>w),s.export(r,"getActivation",()=>I);var n=e("@tensorflow/tfjs-core"),a=e("./backend/tfjs_backend"),o=e("./utils/generic_utils");class i extends n.serialization.Serializable{getConfig(){return{}}}/**
  * Exponential linear unit (ELU).
  * Reference: https://arxiv.org/abs/1511.07289
  */class l extends i{/**
@@ -23316,36 +23383,21 @@ class d extends i{apply(e){return e}}/** @nocollapse */d.className="linear",(0,n
      *
      * @throws ValueError: In case `dim(x) < 2`.
      */apply(e,t=-1){return n.logSoftmax(e,t)}}/** @nocollapse */y.className="logSoftmax",(0,n.serialization).registerClass(y);/**
- * Gelu activation function
- */class b extends i{/**
-     * Calculate the activation function.
-     *
-     * @param x Tensor.
-     * @returns a Tensor of the same shape as x
-     */apply(e){return(0,n.tidy)(()=>n.tidy(()=>{let t=Math.sqrt(2),r=n.mul(.5,n.add(1,n.erf(n.div(e,t))));// Compute GELU(x) = x * Φ(x)
-    return n.mul(e,r)}))}}/** @nocollapse */b.className="gelu",(0,n.serialization).registerClass(b);/**
- * GeluNew activation function
- */class k extends i{/**
-     * Calculate the activation function.
-     *
-     * @param x Tensor.
-     * @returns a Tensor of the same shape as x
-     */apply(e){return(0,n.tidy)(()=>n.mul(.5,n.mul(e,n.add(1,n.tanh(n.mul(n.sqrt(n.div(2,Math.PI)),n.add(e,n.mul(.044715,n.pow(e,3)))))))))}}/** @nocollapse */k.className="gelu_new",(0,n.serialization).registerClass(k);/**
- * Mish activation function
- */class _ extends i{/**
-     * Calculate the activation function.
-     *
-     * @param x Tensor.
-     * @returns a Tensor of the same shape as x
-     */apply(e){return(0,n.tidy)(()=>n.mul(e,n.tanh(n.softplus(e))))}}/** @nocollapse */_.className="mish",(0,n.serialization).registerClass(_);/**
  * Swish activation function
- */class w extends i{/**
+ */class b extends i{/**
      * Calculate the activation function.
      *
      * @param x Tensor.
      * @param alpha Scaling factor for the sigmoid function.
      * @returns a Tensor of the same shape as x
-     */apply(e,t=1){return(0,n.tidy)(()=>n.mul(n.sigmoid(n.mul(e,t)),e))}}function I(e){return e.getClassName()}function j(e,t={}){return(0,o.deserializeKerasObject)(e,(0,n.serialization).SerializationMap.getMap().classNameMap,t,"activation")}function S(e){if(null==e){let e={};return e.className="linear",e.config={},j(e)}if("string"==typeof e){let t={};return t.className=e,t.config={},j(t)}return e instanceof i?e:j(e)}/** @nocollapse */w.className="swish",(0,n.serialization).registerClass(w)},{"@tensorflow/tfjs-core":"bIDr2","./backend/tfjs_backend":"5OAgA","./utils/generic_utils":"eM3iY","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],gOABK:[function(e,t,r){/**
+     */apply(e,t=1){return(0,n.tidy)(()=>n.mul(n.sigmoid(n.mul(e,t)),e))}}/** @nocollapse */b.className="swish",(0,n.serialization).registerClass(b);/**
+ * Mish activation function
+ */class k extends i{/**
+     * Calculate the activation function.
+     *
+     * @param x Tensor.
+     * @returns a Tensor of the same shape as x
+     */apply(e){return(0,n.tidy)(()=>n.mul(e,n.tanh(n.softplus(e))))}}function _(e){return e.getClassName()}function w(e,t={}){return(0,o.deserializeKerasObject)(e,(0,n.serialization).SerializationMap.getMap().classNameMap,t,"activation")}function I(e){if(null==e){let e={};return e.className="linear",e.config={},w(e)}if("string"==typeof e){let t={};return t.className=e,t.config={},w(t)}return e instanceof i?e:w(e)}/** @nocollapse */k.className="mish",(0,n.serialization).registerClass(k)},{"@tensorflow/tfjs-core":"bIDr2","./backend/tfjs_backend":"5OAgA","./utils/generic_utils":"eM3iY","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],gOABK:[function(e,t,r){/**
  * @license
  * Copyright 2018 Google LLC
  *
@@ -23435,7 +23487,7 @@ class d extends i{apply(e){return e}}/** @nocollapse */d.className="linear",(0,n
  * across channels, i.e., Conv1D and Conv2D, but not DepthwiseConv2D.
  */s.export(r,"Conv",()=>S),s.export(r,"Conv2D",()=>C),s.export(r,"Conv3D",()=>T),s.export(r,"Conv2DTranspose",()=>N),s.export(r,"Conv3DTranspose",()=>E),s.export(r,"SeparableConv",()=>F),s.export(r,"SeparableConv2D",()=>A),s.export(r,"Conv1D",()=>D),s.export(r,"Cropping2D",()=>$),s.export(r,"UpSampling2D",()=>R);var n=e("@tensorflow/tfjs-core"),a=e("../activations"),o=e("../backend/common"),i=e("../backend/tfjs_backend"),l=e("../common"),u=e("../constraints"),p=e("../engine/topology"),c=e("../errors"),d=e("../initializers"),h=e("../regularizers"),f=e("../utils/conv_utils"),m=e("../utils/generic_utils"),g=e("../utils/types_utils");function x(e,t){// TODO(cais): Cast type to float32 if not.
 return(0,n.tidy)(()=>((0,l.checkDataFormat)(t),"channelsFirst"===t)?n.transpose(e,[0,2,3,1]):e)}function v(e,t){return(0,n.tidy)(()=>((0,l.checkDataFormat)(t),"channelsFirst"===t)?n.transpose(e,[0,2,3,4,1]):e)}function y(e,t,r,s=1,a="valid",u,p=1){return(0,n.tidy)(()=>{// Check the ranks of x, kernel and bias.
-if(null==u&&(u=(0,o.imageDataFormat)()),(0,l.checkDataFormat)(u),3!==e.shape.length)throw new c.ValueError(`The input of a conv1dWithBias operation should be 3, but is ${e.shape.length} instead.`);if(3!==t.shape.length)throw new c.ValueError(`The kernel for a conv1dWithBias operation should be 3, but is ${t.shape.length} instead`);if(null!=r&&1!==r.shape.length)throw new c.ValueError(`The bias for a conv1dWithBias operation should be 1, but is ${r.shape.length} instead`);if("channelsFirst"===u&&(e=n.transpose(e,[0,2,1])),"causal"===a)throw new c.NotImplementedError("The support for CAUSAL padding mode in conv1dWithBias is not implemented yet.");let d=n.conv1d(e,t,s,"same"===a?"same":"valid","NWC",p);return null!=r&&(d=i.biasAdd(d,r)),d})}function b(e,t,r=1,s="valid",a,o=1){return(0,n.tidy)(()=>((0,l.checkDataFormat)(a),y(e,t,null,r,s,a,o)))}function k(e,t,r=[1,1],s="valid",a,o){return(0,n.tidy)(()=>((0,l.checkDataFormat)(a),_(e,t,null,r,s,a,o)))}function _(e,t,r,s=[1,1],a="valid",i,u,p=null){return(0,n.tidy)(()=>{if(null==i&&(i=(0,o.imageDataFormat)()),(0,l.checkDataFormat)(i),3!==e.rank&&4!==e.rank)throw new c.ValueError(`conv2dWithBiasActivation expects input to be of rank 3 or 4, but received ${e.rank}.`);if(3!==t.rank&&4!==t.rank)throw new c.ValueError(`conv2dWithBiasActivation expects kernel to be of rank 3 or 4, but received ${e.rank}.`);let d=x(e,i);if("causal"===a)throw new c.NotImplementedError("The support for CAUSAL padding mode in conv1dWithBias is not implemented yet.");return d=n.fused.conv2d({x:d,filter:t,strides:s,pad:"same"===a?"same":"valid",dilations:u,dataFormat:"NHWC",bias:r,activation:p}),"channelsFirst"===i&&(d=n.transpose(d,[0,3,1,2])),d})}function w(e,t,r=[1,1,1],s="valid",a,o){return(0,n.tidy)(()=>((0,l.checkDataFormat)(a),I(e,t,null,r,s,a,o)))}function I(e,t,r,s=[1,1,1],a="valid",u,p){return(0,n.tidy)(()=>{if(null==u&&(u=(0,o.imageDataFormat)()),(0,l.checkDataFormat)(u),4!==e.rank&&5!==e.rank)throw new c.ValueError(`conv3dWithBias expects input to be of rank 4 or 5, but received ${e.rank}.`);if(4!==t.rank&&5!==t.rank)throw new c.ValueError(`conv3dWithBias expects kernel to be of rank 4 or 5, but received ${e.rank}.`);let d=v(e,u);if("causal"===a)throw new c.NotImplementedError("The support for CAUSAL padding mode in conv3dWithBias is not implemented yet.");return d=n.conv3d(d,t,s,"same"===a?"same":"valid","NDHWC",p),null!=r&&(d=i.biasAdd(d,r)),"channelsFirst"===u&&(d=n.transpose(d,[0,4,1,2,3])),d})}class j extends p.Layer{constructor(e,t){if(super(t),this.bias=null,this.DEFAULT_KERNEL_INITIALIZER="glorotNormal",this.DEFAULT_BIAS_INITIALIZER="zeros",j.verifyArgs(t),this.rank=e,m.assertPositiveInteger(this.rank,"rank"),1!==this.rank&&2!==this.rank&&3!==this.rank)throw new c.NotImplementedError(`Convolution layer for rank other than 1, 2, or 3 (${this.rank}) is not implemented yet.`);if(this.kernelSize=(0,f.normalizeArray)(t.kernelSize,e,"kernelSize"),this.strides=(0,f.normalizeArray)(null==t.strides?1:t.strides,e,"strides"),this.padding=null==t.padding?"valid":t.padding,(0,l.checkPaddingMode)(this.padding),this.dataFormat=null==t.dataFormat?"channelsLast":t.dataFormat,(0,l.checkDataFormat)(this.dataFormat),this.activation=(0,a.getActivation)(t.activation),this.useBias=null==t.useBias||t.useBias,this.biasInitializer=(0,d.getInitializer)(t.biasInitializer||this.DEFAULT_BIAS_INITIALIZER),this.biasConstraint=(0,u.getConstraint)(t.biasConstraint),this.biasRegularizer=(0,h.getRegularizer)(t.biasRegularizer),this.activityRegularizer=(0,h.getRegularizer)(t.activityRegularizer),this.dilationRate=(0,f.normalizeArray)(null==t.dilationRate?1:t.dilationRate,e,"dilationRate"),1===this.rank&&Array.isArray(this.dilationRate)&&1!==this.dilationRate.length)throw new c.ValueError(`dilationRate must be a number or an array of a single number for 1D convolution, but received ${JSON.stringify(this.dilationRate)}`);if(2===this.rank){if("number"==typeof this.dilationRate)this.dilationRate=[this.dilationRate,this.dilationRate];else if(2!==this.dilationRate.length)throw new c.ValueError(`dilationRate must be a number or array of two numbers for 2D convolution, but received ${JSON.stringify(this.dilationRate)}`)}else if(3===this.rank){if("number"==typeof this.dilationRate)this.dilationRate=[this.dilationRate,this.dilationRate,this.dilationRate];else if(3!==this.dilationRate.length)throw new c.ValueError(`dilationRate must be a number or array of three numbers for 3D convolution, but received ${JSON.stringify(this.dilationRate)}`)}}static verifyArgs(e){if(// Check config.kernelSize type and shape.
+if(null==u&&(u=(0,o.imageDataFormat)()),(0,l.checkDataFormat)(u),3!==e.shape.length)throw new c.ValueError(`The input of a conv1dWithBias operation should be 3, but is ${e.shape.length} instead.`);if(3!==t.shape.length)throw new c.ValueError(`The kernel for a conv1dWithBias operation should be 3, but is ${t.shape.length} instead`);if(null!=r&&1!==r.shape.length)throw new c.ValueError(`The bias for a conv1dWithBias operation should be 1, but is ${t.shape.length} instead`);if("channelsFirst"===u&&(e=n.transpose(e,[0,2,1])),"causal"===a)throw new c.NotImplementedError("The support for CAUSAL padding mode in conv1dWithBias is not implemented yet.");let d=n.conv1d(e,t,s,"same"===a?"same":"valid","NWC",p);return null!=r&&(d=i.biasAdd(d,r)),d})}function b(e,t,r=1,s="valid",a,o=1){return(0,n.tidy)(()=>((0,l.checkDataFormat)(a),y(e,t,null,r,s,a,o)))}function k(e,t,r=[1,1],s="valid",a,o){return(0,n.tidy)(()=>((0,l.checkDataFormat)(a),_(e,t,null,r,s,a,o)))}function _(e,t,r,s=[1,1],a="valid",i,u,p=null){return(0,n.tidy)(()=>{if(null==i&&(i=(0,o.imageDataFormat)()),(0,l.checkDataFormat)(i),3!==e.rank&&4!==e.rank)throw new c.ValueError(`conv2dWithBiasActivation expects input to be of rank 3 or 4, but received ${e.rank}.`);if(3!==t.rank&&4!==t.rank)throw new c.ValueError(`conv2dWithBiasActivation expects kernel to be of rank 3 or 4, but received ${e.rank}.`);let d=x(e,i);if("causal"===a)throw new c.NotImplementedError("The support for CAUSAL padding mode in conv1dWithBias is not implemented yet.");return d=n.fused.conv2d({x:d,filter:t,strides:s,pad:"same"===a?"same":"valid",dilations:u,dataFormat:"NHWC",bias:r,activation:p}),"channelsFirst"===i&&(d=n.transpose(d,[0,3,1,2])),d})}function w(e,t,r=[1,1,1],s="valid",a,o){return(0,n.tidy)(()=>((0,l.checkDataFormat)(a),I(e,t,null,r,s,a,o)))}function I(e,t,r,s=[1,1,1],a="valid",u,p){return(0,n.tidy)(()=>{if(null==u&&(u=(0,o.imageDataFormat)()),(0,l.checkDataFormat)(u),4!==e.rank&&5!==e.rank)throw new c.ValueError(`conv3dWithBias expects input to be of rank 4 or 5, but received ${e.rank}.`);if(4!==t.rank&&5!==t.rank)throw new c.ValueError(`conv3dWithBias expects kernel to be of rank 4 or 5, but received ${e.rank}.`);let d=v(e,u);if("causal"===a)throw new c.NotImplementedError("The support for CAUSAL padding mode in conv3dWithBias is not implemented yet.");return d=n.conv3d(d,t,s,"same"===a?"same":"valid","NDHWC",p),null!=r&&(d=i.biasAdd(d,r)),"channelsFirst"===u&&(d=n.transpose(d,[0,4,1,2,3])),d})}class j extends p.Layer{constructor(e,t){if(super(t),this.bias=null,this.DEFAULT_KERNEL_INITIALIZER="glorotNormal",this.DEFAULT_BIAS_INITIALIZER="zeros",j.verifyArgs(t),this.rank=e,m.assertPositiveInteger(this.rank,"rank"),1!==this.rank&&2!==this.rank&&3!==this.rank)throw new c.NotImplementedError(`Convolution layer for rank other than 1, 2, or 3 (${this.rank}) is not implemented yet.`);if(this.kernelSize=(0,f.normalizeArray)(t.kernelSize,e,"kernelSize"),this.strides=(0,f.normalizeArray)(null==t.strides?1:t.strides,e,"strides"),this.padding=null==t.padding?"valid":t.padding,(0,l.checkPaddingMode)(this.padding),this.dataFormat=null==t.dataFormat?"channelsLast":t.dataFormat,(0,l.checkDataFormat)(this.dataFormat),this.activation=(0,a.getActivation)(t.activation),this.useBias=null==t.useBias||t.useBias,this.biasInitializer=(0,d.getInitializer)(t.biasInitializer||this.DEFAULT_BIAS_INITIALIZER),this.biasConstraint=(0,u.getConstraint)(t.biasConstraint),this.biasRegularizer=(0,h.getRegularizer)(t.biasRegularizer),this.activityRegularizer=(0,h.getRegularizer)(t.activityRegularizer),this.dilationRate=(0,f.normalizeArray)(null==t.dilationRate?1:t.dilationRate,e,"dilationRate"),1===this.rank&&Array.isArray(this.dilationRate)&&1!==this.dilationRate.length)throw new c.ValueError(`dilationRate must be a number or an array of a single number for 1D convolution, but received ${JSON.stringify(this.dilationRate)}`);if(2===this.rank){if("number"==typeof this.dilationRate)this.dilationRate=[this.dilationRate,this.dilationRate];else if(2!==this.dilationRate.length)throw new c.ValueError(`dilationRate must be a number or array of two numbers for 2D convolution, but received ${JSON.stringify(this.dilationRate)}`)}else if(3===this.rank){if("number"==typeof this.dilationRate)this.dilationRate=[this.dilationRate,this.dilationRate,this.dilationRate];else if(3!==this.dilationRate.length)throw new c.ValueError(`dilationRate must be a number or array of three numbers for 3D convolution, but received ${JSON.stringify(this.dilationRate)}`)}}static verifyArgs(e){if(// Check config.kernelSize type and shape.
 m.assert("kernelSize"in e,"required key 'kernelSize' not in config"),"number"!=typeof e.kernelSize&&!m.checkArrayTypeAndLength(e.kernelSize,"number",1,3))throw new c.ValueError(`BaseConv expects config.kernelSize to be number or number[] with length 1, 2, or 3, but received ${JSON.stringify(e.kernelSize)}.`)}getConfig(){let e={kernelSize:this.kernelSize,strides:this.strides,padding:this.padding,dataFormat:this.dataFormat,dilationRate:this.dilationRate,activation:(0,a.serializeActivation)(this.activation),useBias:this.useBias,biasInitializer:(0,d.serializeInitializer)(this.biasInitializer),biasRegularizer:(0,h.serializeRegularizer)(this.biasRegularizer),activityRegularizer:(0,h.serializeRegularizer)(this.activityRegularizer),biasConstraint:(0,u.serializeConstraint)(this.biasConstraint)},t=super.getConfig();return Object.assign(e,t),e}}class S extends j{constructor(e,t){super(e,t),this.kernel=null,S.verifyArgs(t),this.filters=t.filters,m.assertPositiveInteger(this.filters,"filters"),this.kernelInitializer=(0,d.getInitializer)(t.kernelInitializer||this.DEFAULT_KERNEL_INITIALIZER),this.kernelConstraint=(0,u.getConstraint)(t.kernelConstraint),this.kernelRegularizer=(0,h.getRegularizer)(t.kernelRegularizer)}build(e){e=(0,g.getExactlyOneShape)(e);let t="channelsFirst"===this.dataFormat?1:e.length-1;if(null==e[t])throw new c.ValueError(`The channel dimension of the input should be defined. Found ${e[t]}`);let r=e[t],s=this.kernelSize.concat([r,this.filters]);this.kernel=this.addWeight("kernel",s,null,this.kernelInitializer,this.kernelRegularizer,!0,this.kernelConstraint),this.useBias&&(this.bias=this.addWeight("bias",[this.filters],null,this.biasInitializer,this.biasRegularizer,!0,this.biasConstraint)),this.inputSpec=[{ndim:this.rank+2,axes:{[t]:r}}],this.built=!0}call(e,t){return(0,n.tidy)(()=>{let t;e=(0,g.getExactlyOneTensor)(e);let r=null==this.bias?null:this.bias.read(),s=m.mapActivationToFusedKernel(this.activation.getClassName());if(null!=s&&2===this.rank)t=_(e,this.kernel.read(),r,this.strides,this.padding,this.dataFormat,this.dilationRate,s);else{if(1===this.rank)t=y(e,this.kernel.read(),r,this.strides[0],this.padding,this.dataFormat,this.dilationRate[0]);else if(2===this.rank)t=_(e,this.kernel.read(),r,this.strides,this.padding,this.dataFormat,this.dilationRate);else if(3===this.rank)t=I(e,this.kernel.read(),r,this.strides,this.padding,this.dataFormat,this.dilationRate);else throw new c.NotImplementedError("convolutions greater than 3D are not implemented yet.");null!=this.activation&&(t=this.activation.apply(t))}return t})}computeOutputShape(e){e=(0,g.getExactlyOneShape)(e);let t=[],r="channelsLast"===this.dataFormat?e.slice(1,e.length-1):e.slice(2);for(let e=0;e<r.length;++e){let s=(0,f.convOutputLength)(r[e],this.kernelSize[e],this.padding,this.strides[e],"number"==typeof this.dilationRate?this.dilationRate:this.dilationRate[e]);t.push(s)}let s=[e[0]];return"channelsLast"===this.dataFormat?(s=s.concat(t)).push(this.filters):(s.push(this.filters),s=s.concat(t)),s}getConfig(){let e={filters:this.filters,kernelInitializer:(0,d.serializeInitializer)(this.kernelInitializer),kernelRegularizer:(0,h.serializeRegularizer)(this.kernelRegularizer),kernelConstraint:(0,u.serializeConstraint)(this.kernelConstraint)},t=super.getConfig();return Object.assign(e,t),e}static verifyArgs(e){// Check config.filters type, shape, and value.
 if(!("filters"in e)||"number"!=typeof e.filters||e.filters<1)throw new c.ValueError(`Convolution layer expected config.filters to be a 'number' > 0 but got ${JSON.stringify(e.filters)}`)}}class C extends S{constructor(e){super(2,e),C.verifyArgs(e)}getConfig(){let e=super.getConfig();return delete e.rank,e}static verifyArgs(e){// config.kernelSize must be a number or array of numbers.
 if("number"!=typeof e.kernelSize&&!m.checkArrayTypeAndLength(e.kernelSize,"number",1,2))throw new c.ValueError(`Conv2D expects config.kernelSize to be number or number[] with length 1 or 2, but received ${JSON.stringify(e.kernelSize)}.`)}}/** @nocollapse */C.className="Conv2D",(0,n.serialization).registerClass(C);class T extends S{constructor(e){super(3,e),T.verifyArgs(e)}getConfig(){let e=super.getConfig();return delete e.rank,e}static verifyArgs(e){// config.kernelSize must be a number or array of numbers.
@@ -23642,7 +23694,7 @@ call(e,t){// Input shape: `[samples, time (padded with zeros), input_dim]`.
 return(0,n.tidy)(()=>{let r=null==t?null:t.mask,s=null==t?null:t.training,n=null==t?null:t.initialState;e=(0,m.getExactlyOneTensor)(e),null==n&&(n=this.stateful?this.states_:this.getInitialState(e));let a=Array.isArray(this.cell.stateSize)?this.cell.stateSize.length:1;if(n.length!==a)throw new p.ValueError(`RNN Layer has ${a} state(s) but was passed ${n.length} initial state(s).`);this.unroll&&console.warn("Ignoring unroll = true for RNN layer, due to imperative backend.");let o={training:s},i=y((e,t)=>{// `inputs` and `states` are concatenated to form a single `Array` of
 // `tf.Tensor`s as the input to `cell.call()`.
 let r=this.cell.call([e].concat(t),o);// Marshall the return value into output and new states.
-return[r[0],r.slice(1)]},e,n,this.goBackwards,r,null,this.unroll,this.returnSequences),l=i[0],u=i[1],c=i[2];this.stateful&&this.resetStates(c,s);let d=this.returnSequences?u:l;return(// TODO(cais): Property set learning phase flag.
+return[r[0],r.slice(1)]},e,n,this.goBackwards,r,null,this.unroll,this.returnSequences),l=i[0],u=i[1],c=i[2];this.stateful&&this.resetStates(c,s);let d=this.returnSequences?u:l;return(// TODO(cais): Porperty set learning phase flag.
 this.returnState?[d].concat(c):d)})}getInitialState(e){return(0,n.tidy)(()=>{// Build an all-zero tensor of shape [samples, outputDim].
 // [Samples, timeSteps, inputDim].
 let t=n.zeros(e.shape);return(// [Samples].
@@ -23668,7 +23720,7 @@ this.built=!0}call(e,t){return(0,n.tidy)(()=>{let r,s,a,i;let l=null!=t.training
 e=e[0],0<this.dropout&&this.dropout<1&&null==this.dropoutMask&&(this.dropoutMask=N({ones:()=>n.onesLike(e),rate:this.dropout,training:l,count:4,dropoutFunc:this.dropoutFunc})),0<this.recurrentDropout&&this.recurrentDropout<1&&null==this.recurrentDropoutMask&&(this.recurrentDropoutMask=N({ones:()=>n.onesLike(u),rate:this.recurrentDropout,training:l,count:4,dropoutFunc:this.dropoutFunc}));let d=this.dropoutMask,h=this.recurrentDropoutMask;0<this.dropout&&this.dropout<1&&(e=n.mul(e,d[0]));let f=o.dot(e,this.kernel.read());0<this.recurrentDropout&&this.recurrentDropout<1&&(u=n.mul(u,h[0])),f=n.add(f,o.dot(u,this.recurrentKernel.read())),this.useBias&&(f=o.biasAdd(f,this.bias.read()));let[m,g,x,v]=n.split(f,4,f.rank-1);r=this.recurrentActivation.apply(m),s=this.recurrentActivation.apply(g),a=n.add(n.mul(s,c),n.mul(r,this.activation.apply(x))),i=this.recurrentActivation.apply(v);let y=n.mul(i,this.activation.apply(a));// TODO(cais): Add use_learning_phase flag properly.
 return[y,y,a]})}getConfig(){let e=super.getConfig(),t={units:this.units,activation:(0,a.serializeActivation)(this.activation),recurrentActivation:(0,a.serializeActivation)(this.recurrentActivation),useBias:this.useBias,kernelInitializer:(0,c.serializeInitializer)(this.kernelInitializer),recurrentInitializer:(0,c.serializeInitializer)(this.recurrentInitializer),biasInitializer:(0,c.serializeInitializer)(this.biasInitializer),unitForgetBias:this.unitForgetBias,kernelRegularizer:(0,d.serializeRegularizer)(this.kernelRegularizer),recurrentRegularizer:(0,d.serializeRegularizer)(this.recurrentRegularizer),biasRegularizer:(0,d.serializeRegularizer)(this.biasRegularizer),activityRegularizer:(0,d.serializeRegularizer)(this.activityRegularizer),kernelConstraint:(0,l.serializeConstraint)(this.kernelConstraint),recurrentConstraint:(0,l.serializeConstraint)(this.recurrentConstraint),biasConstraint:(0,l.serializeConstraint)(this.biasConstraint),dropout:this.dropout,recurrentDropout:this.recurrentDropout,implementation:this.implementation};return Object.assign(Object.assign({},e),t)}}/** @nocollapse */S.className="LSTMCell",(0,n.serialization).registerClass(S);class C extends b{constructor(e){0===e.implementation&&console.warn("`implementation=0` has been deprecated, and now defaults to `implementation=1`. Please update your layer call."),e.cell=new S(e),super(e);// TODO(cais): Add activityRegularizer.
 }call(e,t){return(0,n.tidy)(()=>{null!=this.cell.dropoutMask&&(n.dispose(this.cell.dropoutMask),this.cell.dropoutMask=null),null!=this.cell.recurrentDropoutMask&&(n.dispose(this.cell.recurrentDropoutMask),this.cell.recurrentDropoutMask=null);let r=null==t?null:t.mask,s=null==t?null:t.training,a=null==t?null:t.initialState;return super.call(e,{mask:r,training:s,initialState:a})})}/** @nocollapse */static fromConfig(e,t){return 0===t.implmentation&&(t.implementation=1),new e(t)}}/** @nocollapse */C.className="LSTM",(0,n.serialization).registerClass(C);class T extends k{constructor(e){super(e),this.cells=e.cells}get stateSize(){// States are a flat list in reverse order of the cell stack.
-// This allows preserving the requirement `stack.statesize[0] ===
+// This allows perserving the requirement `stack.statesize[0] ===
 // outputDim`. E.g., states of a 2-layer LSTM would be `[h2, c2, h1, c1]`,
 // assuming one LSTM has states `[h, c]`.
 let e=[];for(let t of this.cells.slice().reverse())Array.isArray(t.stateSize)?e.push(...t.stateSize):e.push(t.stateSize);return e}call(e,t){return(0,n.tidy)(()=>{let r;let s=e.slice(1),n=[];for(let e of this.cells.slice().reverse())Array.isArray(e.stateSize)?n.push(s.splice(0,e.stateSize.length)):n.push(s.splice(0,1));n.reverse();// Call the cells in order and store the returned states.
@@ -24361,7 +24413,7 @@ let l=new Set(["bilinear","nearest"]);/**
  *
  * The input should be a 3D (unbatched) or
  * 4D (batched) tensor in the `"channels_last"` image data format. Input pixel
- * values can be of any range (e.g. `[0., 1.)` or `[0, 255]`) and of integer
+ * values can be of any range (e.g. `[0., 1.)` or `[0, 255]`) and of interger
  * or floating point dtype. By default, the layer will output floats.
  *
  * tf methods implemented in tfjs: 'bilinear', 'nearest',
@@ -24623,21 +24675,7 @@ let l=new Set(["bilinear","nearest"]);/**
  * @return Mean squared error Tensor.
  *
  * @doc {heading: 'Metrics', namespace: 'metrics'}
- */s.export(r,"meanSquaredError",()=>v),s.export(r,"MSE",()=>y),s.export(r,"mse",()=>b),/**
- * Computes R2 score.
- *
- * ```js
- * const yTrue = tf.tensor2d([[0, 1], [3, 4]]);
- * const yPred = tf.tensor2d([[0, 1], [-3, -4]]);
- * const r2Score = tf.metrics.r2Score(yTrue, yPred);
- * r2Score.print();
- * ```
- * @param yTrue Truth Tensor.
- * @param yPred Prediction Tensor.
- * @return R2 score Tensor.
- *
- * @doc {heading: 'Metrics', namespace: 'metrics'}
- */s.export(r,"r2Score",()=>k);var n=e("./losses"),a=e("./metrics");function o(e,t){return a.binaryAccuracy(e,t)}function i(e,t){return a.binaryCrossentropy(e,t)}function l(e,t){return a.sparseCategoricalAccuracy(e,t)}function u(e,t){return a.categoricalAccuracy(e,t)}function p(e,t){return a.categoricalCrossentropy(e,t)}function c(e,t){return a.precision(e,t)}function d(e,t){return a.recall(e,t)}function h(e,t){return n.cosineProximity(e,t)}function f(e,t){return n.meanAbsoluteError(e,t)}function m(e,t){return n.meanAbsolutePercentageError(e,t)}function g(e,t){return n.meanAbsolutePercentageError(e,t)}function x(e,t){return n.meanAbsolutePercentageError(e,t)}function v(e,t){return n.meanSquaredError(e,t)}function y(e,t){return n.meanSquaredError(e,t)}function b(e,t){return n.meanSquaredError(e,t)}function k(e,t){return a.r2Score(e,t)}},{"./losses":"b6jAh","./metrics":"1NxBj","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"2C9cl":[function(e,t,r){/**
+ */s.export(r,"meanSquaredError",()=>v),s.export(r,"MSE",()=>y),s.export(r,"mse",()=>b);var n=e("./losses"),a=e("./metrics");function o(e,t){return a.binaryAccuracy(e,t)}function i(e,t){return a.binaryCrossentropy(e,t)}function l(e,t){return a.sparseCategoricalAccuracy(e,t)}function u(e,t){return a.categoricalAccuracy(e,t)}function p(e,t){return a.categoricalCrossentropy(e,t)}function c(e,t){return a.precision(e,t)}function d(e,t){return a.recall(e,t)}function h(e,t){return n.cosineProximity(e,t)}function f(e,t){return n.meanAbsoluteError(e,t)}function m(e,t){return n.meanAbsolutePercentageError(e,t)}function g(e,t){return n.meanAbsolutePercentageError(e,t)}function x(e,t){return n.meanAbsolutePercentageError(e,t)}function v(e,t){return n.meanSquaredError(e,t)}function y(e,t){return n.meanSquaredError(e,t)}function b(e,t){return n.meanSquaredError(e,t)}},{"./losses":"b6jAh","./metrics":"1NxBj","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"2C9cl":[function(e,t,r){/**
  * @license
  * Copyright 2018 Google LLC
  *
@@ -24774,7 +24812,7 @@ let l=new Set(["bilinear","nearest"]);/**
  * See the License for the specific language governing permissions and
  * limitations under the License.
  * =============================================================================
- */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"TFHUB_SEARCH_PARAM",()=>u),s.export(r,"DEFAULT_MODEL_NAME",()=>p),/**
+ */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"TFHUB_SEARCH_PARAM",()=>l),s.export(r,"DEFAULT_MODEL_NAME",()=>u),/**
  * A `tf.GraphModel` is a directed, acyclic graph built from a
  * SavedModel GraphDef and allows inference execution.
  *
@@ -24783,7 +24821,7 @@ let l=new Set(["bilinear","nearest"]);/**
  * the command line converter tool and loaded via `tf.loadGraphModel`.
  *
  * @doc {heading: 'Models', subheading: 'Classes'}
- */s.export(r,"GraphModel",()=>c),/**
+ */s.export(r,"GraphModel",()=>p),/**
  * Load a graph model given a URL to the model definition.
  *
  * Example of loading MobileNetV2 from a URL and making a prediction with a
@@ -24813,7 +24851,7 @@ let l=new Set(["bilinear","nearest"]);/**
  *    and custom headers.
  *
  * @doc {heading: 'Models', subheading: 'Loading'}
- */s.export(r,"loadGraphModel",()=>d),/**
+ */s.export(r,"loadGraphModel",()=>c),/**
  * Load a graph model given a synchronous IO handler with a 'load' method.
  *
  * @param modelSource The `io.IOHandlerSync` that loads the model, or the
@@ -24822,7 +24860,7 @@ let l=new Set(["bilinear","nearest"]);/**
  *      model and the second contains the weights.
  *
  * @doc {heading: 'Models', subheading: 'Loading'}
- */s.export(r,"loadGraphModelSync",()=>h);var n=e("@tensorflow/tfjs-core"),a=e("../operations/operation_mapper"),o=e("./graph_executor"),i=e("./resource_manager"),l=e("@tensorflow/tfjs-core/dist/io/io_utils");let u="?tfjs-format=file",p="model.json";class c{// Returns the version information for the tensorflow model GraphDef.
+ */s.export(r,"loadGraphModelSync",()=>d);var n=e("@tensorflow/tfjs-core"),a=e("../operations/operation_mapper"),o=e("./graph_executor"),i=e("./resource_manager");let l="?tfjs-format=file",u="model.json";class p{// Returns the version information for the tensorflow model GraphDef.
 get modelVersion(){return this.version}get inputNodes(){return this.executor.inputNodes}get outputNodes(){return this.executor.outputNodes}get inputs(){return this.executor.inputs}get outputs(){return this.executor.outputs}get weights(){return this.executor.weightMap}get metadata(){return this.artifacts.userDefinedMetadata}get modelSignature(){return this.signature}get modelStructuredOutputKeys(){return this.structuredOutputKeys}/**
      * @param modelUrl url for the model, or an `io.IOHandler`.
      * @param weightManifestUrl url for the weight file generated by
@@ -24835,12 +24873,12 @@ get modelVersion(){return this.version}get inputNodes(){return this.executor.inp
 t.push(this.io.browserHTTPRequest(e,this.loadOptions));else if(t.length>1)throw Error(`Found more than one (${t.length}) load handlers for URL '${[e]}'`);this.handler=t[0]}}/**
      * Loads the model and weight files, construct the in memory weight map and
      * compile the inference graph.
-     */load(){if(this.findIOHandler(),null==this.handler.load)throw Error("Cannot proceed with model loading because the IOHandler provided does not have the `load` method implemented.");let e=this.handler.load();return(0,n.util).isPromise(e)?e.then(e=>null==e.getWeightStream?this.loadSync(e):this.loadStreaming(e)):this.loadSync(e)}/**
+     */load(){if(this.findIOHandler(),null==this.handler.load)throw Error("Cannot proceed with model loading because the IOHandler provided does not have the `load` method implemented.");let e=this.handler.load();return(0,n.util).isPromise(e)?e.then(e=>this.loadSync(e)):this.loadSync(e)}/**
      * Synchronously construct the in memory weight map and
      * compile the inference graph.
      *
      * @doc {heading: 'Models', subheading: 'Classes', ignoreCI: true}
-     */loadSync(e){let t=this.io.decodeWeights(e.weightData,e.weightSpecs);return this.loadWithWeightMap(e,t)}async loadStreaming(e){if(null==e.getWeightStream)throw Error("Model artifacts missing streamWeights function");let t=await (0,l.decodeWeightsStream)(e.getWeightStream(),e.weightSpecs);return this.loadWithWeightMap(e,t)}loadWithWeightMap(e,t){this.artifacts=e;let r=this.artifacts.modelTopology,s=this.artifacts.signature;if(null!=this.artifacts.userDefinedMetadata){let e=this.artifacts.userDefinedMetadata;null!=e.signature&&(s=e.signature),null!=e.structuredOutputKeys&&(this.structuredOutputKeys=e.structuredOutputKeys)}if(this.signature=s,this.version=`${r.versions.producer}.${r.versions.minConsumer}`,this.executor=new o.GraphExecutor((0,a.OperationMapper).Instance.transformGraph(r,this.signature)),this.executor.weightMap=this.convertTensorMapToTensorsMap(t),// Attach a model-level resourceManager to each executor to share resources,
+     */loadSync(e){this.artifacts=e;let t=this.artifacts.modelTopology,r=this.artifacts.signature;if(null!=this.artifacts.userDefinedMetadata){let e=this.artifacts.userDefinedMetadata;null!=e.signature&&(r=e.signature),null!=e.structuredOutputKeys&&(this.structuredOutputKeys=e.structuredOutputKeys)}this.signature=r,this.version=`${t.versions.producer}.${t.versions.minConsumer}`;let s=this.io.decodeWeights(this.artifacts.weightData,this.artifacts.weightSpecs);if(this.executor=new o.GraphExecutor((0,a.OperationMapper).Instance.transformGraph(t,this.signature)),this.executor.weightMap=this.convertTensorMapToTensorsMap(s),// Attach a model-level resourceManager to each executor to share resources,
 // such as `HashTable`.
 this.executor.resourceManager=this.resourceManager,null!=e.modelInitializer&&null!=e.modelInitializer.node){let t=(0,a.OperationMapper).Instance.transformGraph(e.modelInitializer);this.initializer=new o.GraphExecutor(t),this.initializer.weightMap=this.executor.weightMap,// Attach a model-level resourceManager to the initializer, the
 // hashTables created from when executing the initializer will be stored
@@ -24892,7 +24930,7 @@ this.initializer.resourceManager=this.resourceManager,this.initializerSignature=
      * Execute the inference for the input tensors.
      *
      * @param input The input tensors, when there is single input for the model,
-     * inputs param should be a `tf.Tensor`. For models with multiple inputs,
+     * inputs param should be a `tf.Tensor`. For models with mutliple inputs,
      * inputs params should be in either `tf.Tensor`[] if the input order is
      * fixed, or otherwise NamedTensorMap format.
      *
@@ -25010,7 +25048,7 @@ let r=null===(t=this.signature)||void 0===t?void 0:t.inputs;if(null!=r)for(let t
      * Releases the memory used by the weight tensors and resourceManager.
      *
      * @doc {heading: 'Models', subheading: 'Classes'}
-     */dispose(){this.executor.dispose(),this.initializer&&(this.initializer.dispose(),this.resourceIdToCapturedInput&&(0,n.dispose)(this.resourceIdToCapturedInput)),this.resourceManager.dispose()}}async function d(e,t={},r=n.io){var s;if(null==e)throw Error("modelUrl in loadGraphModel() cannot be null. Please provide a url or an IOHandler that loads the model");null==t&&(t={}),t.fromTFHub&&"string"==typeof e&&((s=e).endsWith("/")||(s+="/"),e=`${s}${p}${u}`);let a=new c(e,t,r);return await a.load(),a}function h(e){let t;if(null==e)throw Error("modelUrl in loadGraphModelSync() cannot be null. Please provide model artifacts or an IOHandler that loads the model");if(e instanceof Array){let[r,s]=e;if(!r)throw Error("modelJSON must be the first element of the array");if(!s||!(s instanceof ArrayBuffer))throw Error("An ArrayBuffer of weights must be the second element of the array");if(!("modelTopology"in r))throw Error("Model JSON is missing 'modelTopology'");if(!("weightsManifest"in r))throw Error("Model JSON is missing 'weightsManifest'");let a=(0,n.io).getWeightSpecs(r.weightsManifest),o=(0,n.io).getModelArtifactsForJSONSync(r,a,s);t=(0,n.io).fromMemorySync(o)}else if("load"in e)t=e;else if("modelTopology"in e&&"weightSpecs"in e&&"weightData"in e)t=(0,n.io).fromMemorySync(e);else throw Error("Unknown model format");let r=new c(t);return r.load(),r}},{"@tensorflow/tfjs-core":"bIDr2","../operations/operation_mapper":"bg1Nb","./graph_executor":"gylNT","./resource_manager":"5NQPr","@tensorflow/tfjs-core/dist/io/io_utils":"6LFRt","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],bg1Nb:[function(e,t,r){/**
+     */dispose(){this.executor.dispose(),this.initializer&&(this.initializer.dispose(),this.resourceIdToCapturedInput&&(0,n.dispose)(this.resourceIdToCapturedInput)),this.resourceManager.dispose()}}async function c(e,t={},r=n.io){var s;if(null==e)throw Error("modelUrl in loadGraphModel() cannot be null. Please provide a url or an IOHandler that loads the model");null==t&&(t={}),t.fromTFHub&&"string"==typeof e&&((s=e).endsWith("/")||(s+="/"),e=`${s}${u}${l}`);let a=new p(e,t,r);return await a.load(),a}function d(e){let t;if(null==e)throw Error("modelUrl in loadGraphModelSync() cannot be null. Please provide model artifacts or an IOHandler that loads the model");if(e instanceof Array){let[r,s]=e;if(!r)throw Error("modelJSON must be the first element of the array");if(!s||!(s instanceof ArrayBuffer))throw Error("An ArrayBuffer of weights must be the second element of the array");if(!("modelTopology"in r))throw Error("Model JSON is missing 'modelTopology'");if(!("weightsManifest"in r))throw Error("Model JSON is missing 'weightsManifest'");let a=(0,n.io).getWeightSpecs(r.weightsManifest),o=(0,n.io).getModelArtifactsForJSONSync(r,a,s);t=(0,n.io).fromMemorySync(o)}else if("load"in e)t=e;else if("modelTopology"in e&&"weightSpecs"in e&&"weightData"in e)t=(0,n.io).fromMemorySync(e);else throw Error("Unknown model format");let r=new p(t);return r.load(),r}},{"@tensorflow/tfjs-core":"bIDr2","../operations/operation_mapper":"bg1Nb","./graph_executor":"gylNT","./resource_manager":"5NQPr","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],bg1Nb:[function(e,t,r){/**
  * @license
  * Copyright 2018 Google LLC. All Rights Reserved.
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25034,7 +25072,7 @@ t.inputNames[r]=n}}t.inputs.push(a),a.children.push(t)})}),0===Object.keys(c).le
 // they may not be used by the actual execution subgraph.
 let t=(0,o.getRegisteredOp)(e.op)||this.opMappers[e.op]||{};null==e.attr&&(e.attr={});let r={name:e.name,op:e.op,category:t.category,inputNames:(e.input||[]).map(e=>e.startsWith("^")?e.slice(1):e),inputs:[],children:[],inputParams:{},attrParams:{},rawAttrs:e.attr,outputs:t.outputs};return null!=t.inputs&&(r.inputParams=t.inputs.reduce((e,t)=>(e[t.name]={type:t.type,inputIndexStart:t.start,inputIndexEnd:t.end},e),{})),null!=t.attrs&&(r.attrParams=t.attrs.reduce((t,r)=>{let s;let n=r.type;switch(r.type){case"string":void 0===(s=F(e.attr,r.tfName,r.defaultValue))&&r.tfDeprecatedName&&(s=F(e.attr,r.tfDeprecatedName,r.defaultValue));break;case"string[]":void 0===(s=L(e.attr,r.tfName,r.defaultValue))&&r.tfDeprecatedName&&(s=L(e.attr,r.tfDeprecatedName,r.defaultValue));break;case"number":void 0===(s=D(e.attr,r.tfName,r.defaultValue||0))&&r.tfDeprecatedName&&(s=D(e.attr,r.tfDeprecatedName,r.defaultValue));break;case"number[]":void 0===(s=z(e.attr,r.tfName,r.defaultValue))&&r.tfDeprecatedName&&(s=z(e.attr,r.tfDeprecatedName,r.defaultValue));break;case"bool":void 0===(s=A(e.attr,r.tfName,r.defaultValue))&&r.tfDeprecatedName&&(s=A(e.attr,r.tfDeprecatedName,r.defaultValue));break;case"bool[]":void 0===(s=V(e.attr,r.tfName,r.defaultValue))&&r.tfDeprecatedName&&(s=V(e.attr,r.tfDeprecatedName,r.defaultValue));break;case"shape":void 0===(s=B(e.attr,r.tfName,r.defaultValue))&&r.tfDeprecatedName&&(s=B(e.attr,r.tfDeprecatedName,r.defaultValue));break;case"shape[]":void 0===(s=G(e.attr,r.tfName,r.defaultValue))&&r.tfDeprecatedName&&(s=G(e.attr,r.tfDeprecatedName,r.defaultValue));break;case"dtype":void 0===(s=P(e.attr,r.tfName,r.defaultValue))&&r.tfDeprecatedName&&(s=P(e.attr,r.tfDeprecatedName,r.defaultValue));break;case"dtype[]":void 0===(s=M(e.attr,r.tfName,r.defaultValue))&&r.tfDeprecatedName&&(s=M(e.attr,r.tfDeprecatedName,r.defaultValue));break;case"func":void 0===(s=R(e.attr,r.tfName,r.defaultValue))&&r.tfDeprecatedName&&(s=R(e.attr,r.tfDeprecatedName,r.defaultValue));break;case"tensor":case"tensors":break;default:throw Error(`Unsupported param type: ${r.type} for op: ${e.op}`)}return t[r.name]={value:s,type:n},t},{})),r}// map the TFunctionDef to TFJS graph object
 mapFunction(e){let t=e.nodeDef,r=[],s={};null!=t&&(s=t.reduce((e,t)=>(e[t.name]=this.mapNode(t),"Const"===t.op&&r.push(e[t.name]),e),{}));let n=[],a=[];e.signature.inputArg.forEach(e=>{let[t]=(0,i.getNodeNameAndIndex)(e.name),r={name:t,op:"Placeholder",inputs:[],inputNames:[],category:"graph",inputParams:{},attrParams:{dtype:{value:$(e.type),type:"dtype"}},children:[]};r.signatureKey=e.name,n.push(r),s[t]=r});let o=Object.keys(s);o.forEach(e=>{let t=s[e];t.inputNames.forEach((e,r)=>{let[n,,a]=(0,i.getNodeNameAndIndex)(e),o=s[n];if(null!=o.outputs){let e=o.outputs.indexOf(a);if(-1!==e){let s=`${n}:${e}`;// update the input name to use the mapped output index directly.
-t.inputNames[r]=s}}t.inputs.push(o),o.children.push(t)})});let l=e.ret;e.signature.outputArg.forEach(e=>{let[t,r]=(0,i.getNodeNameAndIndex)(l[e.name]),n=s[t];null!=n&&(n.defaultOutput=r,a.push(n))});let u=this.mapArgsToSignature(e);return{nodes:s,inputs:n,outputs:a,weights:r,placeholders:[],signature:u}}mapArgsToSignature(e){return{methodName:e.signature.name,inputs:e.signature.inputArg.reduce((e,t)=>(e[t.name]=this.mapArgToTensorInfo(t),e),{}),outputs:e.signature.outputArg.reduce((t,r)=>(t[r.name]=this.mapArgToTensorInfo(r,e.ret),t),{})}}mapArgToTensorInfo(e,t){let r=e.name;return null!=t&&(r=t[r]),{name:r,dtype:e.type}}}function N(e){let t=(0,n.env)().global;if(void 0!==t.atob)return t.atob(e);if(void 0!==C)return new C(e,"base64").toString();throw Error("Unable to decode base64 in this environment. Missing built-in atob() or Buffer()")}function E(e,t){let r=Array.isArray(e)?String.fromCharCode.apply(null,e):N(e);return t?r:r.toLowerCase()}function F(e,t,r,s=!1){let n=e[t];return null!=n?E(n.s,s):r}function A(e,t,r){let s=e[t];return s?s.b:r}function D(e,t,r){let s=e[t]||{},n=null!=s.i?s.i:null!=s.f?s.f:r;return"number"==typeof n?n:parseInt(n,10)}function $(e){switch("string"==typeof e&&(e=a.DataType[e]),e){case a.DataType.DT_FLOAT:case a.DataType.DT_HALF:return"float32";case a.DataType.DT_INT32:case a.DataType.DT_INT64:case a.DataType.DT_INT8:case a.DataType.DT_UINT8:return"int32";case a.DataType.DT_BOOL:return"bool";case a.DataType.DT_DOUBLE:return"float32";case a.DataType.DT_STRING:return"string";case a.DataType.DT_COMPLEX64:case a.DataType.DT_COMPLEX128:return"complex64";default:// Unknown dtype error will happen at runtime (instead of parse time),
+t.inputNames[r]=s}}t.inputs.push(o),o.children.push(t)})});let l=e.ret;e.signature.outputArg.forEach(e=>{let[t,r]=(0,i.getNodeNameAndIndex)(l[e.name]),n=s[t];null!=n&&(n.defaultOutput=r,a.push(n))});let u=this.mapArgsToSignature(e);return{nodes:s,inputs:n,outputs:a,weights:r,placeholders:[],signature:u}}mapArgsToSignature(e){return{methodName:e.signature.name,inputs:e.signature.inputArg.reduce((e,t)=>(e[t.name]=this.mapArgToTensorInfo(t),e),{}),outputs:e.signature.outputArg.reduce((t,r)=>(t[r.name]=this.mapArgToTensorInfo(r,e.ret),t),{})}}mapArgToTensorInfo(e,t){let r=e.name;return null!=t&&(r=t[r]),{name:r,dtype:e.type}}}function N(e){let t=(0,n.env)().global;if(void 0!==t.atob)return t.atob(e);if(void 0!==C)return new C(e,"base64").toString();throw Error("Unable to decode base64 in this environment. Missing built-in atob() or Buffer()")}function E(e,t){let r=Array.isArray(e)?String.fromCharCode.apply(null,e):N(e);return t?r:r.toLowerCase()}function F(e,t,r,s=!1){let n=e[t];return null!=n?E(n.s,s):r}function A(e,t,r){let s=e[t];return s?s.b:r}function D(e,t,r){let s=e[t]||{},n=null!=s.i?s.i:null!=s.f?s.f:r;return"number"==typeof n?n:parseInt(n,10)}function $(e){switch("string"==typeof e&&(e=a.DataType[e]),e){case a.DataType.DT_FLOAT:case a.DataType.DT_HALF:return"float32";case a.DataType.DT_INT32:case a.DataType.DT_INT64:case a.DataType.DT_INT8:case a.DataType.DT_UINT8:return"int32";case a.DataType.DT_BOOL:return"bool";case a.DataType.DT_DOUBLE:return"float32";case a.DataType.DT_STRING:return"string";default:// Unknown dtype error will happen at runtime (instead of parse time),
 // since these nodes might not be used by the actual subgraph execution.
 return null}}function R(e,t,r){let s=e[t];return s&&s.func?s.func.name:r}function P(e,t,r){let s=e[t];return s&&s.type?$(s.type):r}function M(e,t,r){let s=e[t];return s&&s.list&&s.list.type?s.list.type.map(e=>$(e)):r}function O(e){if(!e.unknownRank)return null!=e.dim?e.dim.map(e=>"number"==typeof e.size?e.size:parseInt(e.size,10)):[]}function B(e,t,r){let s=e[t];return s&&s.shape?O(s.shape):r}function z(e,t,r){let s=e[t];return s?((s.list.f&&s.list.f.length?s.list.f:s.list.i)||[]).map(e=>"number"==typeof e?e:parseInt(e,10)):r}function L(e,t,r,s=!1){let n=e[t];return n&&n.list&&n.list.s?n.list.s.map(e=>E(e,s)):r}function G(e,t,r){let s=e[t];return s&&s.list&&s.list.shape?s.list.shape.map(e=>O(e)):r}function V(e,t,r){let s=e[t];return s&&s.list&&s.list.b?s.list.b:r}},{"509fe566240bdc8b":"l5Twm","@tensorflow/tfjs-core":"bIDr2","../data/compiled_api":"dufyO","./custom_op/register":"cy96l","./executors/utils":"kJMNV","./op_list/arithmetic":"6RO8S","./op_list/basic_math":"gwTH5","./op_list/control":"1LNXA","./op_list/convolution":"kvsZs","./op_list/creation":"3ApRR","./op_list/dynamic":"2cstw","./op_list/evaluation":"4QSy0","./op_list/graph":"g7Fu5","./op_list/hash_table":"5l6sj","./op_list/image":"1Ktgy","./op_list/logical":"5INmd","./op_list/matrices":"6pNNC","./op_list/normalization":"5LRp9","./op_list/reduction":"22eBM","./op_list/slice_join":"3Mq97","./op_list/sparse":"3Mb5D","./op_list/spectral":"6GGwM","./op_list/string":"3Qred","./op_list/transformation":"1sJVx","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],dufyO:[function(e,t,r){/**
  * @license
@@ -25052,10 +25090,7 @@ return null}}function R(e,t,r){let s=e[t];return s&&s.func?s.func.name:r}functio
  * limitations under the License.
  *
  * =============================================================================
- *//** DataType enum. */var s,n,a,o,i,l=e("@parcel/transformer-js/src/esmodule-helpers.js");l.defineInteropFlag(r),l.export(r,"DataType",()=>o),l.export(r,"SaverDef",()=>i),// These properties must be quoted since they are used by parseDtypeParam
-// in tfjs-converter/src/operations/operation_mapper.ts to look up dtypes
-// by string name. If they are not quoted, Closure will mangle their names.
-// Not a legal value for DataType.  Used to indicate a DataType field
+ *//** DataType enum. */var s,n,a,o,i,l=e("@parcel/transformer-js/src/esmodule-helpers.js");l.defineInteropFlag(r),l.export(r,"DataType",()=>o),l.export(r,"SaverDef",()=>i),// Not a legal value for DataType.  Used to indicate a DataType field
 // has not been set.
 (s=o||(o={}))[s.DT_INVALID=0]="DT_INVALID",// Data types that all computation devices are expected to be
 // capable to support.
@@ -25518,7 +25553,7 @@ let t=i[e.id];1===t?(e.dispose(),delete i[e.id]):null!=t&&i[e.id]--}}}}checkTens
      * @param isFunctionExecution Optional. Flag for executing a function.
      * @param tensorArrayMap Optional, global TensorArray map by id. Used for
      * function execution.
-     * @param tensorArrayMap Optional global TensorList map by id. Used for
+     * @param tensorArrayMap Optinal global TensorList map by id. Used for
      * function execution.
      */async _executeAsync(e,t,r=!1,s={},o={}){// Dispose any tensors from a prior run to avoid leaking them.
 this.disposeIntermediateTensors(),r||(e=this.mapInputs(e),this.checkInputs(e),this.checkInputShapeAndType(e),t=this.mapOutputs(t),this.checkOutputs(t));// Keep tensors if KEEP_INTERMEDIATE_TENSORS is on.
@@ -25703,7 +25738,7 @@ let r=this.readMany(e);return(0,a.assertShapesMatchAllowUndefinedSize)(this.elem
      */concat(e){if(e&&e!==this.dtype)throw Error(`TensorArray dtype is ${this.dtype} but concat requested dtype ${e}`);if(0===this.size())return(0,n.tensor)([],[0].concat(this.elementShape));let t=[];for(let e=0;e<this.size();e++)t.push(e);// Collect all the tensors from the tensors array.
 let r=this.readMany(t);return(0,a.assertShapesMatchAllowUndefinedSize)(this.elementShape,r[0].shape,`TensorArray shape mismatch: tensor array shape (${this.elementShape}) vs first tensor shape (${r[0].shape})`),(0,n.concat)(r,0)}/**
      * Scatter the values of a Tensor in specific indices of a TensorArray.
-     * @param indices number[] values in [0, max_value). If the
+     * @param indices nummber[] values in [0, max_value). If the
      *    TensorArray is not dynamic, max_value=size().
      * @param tensor Tensor input tensor.
      */scatter(e,t){if(t.dtype!==this.dtype)throw Error(`TensorArray dtype is ${this.dtype} but tensor has dtype ${t.dtype}`);if(e.length!==t.shape[0])throw Error(`Expected len(indices) == tensor.shape[0], but saw: ${e.length} vs. ${t.shape[0]}`);let r=Math.max(...e);if(!this.dynamicSize&&r>=this.maxSize)throw Error(`Max index must be < array size (${r}  vs. ${this.maxSize})`);this.writeMany(e,(0,n.unstack)(t,0))}/**
@@ -26278,7 +26313,7 @@ let a=e.filter(e=>n.has(e.name));return a}(g,p);return(// TODO: Turn validation 
      */getHashTableById(e){return this.hashTableMap[e]}/**
      * Dispose `ResourceManager`, including its hashTables and tensors in them.
      */dispose(){for(let e in this.hashTableMap)this.hashTableMap[e].clearAndClose(),delete this.hashTableMap[e];for(let e in this.hashTableNameToHandle)this.hashTableNameToHandle[e].dispose(),delete this.hashTableNameToHandle[e]}}},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],k6RZB:[function(e,t,r){/** @license See the LICENSE file. */// This code is auto-generated, do not modify this file!
-var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"version",()=>n);let n="4.22.0"},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],efhPD:[function(e,t,r){/**
+var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"version",()=>n);let n="4.10.0"},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],efhPD:[function(e,t,r){/**
  * @license
  * Copyright 2018 Google LLC. All Rights Reserved.
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27516,12 +27551,14 @@ if(a===p?r.push(e.substring(s,n-1)):r.push(e.substring(s)),t&&r.length!==this.fu
  * @param f A function that produces one data element on each call.
  */s.export(r,"func",()=>c),/**
  * Create a `Dataset` that produces each element from provided JavaScript
- * generator, which is a function that returns a (potentially async) iterator.
+ * generator, which is a function*
+ * (https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Iterators_and_Generators#Generator_functions),
+ * or a function that returns an
+ * iterator
+ * (https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Iterators_and_Generators#Generator_functions).
  *
- * For more information on iterators and generators, see
- * https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Iterators_and_Generators .
- * For the iterator protocol, see
- * https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Iteration_protocols .
+ * The returned iterator should have `.next()` function that returns element in
+ * format of `{value: TensorContainer, done:boolean}`.
  *
  * Example of creating a dataset from an iterator factory:
  * ```js
@@ -27562,8 +27599,8 @@ if(a===p?r.push(e.substring(s,n-1)):r.push(e.substring(s)),t&&r.length!==this.fu
  * await ds.forEachAsync(e => console.log(e));
  * ```
  *
- * @param generator A JavaScript function that returns
- *     a (potentially async) JavaScript iterator.
+ * @param generator A JavaScript generator function that returns a JavaScript
+ *     iterator.
  *
  * @doc {
  *   heading: 'Data',
@@ -27957,7 +27994,7 @@ var s=e("@parcel/transformer-js/src/esmodule-helpers.js");function n(e){return"s
 let t=e("9527430b37bc76c0");this.input=t.readFileSync(this.input.slice(7))}// TODO(kangyizhang): Add LocalFileChunkIterator to split local streaming
 // with file in browser.
 return new o.FileChunkIterator(this.input,this.options)}}},{"@tensorflow/tfjs-core":"bIDr2","../datasource":"gh8QH","../iterators/file_chunk_iterator":"7vKYu","../util/source_util":"fKabd","9527430b37bc76c0":"13Pcp","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],l7pag:[function(e,t,r){/** @license See the LICENSE file. */// This code is auto-generated, do not modify this file!
-var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"version",()=>n);let n="4.22.0"},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],dF7z9:[function(e,t,r){/**
+var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"version",()=>n);let n="4.10.0"},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],dF7z9:[function(e,t,r){/**
  * @license
  * Copyright 2020 Google LLC. All Rights Reserved.
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29157,7 +29194,7 @@ let s=i.get(r);if(null!=s)l[t]=s;else{let e=i.size;i.set(r,e),l[t]=e,p.push(t)}}
 let d=o.slice();d[1]=i.size;let h=new n.TensorBuffer(d,s);p.forEach((e,t)=>{for(let r=0;r<o[0];r++)for(let s=0;s<o[2];s++)h.set(u.get(r,e,s),r,t,s)});// The output shape can be calculated from the input shape with the size of
 // the given axis replaced by the number of unique elements along that axis.
 let f=r.slice();return f[a]=d[1],{outputValues:h.values,outputShape:f,indices:l}}},{"@tensorflow/tfjs-core":"bIDr2","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"2iyzS":[function(e,t,r){/** @license See the LICENSE file. */// This code is auto-generated, do not modify this file!
-var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"version",()=>n);let n="4.22.0"},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],fDby1:[function(e,t,r){/**
+var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"version",()=>n);let n="4.10.0"},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],fDby1:[function(e,t,r){/**
  * @license
  * Copyright 2020 Google LLC. All Rights Reserved.
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31613,7 +31650,7 @@ if(!l.gpgpu.gl.isTexture(s))throw Error("The texture is invalid. Also, please ma
  * This file contains WebGL-specific flag registrations.
  *//**
  * True if WebGL is supported.
- */a.registerFlag("HAS_WEBGL",()=>a.getNumber("WEBGL_VERSION")>0),/** 0: No WebGL, 1: WebGL 1.0, 2: WebGL 2.0. */a.registerFlag("WEBGL_VERSION",()=>(0,n.isWebGLVersionEnabled)(2)?2:(0,n.isWebGLVersionEnabled)(1)?1:0),/** Whether to check for numerical representation problems. */a.registerFlag("WEBGL_CHECK_NUMERICAL_PROBLEMS",()=>!1),a.registerFlag("WEBGL_BUFFER_SUPPORTED",()=>2===a.get("WEBGL_VERSION")),/** Whether the WebGL backend will sometimes forward ops to the CPU. */a.registerFlag("WEBGL_CPU_FORWARD",()=>!0),/** Whether the WebGL backend will always use f16 textures for rendering. */a.registerFlag("WEBGL_FORCE_F16_TEXTURES",()=>!1),/** Whether to turn all packing related flags on. */a.registerFlag("WEBGL_PACK",()=>a.getBool("HAS_WEBGL")),/** Whether we will pack the batchnormalization op. */a.registerFlag("WEBGL_PACK_NORMALIZATION",()=>a.getBool("WEBGL_PACK")),/** Whether we will pack the clip op. */a.registerFlag("WEBGL_PACK_CLIP",()=>a.getBool("WEBGL_PACK")),/** Whether we will pack the depthwise conv op. */a.registerFlag("WEBGL_PACK_DEPTHWISECONV",()=>a.getBool("WEBGL_PACK")),/** Whether we will pack binary ops. */a.registerFlag("WEBGL_PACK_BINARY_OPERATIONS",()=>a.getBool("WEBGL_PACK")),/** Whether we will pack unary ops. */a.registerFlag("WEBGL_PACK_UNARY_OPERATIONS",()=>a.getBool("WEBGL_PACK")),/** Whether we will pack array ops. */a.registerFlag("WEBGL_PACK_ARRAY_OPERATIONS",()=>a.getBool("WEBGL_PACK")),/** Whether we will pack image ops. */a.registerFlag("WEBGL_PACK_IMAGE_OPERATIONS",()=>a.getBool("WEBGL_PACK")),/** Whether we will pack reduce ops. */a.registerFlag("WEBGL_PACK_REDUCE",()=>a.getBool("WEBGL_PACK")),/** Whether packed WebGL kernels lazily unpack their outputs. */a.registerFlag("WEBGL_LAZILY_UNPACK",()=>a.getBool("WEBGL_PACK")),/** Whether we will use the im2col algorithm to speed up convolutions. */a.registerFlag("WEBGL_CONV_IM2COL",()=>a.getBool("WEBGL_PACK")),/** Whether we will pack conv2dTranspose op. */a.registerFlag("WEBGL_PACK_CONV2DTRANSPOSE",()=>a.getBool("WEBGL_PACK")),/** The maximum texture dimension. */a.registerFlag("WEBGL_MAX_TEXTURE_SIZE",()=>(0,n.getWebGLMaxTextureSize)(a.getNumber("WEBGL_VERSION"))),/** The maximum texture dimension. */a.registerFlag("WEBGL_MAX_TEXTURES_IN_SHADER",()=>(0,n.getMaxTexturesInShader)(a.getNumber("WEBGL_VERSION"))),/**
+ */a.registerFlag("HAS_WEBGL",()=>a.getNumber("WEBGL_VERSION")>0),/** 0: No WebGL, 1: WebGL 1.0, 2: WebGL 2.0. */a.registerFlag("WEBGL_VERSION",()=>(0,n.isWebGLVersionEnabled)(2)?2:(0,n.isWebGLVersionEnabled)(1)?1:0),/** Whether to check for numerical representation problems. */a.registerFlag("WEBGL_CHECK_NUMERICAL_PROBLEMS",()=>!1),a.registerFlag("WEBGL_BUFFER_SUPPORTED",()=>2===a.get("WEBGL_VERSION")),/** Whether the WebGL backend will sometimes forward ops to the CPU. */a.registerFlag("WEBGL_CPU_FORWARD",()=>!0),/** Whether the WebGL backend will always use f16 textures for rendering. */a.registerFlag("WEBGL_FORCE_F16_TEXTURES",()=>!1),/** Whether to turn all packing related flags on. */a.registerFlag("WEBGL_PACK",()=>a.getBool("HAS_WEBGL")),/** Whether we will pack the batchnormalization op. */a.registerFlag("WEBGL_PACK_NORMALIZATION",()=>a.getBool("WEBGL_PACK")),/** Whether we will pack the clip op. */a.registerFlag("WEBGL_PACK_CLIP",()=>a.getBool("WEBGL_PACK")),/** Whether we will pack the depthwise conv op. */a.registerFlag("WEBGL_PACK_DEPTHWISECONV",()=>a.getBool("WEBGL_PACK")),/** Whether we will pack binary ops. */a.registerFlag("WEBGL_PACK_BINARY_OPERATIONS",()=>a.getBool("WEBGL_PACK")),/** Whether we will pack unary ops. */a.registerFlag("WEBGL_PACK_UNARY_OPERATIONS",()=>a.getBool("WEBGL_PACK")),/** Whether we will pack array ops. */a.registerFlag("WEBGL_PACK_ARRAY_OPERATIONS",()=>a.getBool("WEBGL_PACK")),/** Whether we will pack image ops. */a.registerFlag("WEBGL_PACK_IMAGE_OPERATIONS",()=>a.getBool("WEBGL_PACK")),/** Whether we will pack reduce ops. */a.registerFlag("WEBGL_PACK_REDUCE",()=>a.getBool("WEBGL_PACK")),/** Whether packed WebGL kernels lazily unpack their outputs. */a.registerFlag("WEBGL_LAZILY_UNPACK",()=>a.getBool("WEBGL_PACK")),/** Whether we will use the im2col algorithm to speed up convolutions. */a.registerFlag("WEBGL_CONV_IM2COL",()=>a.getBool("WEBGL_PACK")),/** The maximum texture dimension. */a.registerFlag("WEBGL_MAX_TEXTURE_SIZE",()=>(0,n.getWebGLMaxTextureSize)(a.getNumber("WEBGL_VERSION"))),/** The maximum texture dimension. */a.registerFlag("WEBGL_MAX_TEXTURES_IN_SHADER",()=>(0,n.getMaxTexturesInShader)(a.getNumber("WEBGL_VERSION"))),/**
  * The disjoint_query_timer extension version.
  * 0: disabled, 1: EXT_disjoint_timer_query, 2:
  * EXT_disjoint_timer_query_webgl2.
@@ -33388,7 +33425,7 @@ let l=function(e,t){switch(e){case o.PhysicalTextureType.PACKED_2X2_FLOAT32:retu
         setOutput(getChannel(packedInput, ${u}));
       }
     `}}},{"./gpgpu_math":"cWVCD","./packing_util":"6iCnV","./shader_compiler":"fR3mM","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"7gues":[function(e,t,r){/** @license See the LICENSE file. */// This code is auto-generated, do not modify this file!
-var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"version",()=>n);let n="4.22.0"},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"3tG7L":[function(e,t,r){/**
+var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"version",()=>n);let n="4.10.0"},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"3tG7L":[function(e,t,r){/**
  * @license
  * Copyright 2019 Google LLC. All Rights Reserved.
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36420,7 +36457,7 @@ let{filterWidth:f,filterHeight:m,inChannels:g,outWidth:x,outHeight:v,dataFormat:
  * See the License for the specific language governing permissions and
  * limitations under the License.
  * =============================================================================
- */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"conv2DBackpropInput",()=>i),s.export(r,"conv2DBackpropInputConfig",()=>l);var n=e("@tensorflow/tfjs-core"),a=e("../conv_backprop_gpu"),o=e("../conv_backprop_packed_gpu");function i(e){let{inputs:t,backend:r,attrs:s}=e,{dy:i,filter:l}=t,{inputShape:u,strides:p,pad:c,dataFormat:d,dimRoundingMode:h}=s,f=(0,n.backend_util).convertConv2DDataFormat(d),m=(0,n.backend_util).computeConv2DInfo(u,l.shape,p,1/* dilations */,c,h,!1,f);if((0,n.env)().getBool("WEBGL_PACK_CONV2DTRANSPOSE")&&"channelsLast"===f){let e=[[m.strideHeight,m.strideWidth]],t=new o.Conv2DDerInputPackedProgram(m);return r.runWebGLProgram(t,[i,l],"float32",e)}{let e=new a.Conv2DDerInputProgram(m);return r.runWebGLProgram(e,[i,l],"float32")}}let l={kernelName:n.Conv2DBackpropInput,backendName:"webgl",kernelFunc:i}},{"@tensorflow/tfjs-core":"bIDr2","../conv_backprop_gpu":"6HtpG","../conv_backprop_packed_gpu":"1IF9R","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"1IF9R":[function(e,t,r){/**
+ */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"conv2DBackpropInput",()=>i),s.export(r,"conv2DBackpropInputConfig",()=>l);var n=e("@tensorflow/tfjs-core"),a=e("../conv_backprop_gpu"),o=e("../conv_backprop_packed_gpu");function i(e){let{inputs:t,backend:r,attrs:s}=e,{dy:i,filter:l}=t,{inputShape:u,strides:p,pad:c,dataFormat:d,dimRoundingMode:h}=s,f=(0,n.backend_util).convertConv2DDataFormat(d),m=(0,n.backend_util).computeConv2DInfo(u,l.shape,p,1/* dilations */,c,h,!1,f);if((0,n.env)().getBool("WEBGL_PACK")&&"channelsLast"===f){let e=[[m.strideHeight,m.strideWidth]],t=new o.Conv2DDerInputPackedProgram(m);return r.runWebGLProgram(t,[i,l],"float32",e)}{let e=new a.Conv2DDerInputProgram(m);return r.runWebGLProgram(e,[i,l],"float32")}}let l={kernelName:n.Conv2DBackpropInput,backendName:"webgl",kernelFunc:i}},{"@tensorflow/tfjs-core":"bIDr2","../conv_backprop_gpu":"6HtpG","../conv_backprop_packed_gpu":"1IF9R","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"1IF9R":[function(e,t,r){/**
  * @license
  * Copyright 2023 Google LLC.
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41262,7 +41299,7 @@ if(f.push(m),m.shape[1]===u)return m;let g=(0,o.range)({backend:r,attrs:{start:0
         setOutput(sumValue);
       }
     `}}},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"1gSRC":[function(e,t,r){/** @license See the LICENSE file. */// This code is auto-generated, do not modify this file!
-var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"version",()=>n);let n="4.22.0"},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"1Q5wH":[function(e,t,r){/**
+var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"version",()=>n);let n="4.10.0"},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"1Q5wH":[function(e,t,r){/**
  * @license
  * Copyright 2019 Google LLC. All Rights Reserved.
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -67874,6 +67911,6 @@ mk(e){return{id:this.next++,...e}}const(e){return this.mk({op:"const",value:e,in
    *  "linear" is the identity (no node minted) — needed by heads whose output
    *  layer is an unsquashed regression (tfjs `dense` with no activation, e.g.
    *  the adversary's raw-signal regression heads). It mirrors the shipped Activation
-   *  union in advect_wgsl.ts, which already includes "linear". */act(e,t){return"selu"===e?this.selu(t):"tanh"===e?this.tanh(t):"sigmoid"===e?this.sigmoid(t):"sin"===e?this.sin(t):t}/** sum a list (left fold); empty → const 0. */sum(e){return 0===e.length?this.const(0):e.reduce((e,t)=>this.add(e,t))}constructor(){this.next=0,this.inputs=new Map}}function i(e){let t=new Set,r=[],s=e=>{if(!t.has(e.id)){for(let r of(t.add(e.id),e.inputs))s(r);r.push(e)}};return s(e),r}},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],fjpTf:[function(){},{}]},["4zTVb"],"4zTVb","parcelRequire924a")//# sourceMappingURL=index.69d48605.js.map
+   *  union in advect_wgsl.ts, which already includes "linear". */act(e,t){return"selu"===e?this.selu(t):"tanh"===e?this.tanh(t):"sigmoid"===e?this.sigmoid(t):"sin"===e?this.sin(t):t}/** sum a list (left fold); empty → const 0. */sum(e){return 0===e.length?this.const(0):e.reduce((e,t)=>this.add(e,t))}constructor(){this.next=0,this.inputs=new Map}}function i(e){let t=new Set,r=[],s=e=>{if(!t.has(e.id)){for(let r of(t.add(e.id),e.inputs))s(r);r.push(e)}};return s(e),r}},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],fjpTf:[function(){},{}]},["4zTVb"],"4zTVb","parcelRequire924a")//# sourceMappingURL=index.dc7ca088.js.map
 ;
-//# sourceMappingURL=index.69d48605.js.map
+//# sourceMappingURL=index.dc7ca088.js.map
