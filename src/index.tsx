@@ -13,6 +13,7 @@ import {
   ARCH,
   applyArchDockPreset,
   archDockPresets,
+  DEFAULT_PIECE_INDEX,
   GALLERY,
   GAME_LEARNING_RATE_RANGE,
   INK_LOOK_DECAY,
@@ -22,6 +23,8 @@ import {
   inkLookFromRenderer,
   isArchPresetKey,
   resolveAdversary,
+  resolveStrokeLength,
+  resolveStrokeStyle,
   startLoop,
   type AdversaryTelemetry,
   type ArchPresetKey,
@@ -91,6 +94,24 @@ interface PersistedDock {
 }
 
 const DOCK_STORAGE_KEY = "nffa.dock.v2";
+
+/**
+ * Where "mobile" starts for the collapsible HUD — the SAME 640px breakpoint the
+ * layout rules in src/ui.css already use. React owns the collapsed STATE, CSS
+ * owns the collapsed LOOK; a second, different breakpoint would let the two
+ * disagree about which regime the viewport is in.
+ */
+const HUD_COLLAPSE_QUERY = "(max-width: 640px)";
+
+/**
+ * Initial collapse decision. Called from a useState initializer, i.e. during
+ * the first render and BEFORE first paint — reading it in an effect instead
+ * would paint the dock expanded over the artwork and then snap it shut, which
+ * on a phone is the whole screen flashing.
+ */
+function hudStartsCollapsed(): boolean {
+  return window.matchMedia(HUD_COLLAPSE_QUERY).matches;
+}
 
 type AdversaryLossTag = AdversaryLoss["tag"];
 
@@ -726,8 +747,11 @@ function App(): ReactElement {
   const initialDockRef = useRef<PersistedDock | null>(loadPersistedDock());
   const seededFromStorage = initialDockRef.current !== null;
 
+  // No saved dock ⇒ open on the default piece. Resolved by NAME in main.ts
+  // (DEFAULT_PIECE_INDEX), never a literal here: a hardcoded 0 is what made
+  // "the default" a property of GALLERY's ORDER instead of a named choice.
   const [runtime, setRuntime] = useState<RuntimeConfig>(
-    () => initialDockRef.current?.runtime ?? defaultsForPiece(0)
+    () => initialDockRef.current?.runtime ?? defaultsForPiece(DEFAULT_PIECE_INDEX)
   );
 
   const [particles, setParticles] = useState(
@@ -754,15 +778,30 @@ function App(): ReactElement {
     () => initialDockRef.current?.look ?? "ghost"
   );
   const [blend, setBlend] = useState(() => initialDockRef.current?.blend ?? 0.5);
+  // Same ladder the loop uses (main.ts resolveStrokeStyle): a saved dock is the
+  // user's own last choice and outranks both, then `?stroke=` > the piece's
+  // declared stroke > "dot". Calling the shared resolver — rather than
+  // repeating `?? "dot"` — is what keeps the dock's first paint from showing
+  // DOT while the canvas is already drawing the piece's curl.
   const [strokeStyle, setStrokeStyle] = useState<SplatStyle>(
-    () => initialDockRef.current?.strokeStyle ?? "dot"
+    () =>
+      initialDockRef.current?.strokeStyle ??
+      resolveStrokeStyle(GALLERY[runtime.piece], new URLSearchParams(window.location.search))
   );
   const [strokeLength, setStrokeLength] = useState(
-    () => initialDockRef.current?.strokeLength ?? 3
+    () =>
+      initialDockRef.current?.strokeLength ??
+      resolveStrokeLength(GALLERY[runtime.piece], new URLSearchParams(window.location.search))
   );
   const [advWeight, setAdvWeight] = useState(
     () => initialDockRef.current?.advWeight ?? 0
   );
+  // The artwork is the point of the app, so on a narrow viewport BOTH panels
+  // start collapsed and leave only their toggle chips over the canvas. Desktop
+  // starts expanded, exactly as before. Independent state: reading the FPS
+  // while the controls are shut is a normal thing to want.
+  const [telemetryOpen, setTelemetryOpen] = useState(() => !hudStartsCollapsed());
+  const [dockOpen, setDockOpen] = useState(() => !hudStartsCollapsed());
   const [telemetry, setTelemetry] = useState<AdversaryTelemetry>({ tag: "off" });
   const [colorMode, setColorMode] = useState<ColorMode>(
     () => initialDockRef.current?.colorMode ?? { tag: "velocity" }
@@ -805,6 +844,20 @@ function App(): ReactElement {
       (piece.fieldLoss.W_COVER ?? 0) !== 0 ||
       (piece.fieldLoss.W_CENTER ?? 0) !== 0);
   const relationalView = viewForEncoding(runtime.encoding);
+
+  // Re-apply the regime default when the breakpoint is CROSSED (rotation, a
+  // resized window). MediaQueryList fires only when `matches` actually flips,
+  // so resizing inside one regime — or a mobile URL bar sliding away — leaves
+  // a manual toggle alone; only a real phone↔desktop transition overrides it.
+  useEffect(() => {
+    const query = window.matchMedia(HUD_COLLAPSE_QUERY);
+    const onChange = (event: MediaQueryListEvent): void => {
+      setTelemetryOpen(!event.matches);
+      setDockOpen(!event.matches);
+    };
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
 
   useEffect(() => {
     savePersistedDock({
@@ -850,6 +903,11 @@ function App(): ReactElement {
     // arch / adversary recipe change) and the first paint from localStorage.
     // Gallery switches adopt the new piece's baked particles / LRs / advWeight /
     // colorMode — otherwise Pair inherits weight=0 and raw-vector from Spiral.
+    // STROKE follows that same ownership rule (the else-branch below re-reads
+    // handle.getStrokeStyle()): a gallery click means "show me that piece", so
+    // its declared stroke wins on switch exactly like its renderer-derived ink
+    // look does two lines down. The dock control stays live afterwards, and a
+    // same-piece rebuild pushes the user's current stroke back in.
     const previousPiece = lastStartedPieceRef.current;
     const isFirstStart = previousPiece === null;
     const samePieceRebuild = previousPiece === runtime.piece;
@@ -954,18 +1012,63 @@ function App(): ReactElement {
       <canvas ref={canvasRef} id="myCanvas" aria-label="Neural force-field artwork" />
 
       <aside className="hud-stack" aria-label="Performance and piece controls">
+        {/* Both panels collapse to their toggle chip and nothing else. The
+            button lives OUTSIDE the collapsible region on purpose: it is the
+            only affordance left once the region is hidden. */}
         <div
-          ref={telemetryHostRef}
-          className="telemetry-host"
-          data-testid="telemetry-host"
-          aria-live="polite"
-        />
-
-        <div className="config-dock" data-testid="piece-config-dock">
-          <header className="dock-header" aria-label={`Controls for ${piece.name}`}>
-            <span className="dock-piece" title={piece.name}>
-              {piece.name}
+          className="telemetry-panel"
+          data-testid="telemetry-panel"
+          data-collapsed={telemetryOpen ? "false" : "true"}
+        >
+          <button
+            type="button"
+            className="hud-toggle"
+            aria-expanded={telemetryOpen}
+            aria-controls="telemetry-host"
+            data-testid="telemetry-toggle"
+            title={telemetryOpen ? "Hide telemetry" : "Show telemetry"}
+            onClick={() => setTelemetryOpen((open) => !open)}
+          >
+            <span className="hud-toggle-title">fps · telemetry</span>
+            <span className="hud-caret" aria-hidden="true">
+              {telemetryOpen ? "▾" : "▸"}
             </span>
+          </button>
+          <div
+            ref={telemetryHostRef}
+            id="telemetry-host"
+            className="telemetry-host"
+            data-testid="telemetry-host"
+            aria-live="polite"
+          />
+        </div>
+
+        <div
+          className="config-dock"
+          id="piece-config-dock"
+          data-testid="piece-config-dock"
+          data-collapsed={dockOpen ? "false" : "true"}
+        >
+          <header className="dock-header" aria-label={`Controls for ${piece.name}`}>
+            {/* aria-controls points at the dock itself: the collapsed region is
+                every child EXCEPT this header (see .config-dock[data-collapsed]
+                in ui.css), so the dock is the smallest element that names it.
+                The title carries the full piece name because .dock-piece
+                ellipsizes it — that tooltip used to live on the span. */}
+            <button
+              type="button"
+              className="hud-toggle"
+              aria-expanded={dockOpen}
+              aria-controls="piece-config-dock"
+              data-testid="piece-config-toggle"
+              title={`${piece.name} — ${dockOpen ? "hide" : "show"} controls`}
+              onClick={() => setDockOpen((open) => !open)}
+            >
+              <span className="dock-piece">{piece.name}</span>
+              <span className="hud-caret" aria-hidden="true">
+                {dockOpen ? "▾" : "▸"}
+              </span>
+            </button>
           </header>
 
           <ControlSection title="simulation" testid="simulation-controls">

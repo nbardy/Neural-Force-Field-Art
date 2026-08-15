@@ -12,3 +12,6 @@ models/
 .env.*
 output/
 .playwright-cli/
+
+# build outputs (parcel --dist-dir variants)
+dist*/

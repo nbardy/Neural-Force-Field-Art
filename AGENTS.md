@@ -67,6 +67,20 @@ Output: `SCREENSHOT <path>`, `PROBE {webgpu,adapter,hud,warning}`, then the full
 - `yarn build` = `parcel build --no-scope-hoist`. **`--no-scope-hoist` is load-bearing:** default scope-hoisting crashes tfjs at runtime (`ReferenceError: $<hash>$exports is not defined`, blank page).
 - Clear `.parcel-cache`/`dist` after switching branches if you hit `Expected content key … to exist`.
 
+### Deploy: always use `tools/deploy.sh`
+
+```
+tools/deploy.sh "commit message"   # commits the working tree first
+tools/deploy.sh                    # tree must already be clean
+```
+
+Build → commit `main` → push `main` → publish `gh-pages` → verify the live site. Run this instead of hand-rolling the steps; the two flags it bakes in are the ones a manual build gets wrong:
+
+- **`--public-url ./`** — Pages serves this repo from `/Neural-Force-Field-Art/`, not the domain root. Without it parcel emits absolute `/index.<hash>.js` paths that 404 live *while the HTML still returns 200*, so a curl check passes and the page is blank. Hit for real on 2026-08-15; the script now fails the build if root-absolute asset paths appear.
+- **`--no-scope-hoist`** — see Build above.
+
+It also waits for the asynchronous Pages build and asserts the live `index.html` references the new content-hashed bundle, because a 200 returned before that build lands is the *previous* deploy.
+
 ### Caveats
 
 - No linter or test runner is configured.

@@ -50,7 +50,10 @@ input {
   font: 10px/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-.telemetry-host,
+/* The chrome sits on the PANEL, not on the telemetry host, so the collapse
+   toggle is inside the same bordered box as the readout it controls (the dock
+   already worked this way — .dock-header lives inside .config-dock). */
+.telemetry-panel,
 .config-dock {
   border: 1px solid var(--tui-line);
   border-radius: 4px;
@@ -59,8 +62,22 @@ input {
   backdrop-filter: blur(7px);
 }
 
+.telemetry-panel {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* The readout is a dozen fixed lines; the dock is the long scrollable thing.
+     Without this the stack's max-height splits the overflow between them and
+     the FPS block loses its last lines on an 800px screen. 45vh is the guard
+     for the tall adversary HUD: past that the host scrolls instead of
+     squeezing the dock out. */
+  flex: 0 0 auto;
+  max-height: 45vh;
+}
+
 .telemetry-host {
   min-height: 0;
+  overflow: auto;
 }
 
 .telemetry-host:empty {
@@ -88,12 +105,19 @@ input {
   top: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  padding: 5px 7px;
+  /* Padding moved onto .hud-toggle so the whole header strip is clickable. */
+  padding: 0;
   border-bottom: 1px solid var(--tui-line);
   background: rgba(3, 6, 13, 0.96);
   color: var(--tui-green);
   font-weight: 800;
   letter-spacing: 0.08em;
+}
+
+/* Collapsed, the header is the entire dock — its divider would be a stray
+   line under the chip. */
+.config-dock[data-collapsed="true"] .dock-header {
+  border-bottom: 0;
 }
 
 .dock-piece {
@@ -104,6 +128,67 @@ input {
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ── Collapse: React sets data-collapsed, CSS hides the body ───────────────
+   The toggle carries the panel's padding so the whole strip is a tap target,
+   and it is never inside the region it hides. */
+.hud-toggle {
+  width: 100%;
+  min-height: 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hud-toggle:hover .dock-piece,
+.hud-toggle:hover .hud-toggle-title,
+.hud-toggle:hover .hud-caret {
+  color: #d3e0ff;
+}
+
+.hud-toggle:focus-visible {
+  outline: 2px solid #d3e0ff;
+  outline-offset: -2px;
+}
+
+.hud-toggle-title {
+  overflow: hidden;
+  color: var(--tui-green);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hud-caret {
+  color: var(--tui-muted);
+  font-size: 9px;
+}
+
+/* Everything except the sticky header IS the collapsible region — hiding by
+   exclusion keeps the markup free of a wrapper div whose only job is display. */
+.config-dock[data-collapsed="true"] > :not(.dock-header),
+.telemetry-panel[data-collapsed="true"] .telemetry-host {
+  display: none;
+}
+
+/* Collapsed, a panel shrinks to its chip instead of holding the stack's full
+   width open — the point of collapsing is to uncover the canvas. */
+.config-dock[data-collapsed="true"],
+.telemetry-panel[data-collapsed="true"] {
+  align-self: flex-end;
+  max-width: 100%;
 }
 
 .tui-section {
@@ -455,6 +540,13 @@ input {
     min-height: 26px;
     padding: 4px 8px;
     font-size: 10px;
+  }
+
+  /* Touch target. Only on the mobile side of the breakpoint: forcing 44px on
+     desktop would inflate the dock header the desktop layout depends on. */
+  .hud-toggle {
+    min-height: 44px;
+    padding: 6px 10px;
   }
 }
 

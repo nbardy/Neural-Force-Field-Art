@@ -327,6 +327,21 @@ export interface ArtPieceConfig {
    * renderer, which colours by velocity.
    */
   colormap?: ColormapName;
+  /**
+   * Splat draw style this piece wants on load. Absent ≡ "dot" (the shipped
+   * look), canonicalized exactly once in {@link resolveStrokeStyle}, which
+   * fixes the order `?stroke=` > this > "dot". The dock's live control owns
+   * the value after startup — this is an initial condition, not a lock.
+   *
+   * ONLY meaningful on splat-rendered pieces. A `renderer: "surprise"` piece
+   * hands the whole render pass to the surprise renderer (see the render step
+   * in `tick`), which has no stroke concept, so a stroke declared there would
+   * be a dead flag.
+   */
+  stroke?: SplatStyle;
+  /** Stroke length in FRAMES of travel; same resolution order via
+   *  {@link resolveStrokeLength}. Absent ≡ 3. Ignored while stroke is "dot". */
+  strokeLen?: number;
   computeLoss: (
     pos: tf.Tensor2D,
     w: number,
@@ -1874,6 +1889,25 @@ export const GALLERY: ArtPieceConfig[] = [
   },
   // Four Pixel GAN games on soft density drawings (docs/PIXEL_DISC.md).
   // Shared trunk: splat → conv3×3 → codebook. Reverse-mode gen through D(pos').
+  //
+  // ZERO_FIELD_LOSS IS LOAD-BEARING, exactly as on the relational-adversary
+  // pieces above. Pass B computes `g = fieldLossGrad + extGrad` and hands the
+  // SUM to Adam (train_wgsl.ts `g = g + extGrad0[t]`), so a game piece that
+  // also carries a structural loss is really running two optimizers against
+  // one weight buffer — and the loser is invisible, not merely weaker.
+  //
+  // These four originally shipped W_CHAOS .2 / W_ISO .6 / W_DIV .1. Measured
+  // at the gallery dims (tools/pixel_disc_authority_probe.ts): ‖extGrad‖ was
+  // 5e-4…1e-2 against a total ‖g‖ of ~8.5, i.e. the critic owned 0.006%–0.12%
+  // of every field update. Every pass ran, every gradient was finite, and the
+  // artwork was pure W_ISO — which reads as "the pixel adversary does nothing"
+  // on any device. It is NOT a mobile bug: the probe measures the same ratio
+  // at 390×844 and 1280×800, since the splat normalizes by width/height.
+  //
+  // Do not reintroduce a structural loss here to "shape" a pixel piece. The
+  // knob for that is pixelDisc.weight, and it is only meaningful once the
+  // critic is the sole gradient — Adam rescales by sqrt(v), so a small-but-
+  // uncontested extGrad still produces full-size steps.
   {
     name: "Pixel · VecField",
     particleCount: 80000,
@@ -1898,22 +1932,8 @@ export const GALLERY: ArtPieceConfig[] = [
       hidden: 32,
       dt: 0.15,
     },
-    fieldLoss: {
-      W_CHAOS: 0.2,
-      W_ISO: 0.6,
-      W_DIV: 0.1,
-      W_SPIRAL: 0,
-      HH: 1e-2,
-      SPIRAL_TURNS: 3,
-    },
-    computeLoss: helmholtzChaosLoss({
-      W_CHAOS: 0.2,
-      W_ISO: 0.6,
-      W_DIV: 0.1,
-      W_SPIRAL: 0,
-      HH: 1e-2,
-      SPIRAL_TURNS: 3,
-    }),
+    fieldLoss: ZERO_FIELD_LOSS,
+    computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
   },
   {
     name: "Pixel · NextFrame",
@@ -1939,22 +1959,8 @@ export const GALLERY: ArtPieceConfig[] = [
       hidden: 32,
       dt: 0.15,
     },
-    fieldLoss: {
-      W_CHAOS: 0.2,
-      W_ISO: 0.6,
-      W_DIV: 0.1,
-      W_SPIRAL: 0,
-      HH: 1e-2,
-      SPIRAL_TURNS: 3,
-    },
-    computeLoss: helmholtzChaosLoss({
-      W_CHAOS: 0.2,
-      W_ISO: 0.6,
-      W_DIV: 0.1,
-      W_SPIRAL: 0,
-      HH: 1e-2,
-      SPIRAL_TURNS: 3,
-    }),
+    fieldLoss: ZERO_FIELD_LOSS,
+    computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
   },
   {
     name: "Pixel · RealFake",
@@ -1980,22 +1986,8 @@ export const GALLERY: ArtPieceConfig[] = [
       hidden: 32,
       dt: 0.15,
     },
-    fieldLoss: {
-      W_CHAOS: 0.2,
-      W_ISO: 0.6,
-      W_DIV: 0.1,
-      W_SPIRAL: 0,
-      HH: 1e-2,
-      SPIRAL_TURNS: 3,
-    },
-    computeLoss: helmholtzChaosLoss({
-      W_CHAOS: 0.2,
-      W_ISO: 0.6,
-      W_DIV: 0.1,
-      W_SPIRAL: 0,
-      HH: 1e-2,
-      SPIRAL_TURNS: 3,
-    }),
+    fieldLoss: ZERO_FIELD_LOSS,
+    computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
   },
   {
     name: "Pixel · Inpaint",
@@ -2021,22 +2013,8 @@ export const GALLERY: ArtPieceConfig[] = [
       hidden: 32,
       dt: 0.15,
     },
-    fieldLoss: {
-      W_CHAOS: 0.2,
-      W_ISO: 0.6,
-      W_DIV: 0.1,
-      W_SPIRAL: 0,
-      HH: 1e-2,
-      SPIRAL_TURNS: 3,
-    },
-    computeLoss: helmholtzChaosLoss({
-      W_CHAOS: 0.2,
-      W_ISO: 0.6,
-      W_DIV: 0.1,
-      W_SPIRAL: 0,
-      HH: 1e-2,
-      SPIRAL_TURNS: 3,
-    }),
+    fieldLoss: ZERO_FIELD_LOSS,
+    computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
   },
   {
     // GENERAL-SUM PREDICTOR GAME. Head A opposes the predictor, head B
@@ -2119,7 +2097,91 @@ export const GALLERY: ArtPieceConfig[] = [
     },
     computeLoss: helmholtzChaosLoss(MAX_CHAOS_FIELD_LOSS),
   },
+  // ══ APPEND ONLY — NEVER REORDER OR INSERT ABOVE THIS LINE ══════════════
+  // A piece's GALLERY INDEX is persisted in two places outside this file:
+  // shareable deep links carry it, and the dock's localStorage blob
+  // (DOCK_STORAGE_KEY, src/index.tsx) stores `runtime.piece` as an integer.
+  // Reordering or inserting silently re-points saved links and restored
+  // sessions at a DIFFERENT artwork — a rename is loud (see
+  // DEFAULT_PIECE_INDEX below), a renumber is not. New pieces go at the end.
+  {
+    // THE DEFAULT PIECE (see DEFAULT_PIECE_NAME). The Pair WTA K=4 game — the
+    // SE(2)-canonicalized pair observer with the explicit soft-angle payoff,
+    // which is what makes the swirls — moved onto the HASHGRID dual field.
+    // The grid's local features give the generator per-cell freedom instead of
+    // one global MLP surface, so the hard-to-predict structure lands as fine
+    // filaments; α stays at the Pair piece's 0.55 so the position ENCODING is
+    // the only deliberate difference between the two.
+    //
+    // MEASURED COST OF THE HASHGRID, not of the stroke: the fused adversary
+    // kernel refuses hashgrid fields (`fusedAdvOk` in startLoop tests
+    // `encoding.kind !== "hashgrid"`), so this piece runs the tfjs autograd
+    // adversary and the loop logs that choice. Metal, 70k particles, headless
+    // Chrome: ~24 fps / learn ≈ 40 ms here vs 60 fps / ~0.8 ms for the fused
+    // raw-MLP Pair piece. Fusing hashgrid backward for the adversary is the
+    // one change that would buy it back.
+    //
+    // renderer "alpha-fade", NOT "surprise" — deliberate, and load-bearing.
+    // A surprise piece resolves to a surprise colour mode (resolveColorMode)
+    // and the surprise renderer then takes the WHOLE render pass (see the
+    // render step in `tick`); the splat, and therefore `stroke`, never runs.
+    // Curl strokes are the point of this piece, so it colours by velocity with
+    // ghost trails. (The RAW/PER-UNIT diagnostic is fused-only anyway — see the
+    // cost note above — so a surprise piece here would have declared an
+    // instrument it cannot drive.)
+    name: "Adversary · Pair · HashGrid · Curl",
+    particleCount: 70000,
+    friction: 0.97,
+    drive: 0.65,
+    forceMagnitude: forceMagnitudeForDrive(0.65, 24, 0.97),
+    maxVelocity: 24,
+    resetRate: 0.003,
+    drawRate: 2,
+    learningRate: 0.001,
+    backgroundColor: [2, 3, 9],
+    alphaBlend: 0.05,
+    renderer: "alpha-fade",
+    // Curl: each particle draws its curved per-frame trajectory (2nd-order,
+    // curlAmp=1) rather than a dot, so at 24 px/frame the cloud reads as ink.
+    stroke: "curl",
+    createField: () =>
+      createFieldFromArch({ ...ARCH.dualHashgrid, alpha: 0.55 }),
+    adversary: {
+      tag: "on",
+      kind: { tag: "wta", k: 4, relaxEps: 0.05 },
+      encoding: { tag: "pair-rotation-scale-adjusted" },
+      // Explicit — do not rely only on the legacy encoding→soft-angle alias.
+      // Soft-angle (direction-only) is what made the pair swirls; raw-vector
+      // on this observer collapses into amplitude / shear cheats.
+      loss: {
+        tag: "soft-angle",
+        tau: ADVERSARY_OBJECTIVE_DEFAULTS.tau,
+      },
+      weight: 0.015, // reward units — see the note on the Single piece
+    },
+    fieldLoss: ZERO_FIELD_LOSS,
+    computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
+  },
 ];
+
+/**
+ * The piece the app loads into. Resolved BY NAME, never by a hardcoded index,
+ * so that appending pieces cannot shift the default and renaming this one
+ * fails LOUDLY at module load instead of silently falling back to GALLERY[0].
+ */
+export const DEFAULT_PIECE_NAME = "Adversary · Pair · HashGrid · Curl";
+
+export const DEFAULT_PIECE_INDEX: number = (() => {
+  const index = GALLERY.findIndex((piece) => piece.name === DEFAULT_PIECE_NAME);
+  if (index < 0) {
+    throw new Error(
+      `DEFAULT_PIECE_NAME "${DEFAULT_PIECE_NAME}" is not in GALLERY — ` +
+        `rename the constant with the piece, or the app would silently open ` +
+        `on a different artwork.`
+    );
+  }
+  return index;
+})();
 
 // ---------------------------------------------------------------------------
 // Physics step (inside optimizer.minimize — gradients flow through)
@@ -2284,6 +2346,47 @@ export function inkLookFromRenderer(renderer: RendererType): InkLook {
 
 export function decayForRenderer(renderer: RendererType): number {
   return SPLAT_DECAY_BY_RENDERER[renderer];
+}
+
+/** Live stroke-length bounds, shared by URL ingestion and the dock slider. */
+export const STROKE_LENGTH_RANGE = { min: 0.5, max: 16 } as const;
+
+/**
+ * κ for the splat stroke style. ONE resolution order, in priority order:
+ *
+ *   1. `?stroke=` — an explicit URL is the user's stated intent and wins.
+ *   2. the piece's declared {@link ArtPieceConfig.stroke} — the artwork's recipe.
+ *   3. "dot" — the shipped look, for the pieces that declare nothing.
+ *
+ * Exported because BOTH the loop and the React dock's first paint need the
+ * same answer; two copies of this ladder would be two chances to disagree.
+ * An unrecognised `?stroke=` is a hard error, exactly like `?adv=` / `?advM=`:
+ * a typo must not silently paint dots and look like the feature is broken.
+ */
+export function resolveStrokeStyle(
+  cfg: ArtPieceConfig,
+  q: URLSearchParams
+): SplatStyle {
+  const raw = q.get("stroke");
+  if (raw === null) return cfg.stroke ?? "dot";
+  if (raw === "dot" || raw === "vel" || raw === "curl") return raw;
+  throw new Error(`?stroke must be dot, vel or curl, got ${raw}`);
+}
+
+/**
+ * Stroke length in FRAMES of travel, same ladder: `?strokeLen=` > the piece's
+ * {@link ArtPieceConfig.strokeLen} > 3. `floatParam` (Number.isFinite, not
+ * `|| 3`) so an explicit `?strokeLen=0` clamps to the documented 0.5 floor
+ * instead of silently becoming the default.
+ */
+export function resolveStrokeLength(
+  cfg: ArtPieceConfig,
+  q: URLSearchParams
+): number {
+  return Math.max(
+    STROKE_LENGTH_RANGE.min,
+    Math.min(STROKE_LENGTH_RANGE.max, floatParam(q, "strokeLen", cfg.strokeLen ?? 3))
+  );
 }
 
 export interface LoopHandle {
@@ -2531,21 +2634,14 @@ export function startLoop(
   const SPLAT_MIN_N = 0;
   const exposureScale =
     parseFloat(new URLSearchParams(location.search).get("exposure") ?? "1") || 1;
-  // `?stroke=dot|vel|curl` — splat draw style (default dot, the shipped look).
-  // "vel"/"curl" draw per-frame geometric strokes along each particle's
-  // backward trajectory, so fast particles (maxVelocity ~26 px/frame vs a
-  // ~1.6px dot) read as continuous filaments instead of disconnected dots.
-  const strokeParam = new URLSearchParams(location.search).get("stroke");
-  let strokeStyle: SplatStyle =
-    strokeParam === "vel" || strokeParam === "curl" ? strokeParam : "dot";
-  // `?strokeLen=F` — stroke length in FRAMES of travel (default 3, [0.5, 16]).
-  // Number.isFinite (not `|| 3`) so an explicit `?strokeLen=0` clamps to the
-  // documented 0.5 floor instead of silently becoming the default.
-  const strokeLenParam = new URLSearchParams(location.search).get("strokeLen");
-  const strokeLenParsed = strokeLenParam !== null ? parseFloat(strokeLenParam) : NaN;
-  let strokeLen = Number.isFinite(strokeLenParsed)
-    ? Math.max(0.5, Math.min(16, strokeLenParsed))
-    : 3;
+  // `?stroke=dot|vel|curl` — splat draw style. "vel"/"curl" draw per-frame
+  // geometric strokes along each particle's backward trajectory, so fast
+  // particles (maxVelocity ~26 px/frame vs a ~1.6px dot) read as continuous
+  // filaments instead of disconnected dots. The ladder (URL > piece > "dot",
+  // and `?strokeLen=` > piece > 3) lives in resolveStrokeStyle /
+  // resolveStrokeLength so React's first paint resolves it identically.
+  let strokeStyle: SplatStyle = resolveStrokeStyle(cfg, query);
+  let strokeLen = resolveStrokeLength(cfg, query);
   let frame = 0;
 
   // --- Telemetry HUD: FPS + per-stage timing so the bottleneck is visible ----
@@ -3650,7 +3746,10 @@ export function startLoop(
         },
         getStrokeLength: () => strokeLen,
         setStrokeLength: (v: number) => {
-          strokeLen = Math.max(0.5, Math.min(16, v));
+          strokeLen = Math.max(
+            STROKE_LENGTH_RANGE.min,
+            Math.min(STROKE_LENGTH_RANGE.max, v)
+          );
           if (splat) splat.strokeLen = strokeLen;
         },
         getAdversaryWeight: () => (advRt.tag === "on" ? advRt.weight : 0),
