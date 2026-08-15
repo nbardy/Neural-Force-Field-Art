@@ -67,6 +67,17 @@ fi
 git push origin main
 
 # --- 4. publish gh-pages ----------------------------------------------------
+# A worktree left behind by an interrupted deploy still holds gh-pages checked
+# out, and `worktree add` refuses. Prune dead entries, then reclaim a stale temp
+# worktree of our own; anything else is someone's real checkout — say so and stop.
+git worktree prune
+stale="$(git worktree list --porcelain | awk '/^worktree /{p=$2} /^branch refs\/heads\/gh-pages$/{print p}')"
+if [ -n "$stale" ]; then
+  case "$stale" in
+    */tmp-gh-pages-*) echo "deploy: reclaiming stale worktree $stale"; git worktree remove --force "$stale" ;;
+    *) echo "deploy: gh-pages is checked out at $stale — remove it first" >&2; exit 1 ;;
+  esac
+fi
 git worktree add "$WORKTREE" gh-pages >/dev/null
 cleanup() { git worktree remove --force "$WORKTREE" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
