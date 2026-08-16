@@ -1,6 +1,5 @@
 dist
 node_modules
-node_modules
 yarn-error.log
 .parcel-cache
 dist_verify

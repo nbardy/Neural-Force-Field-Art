@@ -10,7 +10,6 @@
     "buffer": "^5.5.0||^6.0.0",
     "bun-webgpu": "^0.1.7",
     "onnxruntime-node": "^1.27.0",
-    "onnxruntime-web": "^1.27.0",
     "parcel": "latest",
     "process": "^0.11.10",
     "puppeteer": "^25.3.0"
@@ -21,7 +20,6 @@
     "@tensorflow/tfjs-vis": "^1.5.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "twgl.js": "^5.5.3",
-    "webgpu": "^0.1.16"
+    "twgl.js": "^5.5.3"
   }
 }
