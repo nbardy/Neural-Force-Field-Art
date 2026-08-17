@@ -66,12 +66,18 @@ device.queue.writeBuffer(posBuf, 0, pos);
 const velBuf = device.createBuffer({ size: pos.byteLength, usage: GBU.STORAGE | GBU.COPY_DST });
 
 const CONFIGS = [
-  { label: "GALLERY  G=16 E=8 K=16 h=32", G: 16, E: 8, K: 16, hidden: 32 },
-  { label: "         G=12 E=8 K=16 h=32", G: 12, E: 8, K: 16, hidden: 32 },
-  { label: "         G=16 E=4 K=8  h=16", G: 16, E: 4, K: 8, hidden: 16 },
-  { label: "         G=8  E=8 K=16 h=32", G: 8, E: 8, K: 16, hidden: 32 },
-  { label: "TESTED   G=8  E=4 K=8  h=8 ", G: 8, E: 4, K: 8, hidden: 8 },
+  { label: "GALLERY  G=8  E=4 K=8  h=16", G: 8, E: 4, K: 8, hidden: 16, gate: true },
+  { label: "was      G=16 E=8 K=16 h=32", G: 16, E: 8, K: 16, hidden: 32, gate: false },
+  { label: "         G=12 E=8 K=16 h=32", G: 12, E: 8, K: 16, hidden: 32, gate: false },
 ];
+
+/**
+ * A pixel step must fit inside the frame with advect + render, which alone
+ * measure ~16 ms at 80k particles. Anything above this is what "frozen on
+ * mobile" looked like: 36 ms/step at the old G=16 gallery config.
+ */
+const BUDGET_MS = 12;
+let failures = 0;
 const KINDS: PixelGanKind[] = ["vec-field", "next-frame", "real-fake", "inpaint"];
 
 console.log(`particles=${N}  b=256  field=${layout.totalFloats} floats (dualFourier)\n`);
@@ -96,15 +102,32 @@ for (const c of CONFIGS) {
       await device.queue.onSubmittedWorkDone();
     };
     await step(0); // warm: shader compile + first-use allocation
-    const t0 = performance.now();
-    const REPS = 5;
-    for (let i = 1; i <= REPS; i++) await step(i);
-    const ms = (performance.now() - t0) / REPS;
+    // Median of per-step times: the mean was swamped by GPU contention noise
+    // (a browser tab rendering the same piece moved it 2-3x run to run).
+    const REPS = 15;
+    const times: number[] = [];
+    for (let i = 1; i <= REPS; i++) {
+      const s0 = performance.now();
+      await step(i);
+      times.push(performance.now() - s0);
+    }
+    times.sort((a, b) => a - b);
+    const ms = times[Math.floor(times.length / 2)];
     const privKB = ((c.E + c.K) * c.G * c.G * 4) / 1024;
+    const bad = c.gate && ms > BUDGET_MS;
+    if (bad) failures++;
     console.log(
-      `${c.label}  ${kind.padEnd(11)}  ${ms.toFixed(1).padStart(7)}   ${privKB.toFixed(1).padStart(6)}`
+      `${bad ? "FAIL" : c.gate ? " ok " : "    "} ${c.label}  ${kind.padEnd(11)}  ` +
+        `${ms.toFixed(1).padStart(7)}   ${privKB.toFixed(1).padStart(6)}`
     );
     trainer.destroy();
   }
   console.log("");
 }
+
+console.log(
+  failures === 0
+    ? `ALL PASS — every shipped kind under ${BUDGET_MS} ms/step`
+    : `${failures} FAILURE(S) — a shipped pixel piece exceeds the frame budget`
+);
+process.exit(failures === 0 ? 0 : 1);

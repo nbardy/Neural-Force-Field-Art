@@ -80,23 +80,70 @@ export function directionOrderLoss(
   polarWeight: number,
   nematicWeight: number
 ): tf.Scalar {
-  if (!(Number.isFinite(tau) && tau > 0)) {
-    throw new Error(`directionOrderLoss: tau must be finite and > 0, got ${tau}`);
-  }
+  checkedTau(tau, "directionOrderLoss");
   return tf.tidy(() => {
-    const mag = force
-      .square()
-      .sum(1)
-      .add(tau * tau)
-      .sqrt()
-      .reshape([-1, 1]) as tf.Tensor2D;
-    const u = force.div(mag) as tf.Tensor2D;
-    const ux = u.slice([0, 0], [-1, 1]).reshape([-1]) as tf.Tensor1D;
-    const uy = u.slice([0, 1], [-1, 1]).reshape([-1]) as tf.Tensor1D;
+    const { ux, uy } = softUnit(force, tau);
     const polar = ux.mean().square().add(uy.mean().square());
     const c2 = ux.square().sub(uy.square()) as tf.Tensor1D;
     const s2 = ux.mul(uy).mul(2) as tf.Tensor1D;
     const nematic = c2.mean().square().add(s2.mean().square());
     return polar.mul(polarWeight).add(nematic.mul(nematicWeight)).asScalar();
   });
+}
+
+/**
+ * The two ORDER PARAMETERS behind {@link directionOrderLoss}, as plain numbers
+ * for telemetry: `R₁ = ‖mean u‖` (polar — one global flow) and
+ * `R₂ = ‖mean(uₓ²−u_y², 2uₓu_y)‖` (nematic — ± aligned streaks). Both are 0 for
+ * an isotropic direction field and 1 for a fully ordered one, and
+ * `loss = polar·R₁² + nematic·R₂²` exactly, so the HUD number and the term the
+ * generator pays are the SAME statistic rather than two similar ones.
+ *
+ * The fused trainer reports the identical pair from the moments its pass-A
+ * reduction already accumulates (AdvStats.directionOrder); this is the tfjs
+ * path's twin so both trainers feed one HUD field.
+ *
+ * Costs one dataSync — call it on the telemetry path, not inside a tape.
+ */
+export function directionOrderParameters(
+  force: tf.Tensor2D,
+  tau: number
+): { r1: number; r2: number } {
+  checkedTau(tau, "directionOrderParameters");
+  const packed = tf.tidy(() => {
+    const { ux, uy } = softUnit(force, tau);
+    return tf.stack([
+      ux.mean(),
+      uy.mean(),
+      ux.square().sub(uy.square()).mean(),
+      ux.mul(uy).mul(2).mean(),
+    ]);
+  });
+  const m = packed.dataSync();
+  packed.dispose();
+  return { r1: Math.hypot(m[0], m[1]), r2: Math.hypot(m[2], m[3]) };
+}
+
+function checkedTau(tau: number, where: string): void {
+  if (!(Number.isFinite(tau) && tau > 0)) {
+    throw new Error(`${where}: tau must be finite and > 0, got ${tau}`);
+  }
+}
+
+/** u = F / sqrt(‖F‖² + τ²), split into components. τ² IS the radicand floor. */
+function softUnit(
+  force: tf.Tensor2D,
+  tau: number
+): { ux: tf.Tensor1D; uy: tf.Tensor1D } {
+  const mag = force
+    .square()
+    .sum(1)
+    .add(tau * tau)
+    .sqrt()
+    .reshape([-1, 1]) as tf.Tensor2D;
+  const u = force.div(mag) as tf.Tensor2D;
+  return {
+    ux: u.slice([0, 0], [-1, 1]).reshape([-1]) as tf.Tensor1D,
+    uy: u.slice([0, 1], [-1, 1]).reshape([-1]) as tf.Tensor1D,
+  };
 }

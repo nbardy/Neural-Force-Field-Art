@@ -54,7 +54,11 @@ export { HelmholtzField } from "./core/field/helmholtz";
 // are inlined (they share one 3×-batched field forward — see
 // helmholtzChaosLoss); the standalone chaosLoss/divergencePenalty exports are
 // consumed by the legacy pages and tests, not by the gallery loop.
-import { directionOrderLoss, isotropyLoss } from "./core/losses";
+import {
+  directionOrderLoss,
+  directionOrderParameters,
+  isotropyLoss,
+} from "./core/losses";
 // OPTIONAL zero-copy GPU renderer (perf lane). Imported so it compiles and is
 // ready, but only used when a preset sets `gpu: true` (none do by default — it
 // needs browser QA). See src/render/gpuPoints.ts.
@@ -62,7 +66,7 @@ import { GpuPointRenderer } from "./render/gpuPoints";
 import { GpuPointRendererWebGPU } from "./render/webgpu/points";
 import { SplatRenderer, SplatStyle } from "./render/webgpu/splat";
 import { AdvectKernel } from "./render/webgpu/advect";
-import type { BorderMode } from "./render/webgpu/advect_wgsl";
+import type { BorderMode, FieldLayout } from "./render/webgpu/advect_wgsl";
 import { FusedTrainer } from "./render/webgpu/train";
 import { MAX_BATCH, type FieldLossSpec } from "./render/webgpu/train_wgsl";
 // FUSED ADVERSARY (adversary_train.ts + adversary_wgsl.ts): the WGSL port of
@@ -70,13 +74,16 @@ import { MAX_BATCH, type FieldLossSpec } from "./render/webgpu/train_wgsl";
 // packed raw/per-unit surprise buffer, ~0.7-0.8 ms/step at B=512 vs tfjs's
 // 19-32 ms.
 // Oracle-gated by tools/train_wta_test.ts (cos = 1.0000000 vs the AD-IR
-// oracle AND tf.variableGrads). Raw/fourier classless fields only; anything
-// else falls back to the tfjs path below, loudly.
+// oracle AND tf.variableGrads) and tools/train_wta_hashgrid_test.ts /
+// tools/train_wta_pressure_test.ts. Classless fields only; anything else falls
+// back to the tfjs path below, loudly.
 import {
   AdversaryTrainer,
   type SurpriseMetric,
+  type DirectionOrder,
 } from "./render/webgpu/adversary_train";
 import { PixelDiscTrainer } from "./render/webgpu/pixel_disc_train";
+import { classifyPixelDiscFusion } from "./render/webgpu/pixel_disc_wgsl";
 import { GpuTimer } from "./render/webgpu/gputime";
 // ADVERSARY (src/core/gan/adversary.ts): a relaxed winner-take-all
 // multiple-choice predictor whose irreducible residual is the generator's
@@ -249,6 +256,22 @@ export function surpriseMetricOf(m: ColorMode): SurpriseMetric | null {
   }
 }
 
+/**
+ * A piece's pixel-space density critic. Named (rather than inline in
+ * {@link ArtPieceConfig}) so the routing decision can carry the very spec it
+ * approved — see {@link PixelCriticPlan}.
+ */
+export interface PixelCriticSpec {
+  readonly weight: number;
+  /** One of the four Pixel GAN games — see docs/PIXEL_DISC.md. */
+  readonly kind?: "vec-field" | "next-frame" | "real-fake" | "inpaint";
+  readonly G?: number;
+  readonly E?: number;
+  readonly K?: number;
+  readonly hidden?: number;
+  readonly dt?: number;
+}
+
 export interface ArtPieceConfig {
   name: string;
   particleCount: number;
@@ -348,20 +371,7 @@ export interface ArtPieceConfig {
    * reward flows through a differentiable soft density (virtual one-step) into
    * extGrads — reverse-mode, not JVP. See src/core/gan/pixel_disc.ts.
    */
-  pixelDisc?: {
-    readonly weight: number;
-    /** One of the four Pixel GAN games — see docs/PIXEL_DISC.md. */
-    readonly kind?:
-      | "vec-field"
-      | "next-frame"
-      | "real-fake"
-      | "inpaint";
-    readonly G?: number;
-    readonly E?: number;
-    readonly K?: number;
-    readonly hidden?: number;
-    readonly dt?: number;
-  };
+  pixelDisc?: PixelCriticSpec;
   /**
    * Colormap for `renderer: "surprise"` pieces. Absent ≡ "inferno"
    * (canonicalized in {@link resolveColorMode}); ignored by every other
@@ -576,6 +586,45 @@ export const ADVERSARY_OBJECTIVE_DEFAULTS = {
 } as const;
 
 /**
+ * SHIPPED anti-collapse setting for adversarial GALLERY pieces.
+ *
+ * 0.05/0.05 is the pair measured in tools/collapse_probe.ts: R₁ 0.98 → 0.057
+ * (pair preset) and 0.95 → 0.10 (point preset) with the payoff staying in the
+ * healthy 0.48–0.63 band and structure (AC) growing monotonically. Polar alone
+ * was measured to be escapable — the generator answered it with ±F₀
+ * counter-streaming sheets (R₂ = 0.95), which reads on screen as the SAME
+ * laminar streaks — so both weights ship together.
+ *
+ * τ is the canonical soft-angle τ, which every soft-angle gallery piece also
+ * uses, and is the same value `?advPolar=` alone resolves to for a raw-vector
+ * objective. `?advPolar=0&advNematic=0` turns the whole term off explicitly
+ * (parseGamePressure then returns the NAMED `none`), mirroring ?advWeight=0.
+ *
+ * NOT stacked with an Okubo-Weiss/swirl term, deliberately: a 2000-step run
+ * measured that it crushes ‖F‖ 0.035 → 0.005 and parks the payoff at √2 for a
+ * thousand steps — ANY term that shrinks ‖F‖ feeds the north-pole exploit this
+ * pressure exists to price.
+ */
+export const GALLERY_ANTI_COLLAPSE: GamePressure = {
+  tag: "anti-collapse",
+  polar: 0.05,
+  nematic: 0.05,
+  tau: ADVERSARY_OBJECTIVE_DEFAULTS.tau,
+};
+
+/** One-line pressure description for the trainer log. */
+function describePressure(p: GamePressure): string {
+  switch (p.tag) {
+    case "none":
+      return "none";
+    case "anti-collapse":
+      return `anti-collapse polar=${p.polar} nematic=${p.nematic} tau=${p.tau}`;
+    default:
+      return assertNeverPiece(p, "describePressure");
+  }
+}
+
+/**
  * Compatibility mapping for adversary specs written before target/loss became
  * orthogonal axes. The legacy "adjusted" R+S tag meant angular prediction, so
  * preserve that visible behavior with the new exact smooth S² loss. Every
@@ -753,8 +802,24 @@ export function resolveAdversary(
     throw new Error(`?adv must be off|single|wta, got "${mode}"`);
   }
   // No `?adv=`: keep the piece's variant, apply the knob overrides to it.
+  //
+  // `from` is the piece's own spec, already narrowed to the active variant. It
+  // cannot be null here — `mode === null && base.tag === "off"` returned above,
+  // and every other `mode` either returned or threw — but that invariant spans
+  // statements, so state it as a typed error rather than reading `base.kind`
+  // (which TS correctly rejects: an off spec has no `kind`) or defaulting to
+  // wta. A silent wta default here would invent an adversary for a piece that
+  // never declared one, which is precisely the class of bug this file's gates
+  // exist to prevent.
+  if (from === null) {
+    throw new Error(
+      "resolveAdversary: reached the piece-variant path with no piece spec — " +
+        "the `?adv` ladder above must return for every mode when the piece " +
+        "declares no adversary"
+    );
+  }
   const kind: AdversaryKind =
-    base.kind.tag === "single" ? { tag: "single" } : { tag: "wta", k, relaxEps: eps };
+    from.kind.tag === "single" ? { tag: "single" } : { tag: "wta", k, relaxEps: eps };
   return { tag: "on", kind, encoding, target, loss, weight, pressure, ...gamePart };
 }
 
@@ -833,6 +898,103 @@ export function resolveColorMode(
     return { tag: "velocity" };
   }
   return { tag: perUnit ? "surprise-per-unit" : "surprise-raw", colormap };
+}
+
+/**
+ * What the pixel critic actually IS this run — a named state per outcome.
+ *
+ * Every one of these used to be an unnamed skip in the trainer-gate `if`, and
+ * a skipped critic is invisible: the gallery entry still says "Pixel · …", the
+ * HUD still says the piece is training, and the four shipped Pixel pieces carry
+ * `fieldLoss: ZERO_FIELD_LOSS` — so "critic dropped" means NOTHING drives the
+ * field, not "the piece trains a bit less". `dropped` carries its reason so the
+ * loop can say which gate did it.
+ */
+export type PixelCriticPlan =
+  | { readonly tag: "absent" }
+  /** Carries the approved spec so the construction site re-checks nothing. */
+  | { readonly tag: "fused"; readonly spec: PixelCriticSpec }
+  | { readonly tag: "dropped"; readonly reason: string };
+
+/**
+ * κ for the pixel critic: the ONE place that decides whether a declared critic
+ * runs, why it doesn't, and which combinations are not configurations at all.
+ *
+ * The Agree+Disagree case is a THROW, not a `dropped`, because it is a piece
+ * authoring error rather than a runtime override: the game and the critic both
+ * want an external-gradient slot in the fused field trainer's pass B, which
+ * carries at most two (`train_wgsl.ts` `extGradCount ∈ [0,2]`, one read-only
+ * binding each) and the game's two lanes take both. The old code expressed that
+ * as `if (advTrainerB) … else if (pixelDiscTrainer)`, so such a piece built the
+ * critic, logged `[pixel-disc] FUSED`, and dispatched all ten of its passes
+ * every frame while contributing 0% of the field update — the same failure the
+ * anti-collapse pressure gate below is written to prevent.
+ */
+export function resolvePixelCritic(gates: {
+  /** The piece's `pixelDisc` declaration; absent ≡ this piece has no critic. */
+  readonly declared: PixelCriticSpec | undefined;
+  readonly hasField: boolean;
+  /** The piece declares `fieldLoss`, i.e. the fused field trainer can run. */
+  readonly fieldLossDeclared: boolean;
+  readonly wantTfjsTrainer: boolean;
+  /** An adversary is on but routed to the tfjs autograd trainer. */
+  readonly adversaryOnTfjs: boolean;
+  readonly agreeDisagreeGame: boolean;
+  readonly layout: FieldLayout;
+}): PixelCriticPlan {
+  const spec = gates.declared;
+  if (spec === undefined) return { tag: "absent" };
+  if (gates.agreeDisagreeGame) {
+    throw new Error(
+      "[pixel-disc] this piece declares BOTH the Agree+Disagree game and a " +
+        "pixel critic. The fused field trainer's pass B sums at most TWO " +
+        "external gradients and the game's two lanes take both, so the critic " +
+        "would train, log and dispatch every frame while contributing 0% of " +
+        "the field update. Drop one of the two on this piece, or extend " +
+        "trainPassBShader to a third extGrad binding first."
+    );
+  }
+  if (!gates.hasField) {
+    return {
+      tag: "dropped",
+      reason:
+        "this piece has no neural field (legacy MLP path); the critic's " +
+        "generator reward has nowhere to land",
+    };
+  }
+  if (gates.wantTfjsTrainer) {
+    return {
+      tag: "dropped",
+      reason:
+        "?train=tfjs selected the tfjs autograd trainer and there is no tfjs " +
+        "implementation of the density critic — on a ZERO_FIELD_LOSS Pixel " +
+        "piece that leaves NOTHING training the field, and optimizer.minimize " +
+        "then throws \"Cannot find a connection between any variable and the " +
+        "result of the loss function\" (measured on this build; the throw is " +
+        "the constant loss, not a tape bug)",
+    };
+  }
+  if (!gates.fieldLossDeclared) {
+    return {
+      tag: "dropped",
+      reason:
+        "the piece declares no fieldLoss, so the fused field trainer (the " +
+        "only consumer of the critic's extGrads) never runs",
+    };
+  }
+  if (gates.adversaryOnTfjs) {
+    return {
+      tag: "dropped",
+      reason:
+        "this piece's adversary game routed to the tfjs trainer, which takes " +
+        "the whole field step with it",
+    };
+  }
+  const fusion = classifyPixelDiscFusion(gates.layout);
+  if (fusion.tag === "unsupported") {
+    return { tag: "dropped", reason: fusion.reason };
+  }
+  return { tag: "fused", spec };
 }
 
 // ---------------------------------------------------------------------------
@@ -1271,6 +1433,48 @@ function headHealthHud(h: HeadHealth): string {
   }
 }
 
+/**
+ * REFERENCE VALUE for the payoff chart — free, no new plumbing.
+ *
+ * Under a soft-angle objective the residual is a chord on S²: ψτ(0) is the
+ * north pole and sits exactly √2 ≈ 1.4142 from every equatorial embedding. The
+ * payoff parks there whenever ONE side of the comparison is polar and the other
+ * equatorial, which happens for two opposite reasons — so the line is only a
+ * diagnosis when read together with R₁ (which is why the two charts are
+ * adjacent):
+ *
+ *   payoff ≈ √2 AND R₁ → 1  the encoded TARGET went to zero: the field is flat
+ *                           and G is collecting the north-pole bonus. This is
+ *                           the collapse (measured 1.362 at the prototype's
+ *                           step-800 event).
+ *   payoff ≈ √2 AND R₁ → 0  the field is so direction-isotropic that D's best
+ *                           response IS the pole. Measured live on the default
+ *                           piece: a ~25 s transient right after the pressure
+ *                           takes hold, decaying to 0.56–0.71 as D relearns.
+ *                           That is the game working, not failing.
+ *
+ * `none` for raw-vector (unbounded residual, no such value) and for the
+ * scale-augmented angle objectives, whose payoff carries an ADDITIVE local
+ * scale term — √2 is not their reference value and drawing it would be a lie.
+ */
+export type PayoffReference =
+  | { readonly tag: "none" }
+  | { readonly tag: "north-pole"; readonly chord: number };
+
+/** δ: objective → its collapse payoff value. */
+export function payoffReferenceOf(loss: AdversaryLoss): PayoffReference {
+  switch (loss.tag) {
+    case "soft-angle":
+      return { tag: "north-pole", chord: Math.SQRT2 };
+    case "raw-vector":
+    case "angle-relative-scale":
+    case "angle-scale-hold":
+      return { tag: "none" };
+    default:
+      return assertNeverPiece(loss, "payoffReferenceOf");
+  }
+}
+
 /** What the HUD and the React panel read. */
 export type AdversaryTelemetry =
   | { readonly tag: "off" }
@@ -1280,8 +1484,22 @@ export type AdversaryTelemetry =
       readonly k: number;
       /** Mean relaxed-WTA payoff on the most recent training batch. */
       readonly surprise: number;
-      /** Predictor (discriminator) loss on the most recent batch. */
+      /** Predictor (discriminator) loss on the most recent batch. NOTE this is
+       *  the same zero-sum scalar as `surprise` — see AdvStats.payoffUngated. */
       readonly predLoss: number;
+      /**
+       * Direction order of the field over the most recent training batch, from
+       * the anti-collapse pressure's own moments. `unmeasured` when no pressure
+       * is declared: neither trainer computes the moments then, and a 0 would
+       * read as "perfectly isotropic" on a piece that may be fully laminar.
+       */
+      readonly directionOrder: DirectionOrder;
+      /**
+       * The payoff value that means "the encoded target has gone to zero", for
+       * objectives whose residual is bounded by a fixed chord. See
+       * {@link PayoffReference}.
+       */
+      readonly payoffReference: PayoffReference;
       /** Cumulative share of wins per head; length k. Uniform = 1/k each. */
       readonly winFractions: readonly number[];
       /** Conservative head-health verdict. Win skew plus small measured spread
@@ -1525,6 +1743,16 @@ export function adversaryTrainStep(
       const surprise = meanTen.dataSync()[0];
       surTen.dispose();
       meanTen.dispose();
+      // R₁/R₂ over the SAME raw field batch the pressure is priced on, using
+      // the same estimator the fused trainer reduces on-device. Measured only
+      // when a pressure is declared — see AdversaryTelemetry.directionOrder.
+      const directionOrder: DirectionOrder =
+        rt.pressure.tag === "anti-collapse"
+          ? {
+              tag: "measured",
+              ...directionOrderParameters(rawSignal, rt.pressure.tau),
+            }
+          : { tag: "unmeasured" };
       // ~1 Hz HEAD-SPREAD PROBE — wall-clock gated, NOT per step: it costs one
       // forward per head plus a dataSync (a pipeline sync on webgpu). This
       // batch's `u` serves as the probe contexts — the spread is a property of
@@ -1569,6 +1797,8 @@ export function adversaryTrainStep(
         k: rt.adv.k,
         surprise,
         predLoss: report.loss,
+        directionOrder,
+        payoffReference: payoffReferenceOf(rt.adv.cfg.loss),
         winFractions,
         health: classifyHeads(winsSkewed, rt.spread, rt.adv.rewardScaleState()),
         weight: rt.weight,
@@ -1873,6 +2103,10 @@ export const GALLERY: ArtPieceConfig[] = [
       // REWARD UNITS CHANGED 2026-07-27: generatorLoss is now normalized by an
       // EMA of RMS‖y‖ — dimensionless residual per unit field signal.
       weight: 0.01,
+      // Anti-collapse: the soft-angle north pole pays the generator 3.15x
+      // more for a DEAD field than for a varied one, so every adversarial
+      // piece prices direction order. See GALLERY_ANTI_COLLAPSE.
+      pressure: GALLERY_ANTI_COLLAPSE,
     },
     fieldLoss: ZERO_FIELD_LOSS,
     computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
@@ -1902,6 +2136,10 @@ export const GALLERY: ArtPieceConfig[] = [
       kind: { tag: "wta", k: 8, relaxEps: 0.05 },
       encoding: { tag: "point" },
       weight: 0.012, // reward units — see the note on the Single piece
+      // Anti-collapse: the soft-angle north pole pays the generator 3.15x
+      // more for a DEAD field than for a varied one, so every adversarial
+      // piece prices direction order. See GALLERY_ANTI_COLLAPSE.
+      pressure: GALLERY_ANTI_COLLAPSE,
     },
     fieldLoss: ZERO_FIELD_LOSS,
     computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
@@ -1952,6 +2190,10 @@ export const GALLERY: ArtPieceConfig[] = [
         tau: ADVERSARY_OBJECTIVE_DEFAULTS.tau,
       },
       weight: 0.015, // reward units — see the note on the Single piece
+      // Anti-collapse: the soft-angle north pole pays the generator 3.15x
+      // more for a DEAD field than for a varied one, so every adversarial
+      // piece prices direction order. See GALLERY_ANTI_COLLAPSE.
+      pressure: GALLERY_ANTI_COLLAPSE,
     },
     fieldLoss: ZERO_FIELD_LOSS,
     computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
@@ -1995,6 +2237,10 @@ export const GALLERY: ArtPieceConfig[] = [
       kind: { tag: "wta", k: 6, relaxEps: 0.05 },
       encoding: { tag: "tri" },
       weight: 0.012, // reward units — see the note on the Single piece
+      // Anti-collapse: the soft-angle north pole pays the generator 3.15x
+      // more for a DEAD field than for a varied one, so every adversarial
+      // piece prices direction order. See GALLERY_ANTI_COLLAPSE.
+      pressure: GALLERY_ANTI_COLLAPSE,
     },
     fieldLoss: ZERO_FIELD_LOSS,
     computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
@@ -2023,6 +2269,10 @@ export const GALLERY: ArtPieceConfig[] = [
       kind: { tag: "wta", k: 6, relaxEps: 0.05 },
       encoding: { tag: "quad-labelled" },
       weight: 0.012,
+      // Anti-collapse: the soft-angle north pole pays the generator 3.15x
+      // more for a DEAD field than for a varied one, so every adversarial
+      // piece prices direction order. See GALLERY_ANTI_COLLAPSE.
+      pressure: GALLERY_ANTI_COLLAPSE,
     },
     fieldLoss: ZERO_FIELD_LOSS,
     computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
@@ -2066,10 +2316,16 @@ export const GALLERY: ArtPieceConfig[] = [
     pixelDisc: {
       kind: "vec-field",
       weight: 0.04,
-      G: 16,
-      E: 8,
-      K: 16,
-      hidden: 32,
+      // COST, not taste: the critic kernels are workgroup_size(1), so one GPU
+      // thread walks all G² cells. G=16 measured 17-37 ms/step on an M-series
+      // desktop GPU (tools/pixel_disc_cost_probe.ts) — more than the whole
+      // 16 ms frame budget, which is what made these pieces look frozen on a
+      // phone. G=8 is 4-11 ms. Raise G only after criticDisc/criticGen are
+      // parallelized across the workgroup; until then G is a frame-time dial.
+      G: 8,
+      E: 4,
+      K: 8,
+      hidden: 16,
       dt: 0.15,
     },
     fieldLoss: ZERO_FIELD_LOSS,
@@ -2093,10 +2349,16 @@ export const GALLERY: ArtPieceConfig[] = [
     pixelDisc: {
       kind: "next-frame",
       weight: 0.04,
-      G: 16,
-      E: 8,
-      K: 16,
-      hidden: 32,
+      // COST, not taste: the critic kernels are workgroup_size(1), so one GPU
+      // thread walks all G² cells. G=16 measured 17-37 ms/step on an M-series
+      // desktop GPU (tools/pixel_disc_cost_probe.ts) — more than the whole
+      // 16 ms frame budget, which is what made these pieces look frozen on a
+      // phone. G=8 is 4-11 ms. Raise G only after criticDisc/criticGen are
+      // parallelized across the workgroup; until then G is a frame-time dial.
+      G: 8,
+      E: 4,
+      K: 8,
+      hidden: 16,
       dt: 0.15,
     },
     fieldLoss: ZERO_FIELD_LOSS,
@@ -2120,10 +2382,16 @@ export const GALLERY: ArtPieceConfig[] = [
     pixelDisc: {
       kind: "real-fake",
       weight: 0.03,
-      G: 16,
-      E: 8,
-      K: 16,
-      hidden: 32,
+      // COST, not taste: the critic kernels are workgroup_size(1), so one GPU
+      // thread walks all G² cells. G=16 measured 17-37 ms/step on an M-series
+      // desktop GPU (tools/pixel_disc_cost_probe.ts) — more than the whole
+      // 16 ms frame budget, which is what made these pieces look frozen on a
+      // phone. G=8 is 4-11 ms. Raise G only after criticDisc/criticGen are
+      // parallelized across the workgroup; until then G is a frame-time dial.
+      G: 8,
+      E: 4,
+      K: 8,
+      hidden: 16,
       dt: 0.15,
     },
     fieldLoss: ZERO_FIELD_LOSS,
@@ -2147,10 +2415,16 @@ export const GALLERY: ArtPieceConfig[] = [
     pixelDisc: {
       kind: "inpaint",
       weight: 0.04,
-      G: 16,
-      E: 8,
-      K: 16,
-      hidden: 32,
+      // COST, not taste: the critic kernels are workgroup_size(1), so one GPU
+      // thread walks all G² cells. G=16 measured 17-37 ms/step on an M-series
+      // desktop GPU (tools/pixel_disc_cost_probe.ts) — more than the whole
+      // 16 ms frame budget, which is what made these pieces look frozen on a
+      // phone. G=8 is 4-11 ms. Raise G only after criticDisc/criticGen are
+      // parallelized across the workgroup; until then G is a frame-time dial.
+      G: 8,
+      E: 4,
+      K: 8,
+      hidden: 16,
       dt: 0.15,
     },
     fieldLoss: ZERO_FIELD_LOSS,
@@ -2195,6 +2469,10 @@ export const GALLERY: ArtPieceConfig[] = [
         tau: ADVERSARY_OBJECTIVE_DEFAULTS.tau,
       },
       weight: 0.012,
+      // Anti-collapse: the soft-angle north pole pays the generator 3.15x
+      // more for a DEAD field than for a varied one, so every adversarial
+      // piece prices direction order. See GALLERY_ANTI_COLLAPSE.
+      pressure: GALLERY_ANTI_COLLAPSE,
     },
     computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
   },
@@ -2234,6 +2512,10 @@ export const GALLERY: ArtPieceConfig[] = [
       kind: { tag: "wta", k: 6, relaxEps: 0.05 },
       encoding: { tag: "pair-rotation" },
       weight: 0.006, // reward units — see the note on the Single piece
+      // Anti-collapse: the soft-angle north pole pays the generator 3.15x
+      // more for a DEAD field than for a varied one, so every adversarial
+      // piece prices direction order. See GALLERY_ANTI_COLLAPSE.
+      pressure: GALLERY_ANTI_COLLAPSE,
     },
     computeLoss: helmholtzChaosLoss(MAX_CHAOS_FIELD_LOSS),
   },
@@ -2297,6 +2579,10 @@ export const GALLERY: ArtPieceConfig[] = [
         tau: ADVERSARY_OBJECTIVE_DEFAULTS.tau,
       },
       weight: 0.015, // reward units — see the note on the Single piece
+      // Anti-collapse: the soft-angle north pole pays the generator 3.15x
+      // more for a DEAD field than for a varied one, so every adversarial
+      // piece prices direction order. See GALLERY_ANTI_COLLAPSE.
+      pressure: GALLERY_ANTI_COLLAPSE,
     },
     fieldLoss: ZERO_FIELD_LOSS,
     computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
@@ -2877,18 +3163,12 @@ export function startLoop(
   // as ~10KB of GPU→GPU copies per frame; particle state never touches tfjs,
   // so particle count scales to 1M+ without touching the train cost.
   async function tick() {
-    // TEMP INSTRUMENTATION — remove before commit.
+    // Bail WITHOUT rescheduling when the loop is torn down (or a dependency
+    // vanished mid-teardown) — rearming here would resurrect a dead piece.
     if (!running || !(optimizer || trainer) || !advect || !wh || !device) {
-      (window as any).__nffDead = {
-        piece: cfg.name, frame,
-        running, hasOptimizer: !!optimizer, hasTrainer: !!trainer,
-        hasAdvect: !!advect, hasWh: !!wh, hasDevice: !!device,
-      };
-      console.warn("[loop] tick bailed without rescheduling", (window as any).__nffDead);
       return;
     }
     frame++;
-    (window as any).__nff = { frame, piece: cfg.name, t: performance.now() };
 
     // ONE command encoder for the whole frame. On the FUSED path it records
     // trainer pass A+B, the advect pass, and the render, then submits ONCE —
@@ -2930,6 +3210,12 @@ export function startLoop(
       // them. ~0.8 ms at B=512 (tools/train_wta_test.ts §6), so no advEvery
       // amortization is needed on this path.
       if (advTrainer && advRt.tag === "on") {
+        // Snapshot the NARROWED runtime into a const: `advRt` is a mutable
+        // outer binding, so TS drops the `tag === "on"` narrowing inside the
+        // closure below (same pattern as `rtSnap` in the telemetry block). It
+        // is the same object, so the dock's live weight slider — which mutates
+        // `advRt.weight` in place — is still read fresh every frame.
+        const advOn = advRt;
         // The top-right "train B" control owns BOTH sides' live batch size.
         // Adversary buffers are compiled to 1024 tuples; particle coverage can
         // reduce effective B further inside AdversaryTrainer.
@@ -2953,7 +3239,7 @@ export function startLoop(
               // Adam state, field lane and named generator role are independent.
               seed: frame,
               source: "particles",
-              genSeed: branch.genSeed(advRt.weight, 1, b),
+              genSeed: branch.genSeed(advOn.weight, 1, b),
               applyDisc: true,
             }
           );
@@ -3194,7 +3480,15 @@ export function startLoop(
           // records below are the authoritative values for this general-sum
           // game; predictor objective is V_A + V_B.
           surprise: twoLane ? 0.5 * (stA.surprise + stB!.surprise) : stA.surprise,
-          predLoss: twoLane ? stA.discLoss + stB!.discLoss : stA.discLoss,
+          predLoss: twoLane ? stA.payoffUngated + stB!.payoffUngated : stA.payoffUngated,
+          // Lane A's, NOT an average: on the two-lane game each lane measures
+          // the direction order of its OWN field head, so there is no single
+          // blended R₁ in the stats and inventing one would be a lie.
+          directionOrder: stA.directionOrder,
+          payoffReference:
+            advSpec.tag === "on"
+              ? payoffReferenceOf(adversaryLossOf(advSpec))
+              : { tag: "none" },
           winFractions,
           // A/B games are diagnosed independently. A measured failure in one
           // branch cannot be averaged away by the other.
@@ -3204,13 +3498,13 @@ export function startLoop(
             ? {
                 disagree: {
                   surprise: stA.surprise,
-                  predLoss: stA.discLoss,
+                  predLoss: stA.payoffUngated,
                   winFractions: aFractions,
                   health: healthA,
                 },
                 agree: {
                   surprise: stB!.surprise,
-                  predLoss: stB!.discLoss,
+                  predLoss: stB!.payoffUngated,
                   winFractions: bFractions!,
                   health: healthB!,
                 },
@@ -3489,6 +3783,12 @@ export function startLoop(
       );
       wantTfjsTrainer = false;
     }
+    // The THIRD `?train=tfjs` consequence — it also disables a piece's pixel
+    // critic, since the density GAN exists only in WGSL — is named by
+    // resolvePixelCritic below and warned at the pixel gate, so the reason
+    // ladder stays in one place. It is NOT ignored like the two above: the
+    // tfjs autograd path remains selectable for A/B comparison, it just runs
+    // a Pixel piece with nothing driving its field.
     // ADVERSARY PIECES NOW TRAIN FUSED when the field supports it (raw or
     // fourier encoding, classless): AdversaryTrainer records the K-head
     // relaxed-WTA discriminator + the generator reward (extGrads → the field
@@ -3501,19 +3801,19 @@ export function startLoop(
     // Class-aware fields and ?train=tfjs keep the tfjs autograd path, and the
     // loop says which one it picked out loud.
     const adversaryDisabled = advSpec.tag === "on" && fieldClasses > 0;
-    // The anti-collapse pressure is a TFJS-ONLY prototype (no WGSL codegen
-    // yet). Routing it to the tfjs trainer is loud and correct; letting the
-    // fused kernel run and silently drop the term would be the exact failure
-    // the pixel-GAN note warns about — a piece whose declared counter-pressure
-    // contributes 0% of the field update while the HUD says it is on.
-    const pressureTag =
-      advSpec.tag === "on" ? gamePressureOf(advSpec).tag : "none";
+    // THE ANTI-COLLAPSE PRESSURE IS NOW FUSED (2026-08-17). It compiles into
+    // adversary pass A as a compile-time variant and rides the generator's own
+    // dSig seam, so it reaches every encoding through the machinery the reward
+    // already uses. The tfjs `directionOrderLoss` stays as the parity oracle,
+    // reachable with ?train=tfjs. The clause that used to force a declared
+    // pressure onto the tfjs trainer is therefore gone — what must never
+    // happen is a fused kernel silently DROPPING a declared term, and the
+    // codegen now carries it (gated in tools/train_wta_pressure_test.ts).
     const fusedAdvOk =
       advSpec.tag === "on" &&
       !adversaryDisabled &&
       !!field &&
       !wantTfjsTrainer &&
-      pressureTag === "none" &&
       advect.layout.classes === 0;
     const agreeDisagreeField = advect.layout.spec.kind === "agree-disagree";
     if (
@@ -3557,10 +3857,28 @@ export function startLoop(
           `— tfjs autograd trainer (${
             wantTfjsTrainer
               ? "?train=tfjs"
-              : pressureTag !== "none"
-                ? "anti-collapse pressure has no fused WGSL path yet"
-                : "field type unsupported by the fused adversary"
+              : "field type unsupported by the fused adversary"
           })`
+      );
+    }
+    // PIXEL CRITIC ROUTING — resolved HERE, with the rest of the trainer gate,
+    // and never re-decided at the construction site below. Every branch that
+    // can silence a declared critic is a named state with a reason, because a
+    // silently-dropped critic on a ZERO_FIELD_LOSS Pixel piece leaves the field
+    // with no gradient at all while the gallery and HUD still advertise a GAN.
+    // The Agree+Disagree combination throws inside the resolver — see its doc.
+    const pixelCritic = resolvePixelCritic({
+      declared: cfg.pixelDisc,
+      hasField: !!field,
+      fieldLossDeclared: cfg.fieldLoss !== undefined,
+      wantTfjsTrainer,
+      adversaryOnTfjs: advRt.tag === "on" && !fusedAdvOk,
+      agreeDisagreeGame,
+      layout: advect.layout,
+    });
+    if (pixelCritic.tag === "dropped") {
+      console.warn(
+        `[pixel-disc] this piece's declared pixel critic is OFF: ${pixelCritic.reason}`
       );
     }
     // ALL field types (standard/siren/fourier/hashgrid) now train FUSED: the
@@ -3620,6 +3938,10 @@ export function startLoop(
           tag: advSpec.encoding.tag,
           target: adversaryTargetOf(advSpec),
           loss: adversaryLossOf(advSpec),
+          // The declared counter-pressure is compiled into pass A. Structural
+          // identity with FusedGamePressure is deliberate and mirrors how
+          // target/loss cross this boundary.
+          pressure: gamePressureOf(advSpec),
           k: headCount(advSpec.kind),
           relaxEps: advSpec.kind.tag === "wta" ? advSpec.kind.relaxEps : 0,
           batchCap: 1024,
@@ -3660,28 +3982,25 @@ export function startLoop(
                 `A=lane0/disagree, B=lane1/agree, C=display-only blend; ` +
                 `two independent predictors, one summed field update`
             : `[adversary] FUSED ${advSpec.kind.tag} encoding=${advSpec.encoding.tag} ` +
-                `k=${headCount(advSpec.kind)} weight=${advRt.weight} — disc train + ` +
+                `k=${headCount(advSpec.kind)} weight=${advRt.weight} ` +
+                `pressure=${describePressure(gamePressureOf(advSpec))} — disc train + ` +
                 `generator reward in-frame, tfjs idle`
         );
       }
-      if (
-        cfg.pixelDisc &&
-        !!field &&
-        !wantTfjsTrainer &&
-        advect.layout.classes === 0 &&
-        advect.layout.encoding.kind !== "hashgrid" &&
-        (advect.layout.spec.kind === "helmholtz" ||
-          advect.layout.spec.kind === "agree-disagree")
-      ) {
+      // One decision, made once (resolvePixelCritic, above) — this site only
+      // executes it. The gate that used to live here re-derived the same field
+      // conditions in a second, silently-skipping form.
+      if (pixelCritic.tag === "fused") {
+        const pixelSpec = pixelCritic.spec;
         pixelDiscTrainer = new PixelDiscTrainer(device!, advect.layout, {
           fieldWeightsBuffer: advect.weightsBuffer,
           dims: {
-            kind: cfg.pixelDisc.kind ?? "vec-field",
-            G: cfg.pixelDisc.G,
-            E: cfg.pixelDisc.E,
-            K: cfg.pixelDisc.K,
-            hidden: cfg.pixelDisc.hidden,
-            dt: cfg.pixelDisc.dt,
+            kind: pixelSpec.kind ?? "vec-field",
+            G: pixelSpec.G,
+            E: pixelSpec.E,
+            K: pixelSpec.K,
+            hidden: pixelSpec.hidden,
+            dt: pixelSpec.dt,
           },
           batchCap: 512,
           seed: 20260805,
@@ -3694,20 +4013,51 @@ export function startLoop(
         console.log(
           `[pixel-disc] FUSED kind=${pixelDiscTrainer.kind} ` +
             `G=${pixelDiscTrainer.dims.G} E=${pixelDiscTrainer.dims.E} ` +
-            `K=${pixelDiscTrainer.dims.K} weight=${cfg.pixelDisc.weight} — ` +
+            `K=${pixelDiscTrainer.dims.K} weight=${pixelSpec.weight} — ` +
             `soft density critic + reverse-mode gen path (no JVP)`
         );
       }
-      const extGradBuffers: GPUBuffer[] = [];
-      if (advTrainer) extGradBuffers.push(advTrainer.extGradsBuf);
-      if (advTrainerB) extGradBuffers.push(advTrainerB.extGradsBuf);
-      else if (pixelDiscTrainer) extGradBuffers.push(pixelDiscTrainer.extGradsBuf);
-      if (extGradBuffers.length > 2) {
+      // Tripwire: the plan above and this block's enclosing `if` are two
+      // expressions of the same routing decision, and drift between them is
+      // exactly the failure mode being fixed — a critic that the HUD says is on
+      // and that was never built. Fail at startup instead of at frame 1.
+      if (pixelCritic.tag === "fused" && !pixelDiscTrainer) {
         throw new Error(
-          `[train] at most 2 extGrad buffers (got ${extGradBuffers.length}); ` +
-            `Agree+Disagree + pixel-disc cannot share the same frame yet`
+          "[pixel-disc] resolved FUSED but no critic was constructed — the " +
+            "trainer gate and resolvePixelCritic have drifted"
         );
       }
+      // EVERY claimant, listed once. The old form was
+      // `if (advTrainerB) … else if (pixelDiscTrainer) …`, whose `else` bound to
+      // advTrainerB and silently dropped a fully-constructed pixel critic, and
+      // whose count guard below could therefore never fire. Pass B sums at most
+      // two (train_wgsl `extGradCount ∈ [0,2]`); resolvePixelCritic refuses the
+      // one three-claimant combination up front, and this stays as the
+      // structural backstop for the next game that wants a slot.
+      const extGradClaims: { name: string; buffer: GPUBuffer }[] = [];
+      if (advTrainer) {
+        extGradClaims.push({ name: "adversary", buffer: advTrainer.extGradsBuf });
+      }
+      if (advTrainerB) {
+        extGradClaims.push({
+          name: "adversary lane B (agree)",
+          buffer: advTrainerB.extGradsBuf,
+        });
+      }
+      if (pixelDiscTrainer) {
+        extGradClaims.push({
+          name: "pixel critic",
+          buffer: pixelDiscTrainer.extGradsBuf,
+        });
+      }
+      if (extGradClaims.length > 2) {
+        throw new Error(
+          `[train] at most 2 extGrad buffers, got ${extGradClaims.length} ` +
+            `(${extGradClaims.map((c) => c.name).join(", ")}); a third claimant ` +
+            `needs a third binding in trainPassBShader, not a dropped gradient`
+        );
+      }
+      const extGradBuffers = extGradClaims.map((c) => c.buffer);
       trainer = new FusedTrainer(device!, advect.layout, {
         // Ask for the architectural ceiling and let FusedTrainer resolve it
         // against this device+layout+K. The old hard-coded 1024 was invisible
@@ -3989,7 +4339,13 @@ export function startLoop(
       });
     }
     console.log(`starting: ${cfg.name} (webgpu)`);
-    tick();
+    // `tick` is async and reschedules itself on its LAST line, so a throw
+    // anywhere inside it stops the loop for good — and as a bare `tick()` the
+    // rejection was silent, which cost a 2026-08-17 investigation a lot of time
+    // chasing a "frozen" canvas. Surface it instead.
+    tick().catch((e) => {
+      console.error("[loop] tick() rejected — the render loop has stopped", e);
+    });
   })();
 
   return () => {

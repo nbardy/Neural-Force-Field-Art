@@ -498,10 +498,18 @@ async function runPiece(browser, key, pieceName, options) {
     fail(
       finite(rawParsed.spanLo) &&
         finite(rawParsed.spanHi) &&
-        rawParsed.spanHi > rawParsed.spanLo &&
+        rawParsed.spanHi >= rawParsed.spanLo &&
+        !rawParsed.flatSpan &&
         finite(unitParsed.spanLo) &&
         finite(unitParsed.spanHi) &&
-        unitParsed.spanHi > unitParsed.spanLo,
+        unitParsed.spanHi >= unitParsed.spanLo &&
+        !unitParsed.flatSpan,
+      // `>=` + not-FLAT, NOT strict `>`: the HUD prints these at 2 significant
+      // figures, so a healthy-but-tight distribution rounds p2 == p98 and a
+      // strict `>` fails on rounding noise (hashgrid failed 6/9 runs on this
+      // while the app's exact SPAN_FLOOR test passed every time — see
+      // agent_notes/2026-08-17_soak_flake_attribution.md §2/§5). The app's own
+      // `· FLAT` flag is the authoritative collapse test; defer to it.
       "RAW and PER UNIT each expose a finite non-flat percentile span"
     );
     fail(
@@ -541,8 +549,14 @@ async function runPiece(browser, key, pieceName, options) {
   );
   if (spanSamples.length) {
     fail(
-      spanSamples.every((sample) => sample.spanHi > sample.spanLo),
-      "exposed surprise percentile span has p98 > p2"
+      // `>=` + not-FLAT for the same reason as the RAW/PER-UNIT gate above:
+      // 2-sig-fig HUD strings cannot support a strict inequality (2026-08-17
+      // flake attribution). A genuinely collapsed span still fails via the
+      // app's exact `· FLAT` flag.
+      spanSamples.every(
+        (sample) => sample.spanHi >= sample.spanLo && !sample.flatSpan
+      ),
+      "exposed surprise percentile span has p98 >= p2 and never FLAT"
     );
   }
 

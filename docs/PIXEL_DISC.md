@@ -141,6 +141,42 @@ Two corollaries worth remembering:
   no matter how the weight is set. Shape a piece with `weight`, not by
   reintroducing `W_ISO`.
 
+## The critic kernels are single-threaded — G is a frame-time dial
+
+`criticDisc` and `criticGen` are `@compute @workgroup_size(1)`. **One** GPU
+thread walks all G² cells, holding `cFeat[E·G²]` and `cSoft[K·G²]` (plus
+`dSoft`, `gD`, `gW` in the gen pass) as function-scope private arrays. Cost
+grows as G²·(E+K) in both work *and* per-thread private memory, with no
+parallelism, so G is the single biggest lever on frame time.
+
+Measured on an M-series desktop GPU (`tools/pixel_disc_cost_probe.ts`,
+80k particles, b=256, dualFourier field):
+
+| config | vec-field | next-frame | real-fake | inpaint | private/invocation |
+|---|---|---|---|---|---|
+| G=16 E=8 K=16 h=32 | 22 ms | 12 ms | 25 ms | 20 ms | 24 KB |
+| G=12 E=8 K=16 h=32 | 8.9 ms | 5.2 ms | 9.7 ms | 8.3 ms | 13.5 KB |
+| **G=8 E=4 K=8 h=16** (shipped) | **5.8 ms** | **2.5 ms** | **4.4 ms** | **2.4 ms** | **3 KB** |
+
+Advect + render alone are ~16 ms at 80k particles, so the old G=16 config put
+the whole piece at ~37 ms/frame — 27 FPS on a fast desktop GPU, and on a phone
+slow enough that the canvas visibly held the *previous* artwork. That is what
+"the pixel pieces freeze on mobile" was.
+
+Two things follow:
+
+- **Raising G is a performance decision, not just an art one.** Until the
+  critic is parallelized across the workgroup, treat G as a frame-time budget.
+- **`fillForceGrid` is already parallel.** `vec-field` needs F(cell_center) at
+  every cell; that used to be an inline serial loop inside the single-thread
+  critic (the full field forward, ×G², on one lane). It is now its own
+  one-cell-per-invocation pass, which is why the trainer allocates `nCell`
+  critic scratch sites for that kind instead of one.
+
+**Known follow-up:** parallelize `criticDisc`/`criticGen` across the workgroup
+(per-cell threads + workgroup reductions for the softmax normalizer and the
+`gW` weight-gradient accumulation). That is what would let G go back to 16.
+
 ## Verify
 
 ```bash
@@ -157,3 +193,12 @@ bun tools/pixel_disc_authority_probe.ts
 
 Regression guard for the above: runs the **shipped** dims and asserts each
 kind's critic still owns ≥50% of the applied gradient, across both viewports.
+
+```bash
+bun tools/pixel_disc_cost_probe.ts
+```
+
+Frame-budget guard: times one `encodeStep` per kind at the shipped dims and
+fails if any exceeds 12 ms. Run it after touching G/E/K or the critic kernels.
+Quit anything else using the GPU first — a browser tab rendering the same piece
+moved these numbers 2–3× run to run, which is why it reports a median of 15.

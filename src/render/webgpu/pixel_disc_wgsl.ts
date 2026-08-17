@@ -89,17 +89,40 @@ export function resolvePixelDims(
   };
 }
 
-export function validatePixelDiscFusion(field: FieldLayout): void {
+/**
+ * Whether this field shape has a fused pixel-critic codegen — as DATA, so the
+ * host gate and the constructor cannot drift.
+ *
+ * The constructor's job is to refuse an unsupported field loudly
+ * ({@link validatePixelDiscFusion}); the host's job is to decide whether to
+ * build a critic at all, and it needs the same answer WITHOUT throwing, plus
+ * the reason, so it can say out loud why a piece's declared critic is off.
+ * Two hand-copied ladders is how those two answers drift apart.
+ */
+export type PixelDiscFusion =
+  | { readonly tag: "ok" }
+  | { readonly tag: "unsupported"; readonly reason: string };
+
+export function classifyPixelDiscFusion(field: FieldLayout): PixelDiscFusion {
   if (field.spec.kind !== "helmholtz" && field.spec.kind !== "agree-disagree") {
-    throw new Error(
-      `pixel_disc: needs two-head neural field (got ${field.spec.kind})`
-    );
+    return {
+      tag: "unsupported",
+      reason: `needs a two-head neural field (got ${field.spec.kind})`,
+    };
   }
   if (field.classes > 0) {
-    throw new Error("pixel_disc: class-aware fields not supported yet");
+    return { tag: "unsupported", reason: "class-aware fields not supported yet" };
   }
   if (field.encoding.kind === "hashgrid") {
-    throw new Error("pixel_disc: hashgrid not supported yet");
+    return { tag: "unsupported", reason: "hashgrid encoding not supported yet" };
+  }
+  return { tag: "ok" };
+}
+
+export function validatePixelDiscFusion(field: FieldLayout): void {
+  const fusion = classifyPixelDiscFusion(field);
+  if (fusion.tag === "unsupported") {
+    throw new Error(`pixel_disc: ${fusion.reason}`);
   }
 }
 
@@ -118,14 +141,27 @@ export function pixelParticleScratchFloats(field: FieldLayout): number {
   return 8 + sl.encStore + sl.siteBlk;
 }
 
+/** f32s of critic field-eval workspace per grid cell (encoding + site block). */
+export function pixelCritSiteStride(field: FieldLayout): number {
+  const sl = trainScratchLayout(field, 1);
+  return sl.encStore + sl.siteBlk;
+}
+
 export function pixelScratchBytes(
   field: FieldLayout,
-  batchCap: number
+  batchCap: number,
+  /**
+   * Critic field-eval workspaces to reserve. `fillForceGrid` runs ONE CELL PER
+   * INVOCATION, so each needs its own site block — a single shared workspace
+   * (what this used to allocate) makes the parallel pass race on scratch.
+   * Kinds without a force grid pass 1 and pay nothing.
+   */
+  critSites = 1
 ): number {
-  const sl = trainScratchLayout(field, 1);
   const partStride = pixelParticleScratchFloats(field);
-  // particles + one-site critic field eval workspace (vec-field force grid)
-  return (batchCap * partStride + sl.encStore + sl.siteBlk) * 4;
+  return (
+    batchCap * partStride + 8 + critSites * pixelCritSiteStride(field)
+  ) * 4;
 }
 
 export type PixelWeightLayout =
@@ -409,19 +445,34 @@ fn buildInpaintMask() {
 `;
 }
 
+/**
+ * Per-cell target field F(cell_center) for `vec-field`, ONE CELL PER INVOCATION.
+ *
+ * This used to be a plain `fn evalForceGrid()` called from `criticDisc`, which
+ * is `@compute @workgroup_size(1)` — so a single GPU thread evaluated the whole
+ * neural field (all heads, every weight) at all G² cell centers, serially. At
+ * the gallery config that is 256 × 3328 MACs on one lane and measured ~24 ms of
+ * the ~36 ms pixel-GAN step, i.e. the dominant cost of the piece. It is a pure
+ * map with no cross-cell dependency, so it belongs in its own parallel pass.
+ *
+ * Writes auxA/auxB, which `criticGen` later reads as its targets. Nothing
+ * between the two passes touches aux (clearDensGen only clears dens/dDens), so
+ * one dispatch per step ahead of criticDisc is enough.
+ */
 function emitVecFieldForceGrid(critFwdExpr: string, encInit: string): string {
   return /* wgsl */ `
-fn evalForceGrid() {
-  for (var y = 0u; y < G; y = y + 1u) {
-    for (var x = 0u; x < G; x = x + 1u) {
-      let cell = y * G + x;
-      let uk = vec2f((f32(x) + 0.5) / f32(G), (f32(y) + 0.5) / f32(G));
-      ${encInit}
-      let F = ${critFwdExpr};
-      set_auxA(cell, F.x);
-      set_auxB(cell, F.y);
-    }
-  }
+@compute @workgroup_size(${PIXEL_DISC_WG})
+fn fillForceGrid(@builtin(global_invocation_id) gid : vec3u) {
+  let cell = gid.x;
+  if (cell >= N_CELL) { return; }
+  let uk = vec2f(
+    (f32(cell % G) + 0.5) / f32(G),
+    (f32(cell / G) + 0.5) / f32(G)
+  );
+  ${encInit}
+  let F = ${critFwdExpr};
+  set_auxA(cell, F.x);
+  set_auxB(cell, F.y);
 }
 `;
 }
@@ -438,7 +489,6 @@ function emitCriticDiscBody(d: PixelDiscDims, metaStats: number): string {
     case "vec-field": {
       if (wl.kind !== "vec-field") throw new Error("layout mismatch");
       return /* wgsl */ `
-  evalForceGrid();
   ${emitBackboneForward(d, dens0)}
   var discR = 0.0;
   var nActive = 0.0;
@@ -803,10 +853,15 @@ export function pixelDiscShader(
   const oEnc = 8;
   const oField = 8 + sl.encStore;
 
+  // Critic field-eval workspace, indexed BY CELL: fillForceGrid runs one cell
+  // per invocation, so every cell needs its own encoding + site block. These
+  // bases are only referenced from inside fillForceGrid, where `cell` is bound.
   const critWorkspace = batchCap * partStride;
-  const critEncBase = `${critWorkspace + 8}u`;
+  const critSiteStride = sl.encStore + sl.siteBlk;
+  const critSite = `(${critWorkspace + 8}u + cell * ${critSiteStride}u)`;
+  const critEncBase = critSite;
   const critFieldBase = (h: number) =>
-    `${critWorkspace + 8 + sl.encStore}u + ${h === 0 ? 0 : sl.headBlk[0]}u`;
+    `${critSite} + ${sl.encStore}u + ${h === 0 ? 0 : sl.headBlk[0]}u`;
 
   const fieldBase = (h: number) =>
     `pBase + ${oField}u + ${h === 0 ? 0 : sl.headBlk[0]}u`;

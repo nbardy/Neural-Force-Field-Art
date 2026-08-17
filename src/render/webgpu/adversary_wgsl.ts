@@ -65,6 +65,11 @@
  *     port covers the RELATIONAL adversary only.
  *   - adversary head activations: selu/tanh/sigmoid/linear (no sin — its
  *     backward needs a pre-act checkpoint the adversary layout doesn't carry).
+ *
+ * ANTI-COLLAPSE PRESSURE ({@link FusedGamePressure}) rides the same generator
+ * seam: its dL/dF is added into `dSig` before the field backward, so it reaches
+ * every encoding through the SAME dEnc/bwd machinery the reward already uses
+ * and pass B needs no pressure-specific code. `none` emits zero text.
  */
 
 import {
@@ -115,6 +120,96 @@ export const ADV_QUAD_ANCHOR_ACTIVE_FLOOR = 1e-5;
  * The old base 16 overlapped finalized win slots for legal K=12..16.
  */
 export const ADV_STATS_BASE = 32;
+
+/**
+ * ANTI-COLLAPSE PRESSURE — the fused twin of `directionOrderLoss`
+ * (src/core/losses/isotropy.ts) and of main.ts's `GamePressure`.
+ *
+ * WHY IT EXISTS (measured, agent_notes/2026-08-17_120215_KST_collapse_fix.md):
+ * the soft-angle payoff embeds a 2-vector as ψτ(z)=(z,τ)/√(‖z‖²+τ²), so the
+ * ZERO vector is the sphere's north pole and sits chord √2 ≈ 1.414 from EVERY
+ * equatorial prediction, while a genuinely direction-varied target only earns
+ * the K-way quantization error (≈ 0.44 at K=4/ε=0.05). The generator therefore
+ * has a 3.15× incentive to drive the encoded target to zero, which on the pair
+ * observer IS a spatially constant — laminar — field. This term prices that.
+ *
+ * L = polar·‖M₁‖² + nematic·‖M₂‖²  over the batch's soft-unit directions
+ *     u = F/√(‖F‖²+τ²),  M₁ = mean(u),  M₂ = mean(uₓ²−u_y², 2uₓu_y)
+ *
+ * `none` emits ZERO WGSL text, so every pressure-free shader — i.e. every
+ * shader this codebase compiled before the term existed — stays byte-identical.
+ * It is a compile-time variant, never a runtime branch in the hot loop.
+ */
+export type FusedGamePressure =
+  /** Shipped pre-2026-08-17 behaviour: the game alone steers the field. */
+  | { readonly tag: "none" }
+  /** `polar` alone is escapable by ±F₀ counter-streaming sheets (measured
+   *  R₂ = 0.95), so `nematic` is part of the SAME variant, not a second mode. */
+  | {
+      readonly tag: "anti-collapse";
+      readonly polar: number;
+      readonly nematic: number;
+      /** Direction softener; normally the objective's own soft-angle τ. It is
+       *  also the ε that floors the √(‖F‖²+τ²) radicand — no separate guard. */
+      readonly tau: number;
+    };
+
+function checkedPressure(p: FusedGamePressure | undefined): FusedGamePressure {
+  const value: FusedGamePressure = p ?? { tag: "none" };
+  switch (value.tag) {
+    case "none":
+      return value;
+    case "anti-collapse": {
+      const finiteNonNeg = (x: number) => Number.isFinite(x) && x >= 0;
+      if (!finiteNonNeg(value.polar) || !finiteNonNeg(value.nematic)) {
+        throw new Error(
+          `adversary: pressure weights must be finite and >= 0, got ` +
+            `polar=${value.polar} nematic=${value.nematic}`
+        );
+      }
+      if (!(Number.isFinite(value.tau) && value.tau > 0)) {
+        throw new Error(
+          `adversary: pressure tau must be finite and > 0, got ${value.tau}`
+        );
+      }
+      return value;
+    }
+    default: {
+      const unhandled: never = value;
+      throw new Error(
+        `adversary: unhandled pressure ${JSON.stringify(unhandled)}`
+      );
+    }
+  }
+}
+
+/**
+ * Stats buffer geometry. δ over the pressure variant — the four direction
+ * moments are appended at [7+k, 11+k) ONLY under anti-collapse pressure, so a
+ * pressure-free adversary keeps the historical 7+k ABI byte-for-byte.
+ *
+ * The moments are stored (not just R₁) because pass A's BACKWARD needs all
+ * four as batch constants: dL/du depends on M₁ₓ, M₁ᵧ, M₂c and M₂s separately.
+ * The host derives R₁ = ‖M₁‖ and R₂ = ‖M₂‖ from them.
+ */
+export function advStatsLayout(
+  k: number,
+  pressure: FusedGamePressure
+): { finalized: number; pstride: number; momentOff: number } {
+  const base = 7 + k;
+  switch (pressure.tag) {
+    case "none":
+      return { finalized: base, pstride: base, momentOff: base };
+    case "anti-collapse":
+      return { finalized: base + 4, pstride: base + 4, momentOff: base };
+    default: {
+      const unhandled: never = pressure;
+      throw new Error(
+        `adversary: unhandled pressure ${JSON.stringify(unhandled)}`
+      );
+    }
+  }
+}
 
 export type TupleTag =
   | "point"
@@ -887,6 +982,9 @@ export interface AdvShaderOpts {
   /** Defaults to blend for compatibility. Direct lanes never read alpha and
    * backpropagate into exactly one field head. */
   fieldLane?: FieldLane;
+  /** Omitted resolves to `none`, which emits zero WGSL — see
+   *  {@link FusedGamePressure}. */
+  pressure?: FusedGamePressure;
 }
 
 function checkedFieldLane(lane: FieldLane | undefined): FieldLane {
@@ -931,6 +1029,7 @@ export function adversaryPassAShader(
   const loss = checkedLoss(tag, opts.loss);
   const fieldLane = checkedFieldLane(opts.fieldLane);
   const observerGeometry = checkedObserverGeometry(opts.observerGeometry);
+  const pressure = checkedPressure(opts.pressure);
   const relaxUpper = advL.k <= 1 ? 1 : (advL.k - 1) / advL.k;
   if (!(relaxEps >= 0 && relaxEps < relaxUpper)) {
     throw new Error(
@@ -956,8 +1055,17 @@ export function adversaryPassAShader(
   const WG = ADV_WG;
   const STRIDE = sl.stride;
   // Legacy finalized slots [0..5+k) stay stable. Energy RMS/active count are
-  // appended at 5+k / 6+k; partials carry the same two extra reductions.
-  const PSTRIDE = 7 + k;
+  // appended at 5+k / 6+k; partials carry the same two extra reductions. Under
+  // anti-collapse pressure four direction moments follow at [7+k, 11+k).
+  const statsL = advStatsLayout(k, pressure);
+  const PSTRIDE = statsL.pstride;
+  if (statsL.finalized > ADV_STATS_BASE) {
+    throw new Error(
+      `adversary: finalized stats prefix ${statsL.finalized} would overlap the ` +
+        `partials at ${ADV_STATS_BASE} (k=${k})`
+    );
+  }
+  const MOM = statsL.momentOff;
   const loserW = k >= 2 ? relaxEps / (k - 1) : 0;
   const winW = k >= 2 ? 1 - relaxEps : 1;
   const explicitObjective = loss.tag !== "legacy-adjusted";
@@ -1043,6 +1151,107 @@ export function adversaryPassAShader(
       dSig[t] = dSig[t] * sigJac[t];
     }`
       : "";
+
+  // ---- anti-collapse pressure fragments (all "" when pressure is none, so
+  // the emitted text is byte-identical to the pre-pressure adversary) --------
+  //
+  // Batch-coupled, and solved exactly the way the scale-hold energy anchor
+  // already is: the moments are reduced + finalized by the PRE-D forward and
+  // read back as CONSTANTS by the post-D forward, whose deltas are the ones
+  // fieldGrad consumes. Field weights and the sampled tuples are identical
+  // across the two forwards (only the predictor updates in between), so the
+  // constants are the exact moments of the batch being differentiated — this
+  // is not a one-step-stale approximation.
+  const usePressure = pressure.tag === "anti-collapse";
+  const polarW = pressure.tag === "anti-collapse" ? pressure.polar : 0;
+  const nematicW = pressure.tag === "anti-collapse" ? pressure.nematic : 0;
+  // τ² IS the radicand floor (τ > 0 is enforced by checkedPressure), so
+  // sqrt(dot(F,F) + τ²) needs no extra ε and matches directionOrderLoss's
+  // `.add(tau*tau).sqrt()` bit for bit.
+  const pressureTau2 = pressure.tag === "anti-collapse" ? pressure.tau * pressure.tau : 0;
+  const pressureStatDecl = usePressure ? `\n  var statMom = vec4f(0.0);` : "";
+  const pressureRawDecl = usePressure ? `\n    var fRaw : array<vec2f, ${m}>;` : "";
+  // Raw F(x) — NOT sig: on a post-velocity target sig is a velocity, and the
+  // collapse this prices is a fact about the FIELD's directions.
+  const pressureCapture = usePressure
+    ? `\n      fRaw[t] = select(vec2f(0.0), F, isFiniteF(F.x) && isFiniteF(F.y));`
+    : "";
+  const pressureMoments = usePressure
+    ? `
+    // Every member contributes, target-active or not: tuple validity is a
+    // property of the observer, while the direction field exists regardless.
+    for (var t = 0u; t < ${m}u; t = t + 1u) {
+      let pf = fRaw[t];
+      let ps = sqrt(dot(pf, pf) + ${flit(pressureTau2)});
+      let pu = pf / ps;
+      statMom = statMom + vec4f(
+        pu.x, pu.y, pu.x * pu.x - pu.y * pu.y, 2.0 * pu.x * pu.y
+      );
+    }`
+    : "";
+  const pressureBwd = usePressure
+    ? `
+    // dL/du = (2·wP·M₁ + 2·wN·(2·M₂c·uₓ + 2·M₂s·u_y, −2·M₂c·u_y + 2·M₂s·uₓ))/N
+    // dL/dF = (I − uuᵀ)/s · dL/du — one reciprocal and one projection per
+    // member, no extra field evaluation and no second-order term.
+    let pM1 = vec2f(stats[${MOM}u], stats[${MOM + 1}u]);
+    let pM2 = vec2f(stats[${MOM + 2}u], stats[${MOM + 3}u]);
+    let pN = f32(max(u.b, 1u)) * ${flit(m)};
+    let pdM1 = 2.0 * ${flit(polarW)} * pM1 / pN;
+    let pdM2 = 2.0 * ${flit(nematicW)} * pM2 / pN;
+    for (var t = 0u; t < ${m}u; t = t + 1u) {
+      let pf = fRaw[t];
+      let ps = sqrt(dot(pf, pf) + ${flit(pressureTau2)});
+      let pu = pf / ps;
+      let pdU = vec2f(
+        pdM1.x + 2.0 * pdM2.x * pu.x + 2.0 * pdM2.y * pu.y,
+        pdM1.y - 2.0 * pdM2.x * pu.y + 2.0 * pdM2.y * pu.x
+      );
+      let pdF = (pdU - pu * dot(pu, pdU)) / ps;
+      dSig[t] = dSig[t] +
+        select(vec2f(0.0), pdF, isFiniteF(pdF.x) && isFiniteF(pdF.y));
+    }`
+    : "";
+  const pressureReduce = usePressure
+    ? `
+  workgroupBarrier();
+  red4[tid] = statMom;
+  workgroupBarrier();
+  stride = ${WG / 2}u;
+  loop {
+    if (tid < stride) { red4[tid] = red4[tid] + red4[tid + stride]; }
+    workgroupBarrier();
+    stride = stride >> 1u;
+    if (stride == 0u) { break; }
+  }
+  if (tid == 0u) {
+    stats[pb + ${MOM}u] = red4[0].x;
+    stats[pb + ${MOM + 1}u] = red4[0].y;
+    stats[pb + ${MOM + 2}u] = red4[0].z;
+    stats[pb + ${MOM + 3}u] = red4[0].w;
+  }`
+    : "";
+  const pressureRedDecl = usePressure
+    ? `\nvar<workgroup> red4 : array<vec4f, ${WG}>;`
+    : "";
+  const pressureFinalDecl = usePressure ? `\n  var smom = vec4f(0.0);` : "";
+  const pressureFinalAcc = usePressure
+    ? `
+    smom = smom + vec4f(
+      stats[pb + ${MOM}u], stats[pb + ${MOM + 1}u],
+      stats[pb + ${MOM + 2}u], stats[pb + ${MOM + 3}u]
+    );`
+    : "";
+  const pressureFinalWrite = usePressure
+    ? `
+  // Divided here so the backward reads the MEANS directly. R₁ = ‖(x,y)‖ and
+  // R₂ = ‖(z,w)‖ are derived on the host (AdvStats.directionOrder).
+  let momN = bf * ${flit(m)};
+  stats[${MOM}u] = smom.x / momN;
+  stats[${MOM + 1}u] = smom.y / momN;
+  stats[${MOM + 2}u] = smom.z / momN;
+  stats[${MOM + 3}u] = smom.w / momN;`
+    : "";
 
   // K-unrolled fragments
   const advFwdCalls = Array.from({ length: k }, (_, j) =>
@@ -1396,7 +1605,7 @@ ${advL.heads.map((h, j) => emitAdvFwd(j, h, sl, maxWAdv)).join("\n\n")}
 
 ${advL.heads.map((h, j) => emitAdvBwd(j, h, sl, maxWAdv)).join("\n\n")}
 
-var<workgroup> red : array<f32, ${WG}>;
+var<workgroup> red : array<f32, ${WG}>;${pressureRedDecl}
 var<workgroup> winCnt : array<atomic<u32>, ${k}>;
 
 @compute @workgroup_size(${WG})
@@ -1414,7 +1623,7 @@ fn advFwd(@builtin(global_invocation_id) gid : vec3u,
   var statHeadMean = 0.0;
   var statHeadMin = 0.0;
   var statEnergy = 0.0;
-  var statActive = 0.0;
+  var statActive = 0.0;${pressureStatDecl}
   if (s < u.b) {
     let sBase = s * ${STRIDE}u;
 
@@ -1449,13 +1658,13 @@ fn advFwd(@builtin(global_invocation_id) gid : vec3u,
     var pn : array<vec2f, ${m}>;
     var vn : array<vec2f, ${m}>;
     var sig : array<vec2f, ${m}>;
-    var sigJac : array<vec2f, ${m}>;
+    var sigJac : array<vec2f, ${m}>;${pressureRawDecl}
     for (var t = 0u; t < ${m}u; t = t + 1u) {
       let uk = mpos[t] / res;
       pn[t] = uk;
       scratch[sBase + ${sl.siteInOff}u + t * 2u] = uk.x;
       scratch[sBase + ${sl.siteInOff}u + t * 2u + 1u] = uk.y;
-      ${encodeAt("uk", "t")}let F = ${fieldForward("t")};
+      ${encodeAt("uk", "t")}let F = ${fieldForward("t")};${pressureCapture}
 ${signalForward}
       // A nonfinite field signal (SELU Inf·0 before the clamp landed, or a
       // future encoding) must not enter κ or the WTA residual.
@@ -1464,7 +1673,7 @@ ${signalForward}
         sigJac[t] = vec2f(0.0);
       }
     }
-
+${pressureMoments}
     // ---- tuple encoding κ -------------------------------------------------
     var uvec : array<f32, ${du}>;
     var yvec : array<f32, ${dy}>;
@@ -1554,7 +1763,7 @@ ${generatorBwd}
     let energyAnchorSeed = 0.0;`}
     var dSig : array<vec2f, ${m}>;
 ${encFB.bwd}
-${signalBackward}
+${signalBackward}${pressureBwd}
     for (var t = 0u; t < ${m}u; t = t + 1u) {
       ${fieldBackward("t")}
     }
@@ -1657,7 +1866,7 @@ ${signalBackward}
     stride = stride >> 1u;
     if (stride == 0u) { break; }
   }
-  if (tid == 0u) { stats[pb + ${6 + k}u] = red[0]; }
+  if (tid == 0u) { stats[pb + ${6 + k}u] = red[0]; }${pressureReduce}
 }
 
 // finalize: legacy five scalars + win counts, then energy RMS/active count.
@@ -1669,7 +1878,7 @@ fn advFinalize() {
   var shMean = 0.0;
   var shMin = 0.0;
   var se = 0.0;
-  var sa = 0.0;
+  var sa = 0.0;${pressureFinalDecl}
   var wins : array<f32, ${k}>;
   for (var j = 0u; j < ${k}u; j = j + 1u) { wins[j] = 0.0; }
   for (var wg = 0u; wg < u.wgCount; wg = wg + 1u) {
@@ -1681,7 +1890,7 @@ fn advFinalize() {
     shMin = shMin + stats[pb + 4u];
     for (var j = 0u; j < ${k}u; j = j + 1u) { wins[j] = wins[j] + stats[pb + 5u + j]; }
     se = se + stats[pb + ${5 + k}u];
-    sa = sa + stats[pb + ${6 + k}u];
+    sa = sa + stats[pb + ${6 + k}u];${pressureFinalAcc}
   }
   let bf = f32(max(u.b, 1u));
   stats[0] = sw / bf;             // discriminator loss  (mean weighted residual)
@@ -1693,7 +1902,7 @@ fn advFinalize() {
   // Match the core/AD energy anchor exactly. This is deliberately 1e-16,
   // distinct from the 1e-12 squared soft norm used by chord residuals.
   stats[${5 + k}u] = sqrt(se / max(sa, 1.0) + 1e-16);
-  stats[${6 + k}u] = sa;
+  stats[${6 + k}u] = sa;${pressureFinalWrite}
 }
 `;
 }
@@ -1707,6 +1916,14 @@ fn advFinalize() {
  *   0 uniform UAdvB { lr, beta1, beta2, eps, t, apply, b, pad }
  *   1 rw advW   2 ro scratch   3 rw advGrads   4 rw adamM   5 rw adamV
  *   6 rw extGrads (FIELD-weight-length; consumed by train_wgsl pass B)
+ *
+ * THE ANTI-COLLAPSE PRESSURE NEEDS NO CODE HERE. Pass A seeds it into the same
+ * `dSig` the reward uses, so by the time this entry reads the scratch it is
+ * assembling ∇(genSeed·reward + pressure) — which is also why the term reaches
+ * fourier and hashgrid encodings through the machinery that already existed.
+ * The only pressure-dependent byte in this shader is one comment line, emitted
+ * because "genSeed == 0 ⇒ exact zeros" stops being true once a pressure is
+ * declared; a pressure-free call still emits the historical text verbatim.
  */
 export function adversaryPassBShader(
   field: FieldLayout,
@@ -1715,6 +1932,12 @@ export function adversaryPassBShader(
 ): string {
   validateAdversaryFusion(field, advL);
   checkedObserverGeometry(opts.observerGeometry);
+  const zeroSeedNote =
+    checkedPressure(opts.pressure).tag === "none"
+      ? ` When\n// genSeed == 0 every δ is 0 and this writes exact zeros — no stale reward.`
+      : `\n// L_gen = genSeed·reward + anti-collapse pressure (seeded into the same dSig),\n` +
+        `// so genSeed == 0 leaves the PRESSURE alone steering the field — which is\n` +
+        `// exactly what an explicit ?advWeight=0 on a pressured piece should mean.`;
   const sl = advScratchLayout(
     field,
     advL,
@@ -1907,8 +2130,7 @@ ${advBlocks.join("\n")}
 
 // thread = one packed FIELD weight float: the generator reward's gradient
 // dL_gen/dW = Σ_(tuple, member) aIn⊗δ_field, OVERWRITTEN each step into
-// extGrads. The field's pass B (extGrad:true) adds it before its Adam. When
-// genSeed == 0 every δ is 0 and this writes exact zeros — no stale reward.
+// extGrads. The field's pass B (extGrad:true) adds it before its Adam.${zeroSeedNote}
 @compute @workgroup_size(${ADV_WG_B})
 fn fieldGrad(@builtin(global_invocation_id) gid : vec3u) {
   let t = gid.x;

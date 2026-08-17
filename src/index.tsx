@@ -1,3 +1,8 @@
+// MUST STAY THE FIRST IMPORT. It repairs an undecodable query string, and it
+// only works if it runs before "./main" pulls in tfjs-core, whose module-level
+// Environment constructor parses location.search and throws URIError on a bad
+// "%" — blanking the page before any app code exists. See src/url_guard.ts.
+import "./url_guard";
 import React, {
   useEffect,
   useLayoutEffect,
@@ -59,6 +64,15 @@ const PMIN = 200;
 const PMAX = 1_000_000;
 const SURPRISE_HISTORY = 360; // ~72s at 200ms poll
 const HISTORY_SMOOTH = 0.08; // EMA α for overlay (higher = snappier)
+/**
+ * Ceiling drawn on the R₁ chart. It is where the anti-collapse pressure is
+ * measured to hold the direction order (the prototype note's target was
+ * "R₁ ≤ ~0.1"; the live default piece sits at 0.01–0.10 with it on and 0.99
+ * with it off). It is a LANDMARK, not a threshold anything reacts to — the
+ * chart's fixed 0–1 scale would otherwise pin a healthy trace to the floor
+ * where it is indistinguishable from an empty chart.
+ */
+const R1_HEALTHY_CEILING = 0.1;
 const CMAPS: ColormapName[] = ["inferno", "viridis", "coolwarm"];
 const G_LR_MIN = GAME_LEARNING_RATE_RANGE.generator.min;
 const G_LR_MAX = GAME_LEARNING_RATE_RANGE.generator.max;
@@ -580,17 +594,21 @@ type Query =
   | { readonly tag: "malformed"; readonly reason: string };
 
 /**
- * `new URLSearchParams("?%%%")` THROWS URIError on a malformed percent-escape,
- * and dock ingestion runs inside a render, where an unhandled throw unmounts
- * the tree and leaves a BLANK PAGE — the worst possible answer to a mistyped
- * link. base64url contains no "%", so no honestly-truncated share link reaches
- * this; a hand-mangled one does.
+ * CORRECTION (measured 2026-08-17, Node 24 and Chrome/Metal): the premise this
+ * function was written on is FALSE. `new URLSearchParams("?%%%")` does NOT
+ * throw — WHATWG urlencoded parsing is lenient and hands back the key `"%%%"`
+ * verbatim. So the `malformed` branch below is unreachable in practice; it is
+ * kept as a cheap invariant rather than removed, because dock ingestion runs
+ * inside a render, where any unhandled throw unmounts the tree and leaves a
+ * BLANK PAGE — the worst possible answer to a mistyped link.
  *
- * DEFENCE IN DEPTH, NOT A CURE: measured with `?dock=%%%not-base64%%%`, tfjs's
- * own module-level `populateURLFlags` parses the same query string at IMPORT
- * time and throws the identical URIError before one line of app code runs, so
- * that URL still blanks the page. Fixing that means guarding the tfjs import,
- * not this function — but this layer must not be the second place it breaks.
+ * The blanking really was real, but it was never here. tfjs-core hand-rolls its
+ * own parser (`populateURLFlags` → `decodeURIComponent`) and runs it at MODULE
+ * SCOPE, so `?dock=%%%` threw URIError while `import * as tf` was still being
+ * evaluated — before this function, this component, or any log line existed.
+ * That hole is now closed at the only layer that can close it: `src/url_guard.ts`,
+ * the first import of this file, which drops undecodable parameters (loudly)
+ * before tfjs is reached.
  */
 function readQuery(search: string): Query {
   try {
@@ -966,15 +984,37 @@ function emaSeries(data: readonly number[], alpha: number): number[] {
   return out;
 }
 
+/**
+ * y-axis policy. `auto` is the historical per-series autoscale. `fixed` is for
+ * quantities with an absolute meaning — an order parameter lives in [0,1] and
+ * autoscaling it would magnify 0.05 → 0.07 noise into a full-height alarm.
+ */
+type SparkScale =
+  | { readonly tag: "auto" }
+  | { readonly tag: "fixed"; readonly lo: number; readonly hi: number };
+
+/**
+ * Optional horizontal reference rule. `at` extends an `auto` domain to contain
+ * the value, so "how far are we from that line" is legible even when the
+ * series never approaches it.
+ */
+type SparkRule =
+  | { readonly tag: "none" }
+  | { readonly tag: "at"; readonly value: number; readonly label: string };
+
 function Sparkline({
   data,
   smoothed,
   label = "history",
+  scale = { tag: "auto" },
+  rule = { tag: "none" },
 }: {
   data: readonly number[];
   /** Optional second series (e.g. EMA) drawn brighter on top. */
   smoothed?: readonly number[];
   label?: string;
+  scale?: SparkScale;
+  rule?: SparkRule;
 }): ReactElement {
   const width = 160;
   const height = 28;
@@ -1001,20 +1041,27 @@ function Sparkline({
     );
   }
 
-  const lo = Math.min(...pool);
-  const hi = Math.max(...pool);
-  const flat = hi - lo <= Math.max(Math.abs(hi), 1e-12) * 1e-3;
+  const auto = scale.tag === "auto";
+  const domain =
+    scale.tag === "fixed"
+      ? [scale.lo, scale.hi]
+      : rule.tag === "at"
+        ? [Math.min(...pool, rule.value), Math.max(...pool, rule.value)]
+        : [Math.min(...pool), Math.max(...pool)];
+  const [lo, hi] = domain;
+  const flat = auto && hi - lo <= Math.max(Math.abs(hi), 1e-12) * 1e-3;
   const span = Math.max(hi - lo, 1e-30);
+  const toY = (sample: number) =>
+    flat
+      ? height / 2
+      : height -
+        2 -
+        ((Number.isFinite(sample) ? sample - lo : 0) / span) * (height - 4);
   const toPoints = (series: readonly number[]) =>
     series
       .map((sample, index) => {
         const x = (index / (series.length - 1)) * (width - 2) + 1;
-        const y = flat
-          ? height / 2
-          : height -
-            2 -
-            ((Number.isFinite(sample) ? sample - lo : 0) / span) * (height - 4);
-        return `${x.toFixed(1)},${y.toFixed(1)}`;
+        return `${x.toFixed(1)},${toY(sample).toFixed(1)}`;
       })
       .join(" ");
 
@@ -1025,6 +1072,17 @@ function Sparkline({
       role="img"
       aria-label={`${label} from ${lo.toExponential(1)} to ${hi.toExponential(1)}`}
     >
+      {rule.tag === "at" && (
+        <line
+          className="sparkline-rule"
+          x1={1}
+          x2={width - 1}
+          y1={toY(rule.value).toFixed(1)}
+          y2={toY(rule.value).toFixed(1)}
+        >
+          <title>{rule.label}</title>
+        </line>
+      )}
       <polyline className="sparkline-raw" points={toPoints(data)} />
       {smoothed && smoothed.length >= 2 && (
         <polyline className="sparkline-smooth" points={toPoints(smoothed)} />
@@ -1150,8 +1208,16 @@ function App(): ReactElement {
     covered: number;
     collapsed: boolean;
   } | null>(null);
-  const [discHistory, setDiscHistory] = useState<number[]>([]);
-  const [genHistory, setGenHistory] = useState<number[]>([]);
+  const [payoffHistory, setPayoffHistory] = useState<number[]>([]);
+  /**
+   * R₁, the direction ORDER parameter — replaces the old "G residual" series.
+   * That chart plotted `surprise` while "D loss" plotted `predLoss`, and those
+   * are provably the SAME zero-sum scalar (the fused shader's stats[0] and
+   * stats[1] are bit-identical whenever the payoff is finite), so the HUD drew
+   * one curve twice and contained no instrument that could show the directional
+   * collapse this row now measures.
+   */
+  const [orderHistory, setOrderHistory] = useState<number[]>([]);
   const [copyState, setCopyState] = useState<CopyState>({ tag: "idle" });
   const copyTimerRef = useRef<number | null>(null);
 
@@ -1339,8 +1405,8 @@ function App(): ReactElement {
   }, [runtime]);
 
   useEffect(() => {
-    setDiscHistory([]);
-    setGenHistory([]);
+    setPayoffHistory([]);
+    setOrderHistory([]);
     setTelemetry({ tag: "off" });
     setSurpriseSpan(null);
     const poll = window.setInterval(() => {
@@ -1351,14 +1417,18 @@ function App(): ReactElement {
       setSurpriseSpan(handle.getSurpriseSpan());
       setColorMode(handle.getColorMode());
       if (next.tag === "on") {
-        // D minimizes predLoss; G (disagree) maximizes surprise/payoff residual.
-        // On raw-vector they often track closely; soft-angle / hold modes diverge.
-        setDiscHistory((previous) =>
-          previous.concat(next.predLoss).slice(-SURPRISE_HISTORY)
-        );
-        setGenHistory((previous) =>
+        // ONE shared payoff: D minimizes it, disagreeing G maximizes it.
+        setPayoffHistory((previous) =>
           previous.concat(next.surprise).slice(-SURPRISE_HISTORY)
         );
+        // Only real samples enter the order series — an `unmeasured` pressure
+        // must leave a gap, not a run of zeros that reads as "isotropic".
+        if (next.directionOrder.tag === "measured") {
+          const r1 = next.directionOrder.r1;
+          setOrderHistory((previous) =>
+            previous.concat(r1).slice(-SURPRISE_HISTORY)
+          );
+        }
       }
     }, 200);
     return () => window.clearInterval(poll);
@@ -2106,32 +2176,71 @@ function App(): ReactElement {
               {telemetry.tag === "on" ? (
                 <>
                   <div className="diagnostic-row" data-testid="disc-loss-chart">
-                    <span className="diagnostic-name" title="Discriminator objective (minimize)">
-                      D loss
-                    </span>
-                    <Sparkline
-                      label="discriminator loss"
-                      data={discHistory}
-                      smoothed={emaSeries(discHistory, HISTORY_SMOOTH)}
-                    />
-                    <strong>{telemetry.predLoss.toExponential(2)}</strong>
-                  </div>
-                  <div className="diagnostic-row" data-testid="gen-loss-chart">
                     <span
                       className="diagnostic-name"
-                      title="Generator payoff / residual (disagree maximizes)"
+                      title={
+                        "Shared relaxed-WTA payoff — D minimizes it, disagreeing G maximizes it." +
+                        (telemetry.payoffReference.tag === "north-pole"
+                          ? ` The dashed rule is √2 ≈ ${telemetry.payoffReference.chord.toFixed(4)}:` +
+                            " under soft-angle that is the chord from the embedding's north pole" +
+                            " ψτ(0) to every equatorial one. READ IT WITH R1 — the payoff sits" +
+                            " there both when the target has gone to zero (a flat field: R1 → 1)" +
+                            " and when the field is so isotropic that D cannot predict it at all" +
+                            " (R1 → 0, which is the good case and is transient while D relearns)." +
+                            " Steady state: 0.48–0.7."
+                          : "")
+                      }
                     >
-                      G residual
+                      payoff
                     </span>
                     <Sparkline
-                      label="generator residual"
-                      data={genHistory}
-                      smoothed={emaSeries(genHistory, HISTORY_SMOOTH)}
+                      label="shared payoff"
+                      data={payoffHistory}
+                      smoothed={emaSeries(payoffHistory, HISTORY_SMOOTH)}
+                      rule={
+                        telemetry.payoffReference.tag === "north-pole"
+                          ? {
+                              tag: "at",
+                              value: telemetry.payoffReference.chord,
+                              label: "√2 — north-pole collapse",
+                            }
+                          : { tag: "none" }
+                      }
                     />
                     <strong>{telemetry.surprise.toExponential(2)}</strong>
                   </div>
+                  <div className="diagnostic-row" data-testid="direction-order-chart">
+                    <span
+                      className="diagnostic-name"
+                      title={
+                        "R₁ = ‖mean of the field's soft-unit directions‖ over the training" +
+                        " batch. 0 = isotropic (swirls), 1 = one global direction (laminar" +
+                        " streaks). LOW IS HEALTHY — measured live on the default piece:" +
+                        " 0.99 with the pressure off (diagonal streaks), 0.01–0.10 with it" +
+                        " on (a field of vortices). Fixed 0–1 scale; the dashed rule is the" +
+                        " 0.10 healthy ceiling, so a trace hugging the floor is the good case."
+                      }
+                    >
+                      R1 laminar
+                    </span>
+                    <Sparkline
+                      label="direction order R1"
+                      data={orderHistory}
+                      smoothed={emaSeries(orderHistory, HISTORY_SMOOTH)}
+                      scale={{ tag: "fixed", lo: 0, hi: 1 }}
+                      rule={{ tag: "at", value: R1_HEALTHY_CEILING, label: "healthy ceiling 0.10" }}
+                    />
+                    <strong>
+                      {telemetry.directionOrder.tag === "measured"
+                        ? telemetry.directionOrder.r1.toFixed(3)
+                        : "—"}
+                    </strong>
+                  </div>
                   <div className="chart-legend" aria-hidden="true">
                     dim=raw · bright=EMA · ~{Math.round((SURPRISE_HISTORY * 0.2) / 60)}m window
+                    {telemetry.directionOrder.tag === "measured"
+                      ? " · R1 0=swirl 1=laminar"
+                      : " · R1 needs ?advPolar"}
                   </div>
                   <div className="diagnostic-row">
                     <span>heads</span>

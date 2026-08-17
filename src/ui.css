@@ -445,6 +445,15 @@ input {
   stroke: var(--tui-green);
 }
 
+/* Absolute reference rule (e.g. the soft-angle √2 collapse chord). Deliberately
+   dimmer than the raw series: it is a landmark, not data. */
+.sparkline-rule {
+  stroke: rgba(126, 224, 160, 0.28);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+
 .chart-legend {
   font-size: 10px;
   opacity: 0.55;

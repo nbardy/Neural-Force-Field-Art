@@ -235,7 +235,7 @@ for (let step = 0; step < STEPS; step++) {
   const eg = await adv.readExtGrads();
   const before = await field.readWeights();
   const stageA = [
-    ["stats", summarize([stats.discLoss, stats.surprise, stats.batchRms])],
+    ["stats", summarize([stats.payoffUngated, stats.surprise, stats.batchRms])],
     ["advGrad", summarize(ag)],
     ["advWeight", summarize(aw)],
     ["extGrad", summarize(eg)],
@@ -275,7 +275,7 @@ for (let step = 0; step < STEPS; step++) {
   if (step % REPORT === 0 || step === STEPS - 1) {
     const scratch = await adv.readScratch(advScratchLayout(layout, adv.advL, TAG).stride * B);
     console.log(
-      `step=${step} seed=${seed.toExponential(3)} loss=${stats.discLoss.toExponential(3)} ` +
+      `step=${step} seed=${seed.toExponential(3)} loss=${stats.payoffUngated.toExponential(3)} ` +
         `sur=${stats.surprise.toExponential(3)} yRms=${stats.batchRms.toExponential(3)} ` +
         `FW(${fmt(fws)}) FG(${fmt(fgs)}) AW(${fmt(summarize(aw))}) ` +
         `AG(${fmt(summarize(ag))}) EG(${fmt(summarize(eg))})${pairGeometry(scratch)}`

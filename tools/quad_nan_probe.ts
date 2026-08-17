@@ -13,6 +13,14 @@
  * hashgrid). The default gallery piece is
  *   TAG=pair-rotation-scale-adjusted ENC=hashgrid K=4 N=60000 WEIGHT=0.015
  * which is also the configuration the fused hashgrid adversary must survive.
+ *
+ * `POLAR`/`NEMATIC` (+ optional `PTAU`) declare the fused ANTI-COLLAPSE
+ * PRESSURE. Both zero is the named `none` variant, i.e. the historical shader.
+ * Because this probe closes the loop — adversary → extGrads → field Adam →
+ * advect — the reported R₁ actually MOVES here, so it doubles as the fused
+ * counterpart of tools/collapse_probe.ts (which drives the tfjs path):
+ *   TAG=pair-rotation-scale-adjusted ENC=hashgrid K=4 WEIGHT=0.015 \
+ *     POLAR=0.05 NEMATIC=0.05 STEPS=3000 bun tools/quad_nan_probe.ts
  */
 import { setupGlobals } from "bun-webgpu";
 import {
@@ -26,6 +34,7 @@ import {
   AdversaryTrainer,
   packAdversaryInit,
 } from "../src/render/webgpu/adversary_train";
+import type { FusedGamePressure } from "../src/render/webgpu/adversary_wgsl";
 import { FusedTrainer } from "../src/render/webgpu/train";
 import type { FieldLossSpec } from "../src/render/webgpu/train_wgsl";
 
@@ -70,6 +79,16 @@ const ENCODING: Encoding =
       }
     : { kind: "raw" };
 const FINE_AFTER = Number(process.env.FINE_AFTER ?? -1);
+const POLAR = Number(process.env.POLAR ?? 0);
+const NEMATIC = Number(process.env.NEMATIC ?? 0);
+const PTAU = Number(process.env.PTAU ?? 0.05);
+// Both weights zero is the NAMED `none` variant, never a weight-0
+// anti-collapse: the shader compiles a different (byte-identical to the
+// historical) module for it, and "declared but inert" would hide that.
+const PRESSURE: FusedGamePressure =
+  POLAR === 0 && NEMATIC === 0
+    ? { tag: "none" }
+    : { tag: "anti-collapse", polar: POLAR, nematic: NEMATIC, tau: PTAU };
 const FRICTION = 0.97;
 const MAX_VEL = 24;
 const FORCE = (DRIVE * MAX_VEL * (1 - FRICTION)) / FRICTION;
@@ -219,6 +238,7 @@ const adv = new AdversaryTrainer(device, layout, {
   fieldWeightsBuffer: fieldBuf,
   particleCount: N,
   seed: 103,
+  pressure: PRESSURE,
 });
 adv.uploadAdvWeights(packAdversaryInit(adv.advL, 103));
 adv.setParticleBuffers(posBuf, velBuf, N);
@@ -280,13 +300,13 @@ for (let step = 0; step < STEPS; step++) {
     const eg = summarize(await adv.readExtGrads());
     const fw = summarize(await field.readWeights());
     if (
-      !Number.isFinite(stats.discLoss) ||
+      !Number.isFinite(stats.payoffUngated) ||
       aw.firstBad >= 0 ||
       eg.firstBad >= 0 ||
       fw.firstBad >= 0
     ) {
       console.log(
-        `AFTER ADV step=${step} loss=${stats.discLoss} ` +
+        `AFTER ADV step=${step} loss=${stats.payoffUngated} ` +
           `FW(${fmt(fw)}) AW(${fmt(aw)}) EG(${fmt(eg)}) wins=${stats.winCounts.join(",")}`
       );
       failed = true;
@@ -322,7 +342,7 @@ for (let step = 0; step < STEPS; step++) {
     const fw = summarize(await field.readWeights());
     const fg = summarize(await field.readGrads());
     const stages = [
-      ["stats", summarize([stats.discLoss, stats.surprise, stats.batchRms])],
+      ["stats", summarize([stats.payoffUngated, stats.surprise, stats.batchRms])],
       ["advGrad", ag],
       ["advWeight", aw],
       ["extGrad", eg],
@@ -332,10 +352,12 @@ for (let step = 0; step < STEPS; step++) {
     const bad = stages.find(([, s]) => s.firstBad >= 0);
     if (fine || step % REPORT === 0 || bad) {
       console.log(
-        `step=${step} seed=${seed.toExponential(3)} loss=${Number.isFinite(stats.discLoss) ? stats.discLoss.toExponential(3) : String(stats.discLoss)} ` +
+        `step=${step} seed=${seed.toExponential(3)} loss=${Number.isFinite(stats.payoffUngated) ? stats.payoffUngated.toExponential(3) : String(stats.payoffUngated)} ` +
           `sur=${Number.isFinite(stats.surprise) ? stats.surprise.toExponential(3) : String(stats.surprise)} ` +
           `yRms=${Number.isFinite(stats.batchRms) ? stats.batchRms.toExponential(3) : String(stats.batchRms)} ` +
           `wins=${stats.winCounts.join(",")} ` +
+          `R1=${stats.directionOrder.tag === "measured" ? stats.directionOrder.r1.toFixed(4) : "--"} ` +
+          `R2=${stats.directionOrder.tag === "measured" ? stats.directionOrder.r2.toFixed(4) : "--"} ` +
           `FW(${fmt(fw)}) FG(${fmt(fg)}) AW(${fmt(aw)}) AG(${fmt(ag)}) EG(${fmt(eg)})`
       );
     }

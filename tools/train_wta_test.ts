@@ -705,7 +705,7 @@ async function oracleCheck(label: string, cfg: OracleCfg, seed: number) {
     ok(worst < 2e-3, `${label}: oracle FD spot-check on 6 field weights (worst rel ${worst.toExponential(2)})`);
   }
 
-  const relLoss = Math.abs(stats.discLoss - discLossO) / (Math.abs(discLossO) + 1e-12);
+  const relLoss = Math.abs(stats.payoffUngated - discLossO) / (Math.abs(discLossO) + 1e-12);
   const relSur = Math.abs(stats.surprise - surO) / (Math.abs(surO) + 1e-12);
   const rmsO = Math.sqrt(y2O);
   const relRms = Math.abs(stats.batchRms - rmsO) / (rmsO + 1e-12);
@@ -764,7 +764,7 @@ async function oracleCheck(label: string, cfg: OracleCfg, seed: number) {
   ok(maxSur < 1e-5 && winMis === 0,
     `${label}: surprise + winner parity (max |Δ| ${maxSur.toExponential(2)}, ${winMis}/${B2} winner mismatch)`);
   ok(relLoss < 1e-5 && relSur < 1e-5 && relRms < 1e-5,
-    `${label}: stats parity — disc ${stats.discLoss.toFixed(7)} (rel ${relLoss.toExponential(2)}), ` +
+    `${label}: stats parity — disc ${stats.payoffUngated.toFixed(7)} (rel ${relLoss.toExponential(2)}), ` +
       `sur rel ${relSur.toExponential(2)}, rms rel ${relRms.toExponential(2)}`);
   ok(
     maxRawPlane < 1e-6 &&
@@ -1204,7 +1204,7 @@ console.log("\n--- 2c. relative-scale target is invariant; energy remains observ
   const zr = await zero.readSurprise(B2 * 2, "raw-payoff");
   const zu = await zero.readSurprise(B2 * 2, "per-unit-signal");
   ok(
-    zs.discLoss === 0 && zs.surprise === 0 && zs.batchRms === 0 &&
+    zs.payoffUngated === 0 && zs.surprise === 0 && zs.batchRms === 0 &&
       zs.energyActive === 0,
     "inactive zero target reports exact zero loss/payoff/RMS and active count"
   );
@@ -1341,7 +1341,7 @@ console.log("\n--- 2d. ambiguous triangle ties are explicit inactive data ---");
   const s = await trainer.readStats();
   const ag = await trainer.readAdvGrads();
   const eg = await trainer.readExtGrads();
-  ok(s.discLoss === 0 && s.surprise === 0 && s.winCounts.every((n) => n === 0),
+  ok(s.payoffUngated === 0 && s.surprise === 0 && s.winCounts.every((n) => n === 0),
     "near-tie triangle contributes zero payoff and zero head wins");
   ok(ag.every((v) => v === 0) && eg.every((v) => v === 0),
     "near-tie triangle contributes exact zero D/G gradients");
@@ -1474,7 +1474,7 @@ console.log("\n--- 2d2. labelled quad: torus frame, label semantics, inactive an
     }
   }
   ok(
-    stats.discLoss === 0 &&
+    stats.payoffUngated === 0 &&
       stats.surprise === 0 &&
       stats.batchRms === 0 &&
       stats.winCounts.every((n) => n === 0) &&
@@ -2234,7 +2234,7 @@ console.log("\n--- 4. alternating update order + discriminator training ---");
     trainer.step(PHYS, {
       b: 256, alpha: ALPHA, lr: 3e-3, source: "uploaded", genSeed: 0, applyDisc: true,
     });
-    losses.push((await trainer.readStats()).discLoss);
+    losses.push((await trainer.readStats()).payoffUngated);
   }
   let decreasingSteps = 0;
   for (let i = 1; i < losses.length; i++) if (losses[i] < losses[i - 1]) decreasingSteps++;
@@ -2528,7 +2528,7 @@ console.log("\n--- 6. deterministic unique live coverage + zero-data safety ---"
   ok(
     Array.from(extAfterZero).every((v) => v === 0) &&
       Array.from(advGradAfterZero).every((v) => v === 0) &&
-      zeroStats.discLoss === 0 &&
+      zeroStats.payoffUngated === 0 &&
       zeroStats.surprise === 0 &&
       zeroStats.batchRms === 0 &&
       zeroStats.headSpread.tag === "spread" &&
@@ -2670,10 +2670,10 @@ console.log("\n--- 7. bench: fused adversary step, B=512, live-particle source -
     const st = trainer.lastStats!;
     console.log(
       `      ${label}: ${ms.toFixed(3)} ms/step (B=512, ${ITER} steps, incl. disc Adam + fieldGrad) — ` +
-        `disc ${st.discLoss.toFixed(4)}, sur ${st.surprise.toExponential(2)}, wins [${st.winCounts.join(",")}]`
+        `disc ${st.payoffUngated.toFixed(4)}, sur ${st.surprise.toExponential(2)}, wins [${st.winCounts.join(",")}]`
     );
     ok(ms < 19, `${label}: fused step ${ms.toFixed(3)} ms < tfjs's best 19 ms`);
-    ok(Number.isFinite(st.discLoss) && Number.isFinite(st.surprise) && st.winCounts.reduce((a, b) => a + b, 0) === 512,
+    ok(Number.isFinite(st.payoffUngated) && Number.isFinite(st.surprise) && st.winCounts.reduce((a, b) => a + b, 0) === 512,
       `${label}: stats finite, win counts sum to B`);
     trainer.destroy();
   }

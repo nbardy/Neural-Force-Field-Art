@@ -82,6 +82,8 @@ export class PixelDiscTrainer {
   private readonly pipeCopyAux: GPUComputePipeline;
   private readonly pipeFakeSplat: GPUComputePipeline;
   private readonly pipeDensFake: GPUComputePipeline;
+  /** vec-field only: parallel F(cell_center) fill. Null for the other kinds. */
+  private readonly pipeForceGrid: GPUComputePipeline | null;
   private readonly pipeCriticDisc: GPUComputePipeline;
   private readonly pipeAdam: GPUComputePipeline;
   private readonly pipeClearGen: GPUComputePipeline;
@@ -122,8 +124,12 @@ export class PixelDiscTrainer {
       });
 
     this.critWBuf = mk(this.nWeights * 4);
-    this.scratchBuf = mk(pixelScratchBytes(field, this.batchCap));
     const nCell = this.dims.G * this.dims.G;
+    // vec-field runs fillForceGrid one cell per invocation, so it needs nCell
+    // critic workspaces; the other kinds have no force grid and keep one.
+    this.scratchBuf = mk(
+      pixelScratchBytes(field, this.batchCap, this.kind === "vec-field" ? nCell : 1)
+    );
     this.densI32 = mk(nCell * 4);
     this.densPack = mk(densPackFloats(this.dims.G) * 4);
     this.metaBuf = mk((this.nWeights * 3 + 8) * 4);
@@ -184,6 +190,7 @@ export class PixelDiscTrainer {
     this.pipeCopyAux = mkPipe("copyDensToAux");
     this.pipeFakeSplat = mkPipe("fakeSplat");
     this.pipeDensFake = mkPipe("densToFloatFake");
+    this.pipeForceGrid = this.kind === "vec-field" ? mkPipe("fillForceGrid") : null;
     this.pipeCriticDisc = mkPipe("criticDisc");
     this.pipeAdam = mkPipe("discAdam");
     this.pipeClearGen = mkPipe("clearDensGen");
@@ -318,6 +325,10 @@ export class PixelDiscTrainer {
     dispatch(this.pipeClear, nCell);
     dispatch(this.pipeSample, b);
     dispatch(this.pipeDensF, nCell);
+
+    // Targets for vec-field: one invocation per cell, ahead of the single-thread
+    // critic that reads them. Was an inline serial loop inside criticDisc.
+    if (this.pipeForceGrid) dispatch(this.pipeForceGrid, nCell);
 
     switch (this.kind) {
       case "next-frame":

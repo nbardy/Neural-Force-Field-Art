@@ -28,6 +28,14 @@
  *      hand — the classic one-tensor-per-frame leak that only shows up an hour in.
  *   §6 DIAGNOSTIC ROUTING. Raw/per-unit modes are explicit, while the tfjs
  *      reference path cannot silently substitute a particle-transition metric.
+ *   §8 PIXEL CRITIC GATE. The fused field trainer's pass B sums at most TWO
+ *      external gradients. A piece declaring the Agree+Disagree game AND a
+ *      pixel critic wants three, and the old `if (advTrainerB) … else if
+ *      (pixelDiscTrainer)` silently dropped the critic's — it trained, logged
+ *      "[pixel-disc] FUSED" and dispatched ten passes per frame at 0% of the
+ *      field update. Every way of silencing a declared critic must be a NAMED
+ *      state with a reason, and that particular combination must not be
+ *      configurable at all.
  *
  * Runs on the tfjs CPU backend; no GPU, no DOM.
  */
@@ -45,10 +53,12 @@ import {
   forceMagnitudeForDrive,
   physicsForward,
   surpriseMetricOf,
+  resolvePixelCritic,
   type ArtPieceConfig,
   type TfjsAdversaryRuntime,
 } from "../src/main";
 import { HelmholtzField } from "../src/core/field/helmholtz";
+import { layoutField, type Encoding } from "../src/render/webgpu/advect_wgsl";
 
 let failures = 0;
 const ok = (cond: boolean, msg: string) => {
@@ -805,6 +815,160 @@ async function main(): Promise<void> {
     ok(
       branchFailure.tag === "pileup" && branchUnknown.tag === "separated-unresolved",
       "Agree+Disagree combines branch health conservatively; averaging cannot hide one lane"
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  console.log("\n§8 PIXEL CRITIC GATE — no silently-inert critic");
+  // ══════════════════════════════════════════════════════════════════════
+  {
+    const headDims = (inSize: number) => [
+      { inSize, outSize: 16, activation: "selu" as const },
+      { inSize: 16, outSize: 16, activation: "selu" as const },
+      { inSize: 16, outSize: 2, activation: "tanh" as const },
+    ];
+    const mkLayout = (encoding: Encoding, classes = 0) => {
+      const inSize =
+        encoding.kind === "fourier"
+          ? 2 + 4 * encoding.octaves
+          : encoding.kind === "hashgrid"
+          ? encoding.features
+          : 2;
+      // C > 0: head 0 stays class-blind, head 1 takes the one-hot (FieldLayout).
+      return layoutField(
+        "helmholtz",
+        [headDims(inSize), headDims(inSize + classes)],
+        { encoding, classes }
+      );
+    };
+    const fourier = mkLayout({ kind: "fourier", octaves: 4 });
+    const spec = { weight: 0.04, kind: "vec-field" as const };
+    const baseGates = {
+      declared: spec,
+      hasField: true,
+      fieldLossDeclared: true,
+      wantTfjsTrainer: false,
+      adversaryOnTfjs: false,
+      agreeDisagreeGame: false,
+      layout: fourier,
+    };
+
+    // The whole point: a supported piece still gets its critic. If this ever
+    // flips to "dropped", the four shipped Pixel pieces are running a
+    // ZERO_FIELD_LOSS field with NOTHING training it.
+    const fused = resolvePixelCritic(baseGates);
+    ok(fused.tag === "fused", `supported Pixel piece resolves fused (got ${fused.tag})`);
+    ok(
+      fused.tag === "fused" && fused.spec === spec,
+      "the fused plan CARRIES the approved spec, so the construction site " +
+        "cannot re-derive a different one"
+    );
+
+    // §8a THE LOUD PATH. Agree+Disagree + pixel critic is not a weaker
+    // configuration, it is a non-configuration: three extGrad claimants for two
+    // bindings. It must THROW during piece resolution — before any trainer is
+    // built and before "[pixel-disc] FUSED" is ever printed.
+    let threwCombo = false;
+    let comboMsg = "";
+    try {
+      resolvePixelCritic({ ...baseGates, agreeDisagreeGame: true });
+    } catch (e) {
+      threwCombo = true;
+      comboMsg = String((e as Error).message);
+    }
+    ok(
+      threwCombo,
+      "Agree+Disagree game + pixel critic THROWS at resolution (never a " +
+        "constructed-but-unbound critic)"
+    );
+    ok(
+      /Agree\+Disagree/.test(comboMsg) && /0%/.test(comboMsg),
+      `the throw names the game and the 0%-of-the-update consequence (got: ${comboMsg.slice(0, 60)}…)`
+    );
+    // It throws on the DECLARATION, not on the runtime path: a piece carrying
+    // both is broken even when some other gate would have dropped the critic
+    // anyway, and the author must see it.
+    let threwOnTfjsToo = false;
+    try {
+      resolvePixelCritic({
+        ...baseGates,
+        agreeDisagreeGame: true,
+        wantTfjsTrainer: true,
+      });
+    } catch (_) {
+      threwOnTfjsToo = true;
+    }
+    ok(threwOnTfjsToo, "the combination throws regardless of which trainer would run");
+
+    // §8b EVERY OTHER DROP IS NAMED. Silence is the bug; a reason string is
+    // the fix. `?train=tfjs` in particular used to disable the critic with no
+    // log at all.
+    const dropCases: { name: string; plan: ReturnType<typeof resolvePixelCritic> }[] = [
+      { name: "?train=tfjs", plan: resolvePixelCritic({ ...baseGates, wantTfjsTrainer: true }) },
+      { name: "no fieldLoss", plan: resolvePixelCritic({ ...baseGates, fieldLossDeclared: false }) },
+      { name: "no field", plan: resolvePixelCritic({ ...baseGates, hasField: false }) },
+      { name: "adversary on tfjs", plan: resolvePixelCritic({ ...baseGates, adversaryOnTfjs: true }) },
+      {
+        name: "hashgrid arch (dock override)",
+        plan: resolvePixelCritic({
+          ...baseGates,
+          layout: mkLayout({ kind: "hashgrid", gridSize: 16, features: 4 }),
+        }),
+      },
+      {
+        name: "class-aware field",
+        plan: resolvePixelCritic({ ...baseGates, layout: mkLayout({ kind: "raw" }, 3) }),
+      },
+    ];
+    const unnamed = dropCases.filter(
+      (c) => c.plan.tag !== "dropped" || c.plan.reason.trim().length === 0
+    );
+    ok(
+      unnamed.length === 0,
+      `every gate that silences a declared critic returns a REASON ` +
+        `(${dropCases.length} gates checked${
+          unnamed.length ? `; unnamed: ${unnamed.map((u) => u.name).join(", ")}` : ""
+        })`
+    );
+    const tfjsPlan = dropCases[0].plan;
+    ok(
+      tfjsPlan.tag === "dropped" && /train=tfjs/.test(tfjsPlan.reason),
+      "?train=tfjs names ITSELF as the cause, so the console warn is actionable"
+    );
+    // A piece with no critic must stay silent — a warn per piece would train
+    // readers to ignore the channel that carries the real one.
+    ok(
+      resolvePixelCritic({ ...baseGates, declared: undefined }).tag === "absent",
+      "a piece that declares no critic resolves absent (no warn)"
+    );
+
+    // §8c GALLERY COHERENCE. No shipped piece may carry the impossible pair —
+    // resolvePixelCritic throwing here IS the failure.
+    const q = new URLSearchParams("");
+    let brokenPieces = 0;
+    let pixelPieces = 0;
+    for (const piece of GALLERY) {
+      const advSpec = resolveAdversary(piece.adversary, q);
+      if (piece.pixelDisc) pixelPieces++;
+      try {
+        resolvePixelCritic({
+          declared: piece.pixelDisc,
+          hasField: !!piece.createField || !!piece.fieldArch,
+          fieldLossDeclared: piece.fieldLoss !== undefined,
+          wantTfjsTrainer: false,
+          adversaryOnTfjs: false,
+          agreeDisagreeGame: advSpec.tag === "on" && advSpec.game === "agree-disagree",
+          layout: fourier,
+        });
+      } catch (e) {
+        console.log(`      broken piece: ${piece.name} — ${(e as Error).message}`);
+        brokenPieces++;
+      }
+    }
+    ok(
+      brokenPieces === 0,
+      `no gallery piece declares both the Agree+Disagree game and a pixel ` +
+        `critic (${pixelPieces} pixel pieces checked)`
     );
   }
 

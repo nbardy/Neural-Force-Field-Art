@@ -25,6 +25,12 @@
  * soft-spherical modes bypass the EMA. Scale-aware modes additionally report
  * raw member-signal energy and use an exact positive energy-anchor derivative.
  * A few frames of readback latency is irrelevant at a ~50-step EMA horizon.
+ *
+ * THE ANTI-COLLAPSE PRESSURE's batch moments are NOT on that latency path.
+ * They are reduced and finalized by the pre-D forward and read back as exact
+ * constants by the post-D forward INSIDE the same encodeStep — the same
+ * device-side round trip the scale-hold energy anchor already uses. The host
+ * only observes them for telemetry (`AdvStats.directionOrder`).
  */
 
 import type { FieldLayout, AdversaryLayout, LayerDims } from "./advect_wgsl";
@@ -35,6 +41,7 @@ import {
   adversaryPassAShader,
   adversaryPassBShader,
   advScratchBytes,
+  advStatsLayout,
   validateAdversaryFusion,
   adjustedTuple,
   fusedObjectiveDims,
@@ -47,6 +54,7 @@ import {
   type ObserverGeometry,
   type FusedAdversaryTarget,
   type FusedAdversaryLoss,
+  type FusedGamePressure,
 } from "./adversary_wgsl";
 
 const ADAM_DEFAULTS = { beta1: 0.9, beta2: 0.999, eps: 1e-7 } as const;
@@ -68,9 +76,37 @@ export interface SurprisePlane {
   offsetFloats: number;
 }
 
+/**
+ * Direction ORDER PARAMETERS of the batch's soft-unit field directions, from
+ * the moments the anti-collapse pressure already reduces.
+ *
+ *   R₁ = ‖mean u‖                    polar   — 0 isotropic, 1 one global flow
+ *   R₂ = ‖mean (uₓ²−u_y², 2uₓu_y)‖   nematic — catches ±F₀ counter-streaming
+ *
+ * `unmeasured` is a real state, not a missing number: a shader compiled
+ * WITHOUT pressure never reduces the moments (that is what keeps it
+ * byte-identical to the pre-pressure adversary), so there is nothing to
+ * report and a 0 would read as "perfectly isotropic".
+ */
+export type DirectionOrder =
+  | { readonly tag: "unmeasured" }
+  | { readonly tag: "measured"; readonly r1: number; readonly r2: number };
+
 export interface AdvStats {
-  /** mean relaxed-weighted residual (the discriminator objective) */
-  discLoss: number;
+  /**
+   * Mean relaxed-weighted residual BEFORE the isFiniteF gate.
+   *
+   * RENAMED from `discLoss` 2026-08-17. The game is ONE zero-sum payoff
+   * (adversary.ts `payoff`), so a separate "discriminator loss" number never
+   * existed: this is bit-identical to `surprise` whenever the payoff is finite
+   * — i.e. always, in healthy operation (collapse note §3; the HUD drew the two
+   * as separate charts for months and they were the same curve). Its ONLY
+   * independent information is the tripwire `payoffUngated !== surprise`,
+   * meaning some tuple's payoff went nonfinite and the gate zeroed it. That is
+   * why the slot was kept rather than recycled for R₁ (which needs four
+   * moments, not one scalar, anyway) — see tools/quad_nan_probe.ts.
+   */
+  payoffUngated: number;
   /** Mean raw shared relaxed-WTA payoff. Retains the historical property name
    * for UI/test compatibility; it is not the per-unit visualization plane. */
   surprise: number;
@@ -87,6 +123,8 @@ export interface AdvStats {
   energyRms: number;
   /** Exact active tuple count used by the batch energy-anchor derivative. */
   energyActive: number;
+  /** Direction order over the SAME batch the pressure is priced on. */
+  directionOrder: DirectionOrder;
 }
 
 export interface AdvStepOpts {
@@ -185,6 +223,9 @@ export class AdversaryTrainer {
   readonly observerGeometry: ObserverGeometry;
   readonly fieldLane: FieldLane;
   readonly generatorRole: GeneratorRole;
+  /** Compiled anti-collapse pressure. `none` ⇒ the shader is byte-identical to
+   *  the pre-pressure adversary and `directionOrder` reports `unmeasured`. */
+  readonly pressure: FusedGamePressure;
   readonly k: number;
   readonly m: number;
   readonly batchCap: number;
@@ -206,6 +247,7 @@ export class AdversaryTrainer {
   private readonly scratchBuf: GPUBuffer;
   private readonly statsBuf: GPUBuffer;
   private readonly statsFloats: number;
+  private readonly statsL: { finalized: number; pstride: number; momentOff: number };
   private readonly tupleBuf: GPUBuffer;
   private surBuf: GPUBuffer;
   private surFloats: number;
@@ -257,6 +299,15 @@ export class AdversaryTrainer {
       fieldLane?: FieldLane;
       /** disagree minimizes -payoff; agree minimizes +payoff. */
       generatorRole?: GeneratorRole;
+      /**
+       * Anti-collapse pressure on the FIELD's raw directions, compiled into
+       * pass A. Omitted resolves to `none` (the pre-2026-08-17 behaviour).
+       * On a two-lane Agree+Disagree game each lane prices ITS OWN field head,
+       * which are disjoint parameter blocks — additive, not double-counted.
+       * (A hashgrid + agree-disagree pairing would send both lanes' pressure
+       * into the SHARED grid table; nothing ships that combination today.)
+       */
+      pressure?: FusedGamePressure;
       k: number;
       relaxEps: number;
       hiddenUnits?: number;
@@ -292,6 +343,7 @@ export class AdversaryTrainer {
     if (this.generatorRole !== "disagree" && this.generatorRole !== "agree") {
       throw new Error(`adversary: invalid generatorRole ${String(this.generatorRole)}`);
     }
+    this.pressure = opts.pressure ?? { tag: "none" };
     const objective = fusedObjectiveDims(this.tag, this.target, this.loss);
     const { m, du, outDy: dy } = objective;
     this.m = m;
@@ -330,7 +382,9 @@ export class AdversaryTrainer {
       )
     );
     const wgCap = Math.ceil(this.batchCap / ADV_WG);
-    this.statsFloats = ADV_STATS_BASE + wgCap * (7 + this.k);
+    // ONE source of truth for the stats geometry, shared with the codegen.
+    this.statsL = advStatsLayout(this.k, this.pressure);
+    this.statsFloats = ADV_STATS_BASE + wgCap * this.statsL.pstride;
     this.statsBuf = mkStorage(this.statsFloats * 4);
     this.extGradsBuf = mkStorage(field.totalFloats * 4);
     this.tupleBuf = mkStorage(this.batchCap * m * 4 * 4);
@@ -346,7 +400,7 @@ export class AdversaryTrainer {
     });
     this.partDummy = device.createBuffer({ size: 8, usage: GPUBufferUsage.STORAGE });
     this.statsStaging = device.createBuffer({
-      size: (7 + this.k) * 4,
+      size: this.statsL.finalized * 4,
       usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
     });
 
@@ -384,6 +438,7 @@ export class AdversaryTrainer {
       observerGeometry: this.observerGeometry,
       target: this.target,
       loss: this.loss,
+      pressure: this.pressure,
     };
     const plA = device.createPipelineLayout({ bindGroupLayouts: [this.bglA] });
     const moduleA = device.createShaderModule({
@@ -585,7 +640,7 @@ export class AdversaryTrainer {
       encoder.clearBuffer(this.advGradsBuf);
       encoder.clearBuffer(this.statsBuf);
       this.lastStats = {
-        discLoss: 0,
+        payoffUngated: 0,
         surprise: 0,
         batchRms: 0,
         headSpread:
@@ -600,6 +655,9 @@ export class AdversaryTrainer {
         winCounts: new Array(this.k).fill(0),
         energyRms: 0,
         energyActive: 0,
+        // No complete tuple exists, so no direction was observed. Reporting
+        // R₁ = 0 here would paint "perfectly isotropic" onto an empty batch.
+        directionOrder: { tag: "unmeasured" },
       };
       this.lastCoverageWindow = {
         start: this.coverageCursor,
@@ -705,9 +763,31 @@ export class AdversaryTrainer {
     this.device.queue.submit([enc.finish()]);
   }
 
+  /** δ: pressure variant → how (and whether) the moment slots are read. */
+  private readDirectionOrder(f: Float32Array): DirectionOrder {
+    switch (this.pressure.tag) {
+      case "none":
+        return { tag: "unmeasured" };
+      case "anti-collapse": {
+        const o = this.statsL.momentOff;
+        return {
+          tag: "measured",
+          r1: Math.hypot(f[o], f[o + 1]),
+          r2: Math.hypot(f[o + 2], f[o + 3]),
+        };
+      }
+      default: {
+        const unhandled: never = this.pressure;
+        throw new Error(
+          `adversary: unhandled pressure ${JSON.stringify(unhandled)}`
+        );
+      }
+    }
+  }
+
   private parseStats(f: Float32Array): AdvStats {
     return {
-      discLoss: f[0],
+      payoffUngated: f[0],
       surprise: f[1],
       batchRms: f[2],
       headSpread:
@@ -722,6 +802,7 @@ export class AdversaryTrainer {
       winCounts: Array.from(f.subarray(5, 5 + this.k)),
       energyRms: f[5 + this.k],
       energyActive: f[6 + this.k],
+      directionOrder: this.readDirectionOrder(f),
     };
   }
 
@@ -743,7 +824,9 @@ export class AdversaryTrainer {
    */
   encodeStatsRead(encoder: GPUCommandEncoder): boolean {
     if (this.statsPending) return false;
-    encoder.copyBufferToBuffer(this.statsBuf, 0, this.statsStaging, 0, (7 + this.k) * 4);
+    encoder.copyBufferToBuffer(
+      this.statsBuf, 0, this.statsStaging, 0, this.statsL.finalized * 4
+    );
     return true;
   }
 
@@ -784,7 +867,7 @@ export class AdversaryTrainer {
     return out;
   }
   async readStats(): Promise<AdvStats> {
-    const f = await this.read(this.statsBuf, 7 + this.k);
+    const f = await this.read(this.statsBuf, this.statsL.finalized);
     const s = this.parseStats(f);
     this.lastStats = s;
     this.foldRms(s.batchRms);
