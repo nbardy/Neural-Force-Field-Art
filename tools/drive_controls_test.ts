@@ -14,6 +14,7 @@ import {
   driveForForceMagnitude,
   forceMagnitudeForDrive,
   resolveLiveGameControls,
+  resolveTrainBatchSize,
 } from "../src/main";
 import {
   Adversary,
@@ -143,6 +144,33 @@ ok(
   adversaryBatchSize(4096) === 1024,
   "train B respects the fused adversary's compiled batchCap=1024"
 );
+
+// REGRESSION (2026-08-17): the "train B" slider went to 4096 while FusedTrainer
+// was built with batchCap 1024. Over-cap reached FusedTrainer.record(), which
+// throws — inside the rAF tick, which re-arms itself on its last line, so the
+// animation stopped permanently. Over-cap must now resolve to a runnable n and
+// SAY it clamped; only non-finite input is fatal.
+{
+  const under = resolveTrainBatchSize(512, 4096);
+  ok(under.tag === "ok" && under.n === 512, "in-cap train B passes through unchanged");
+  const over = resolveTrainBatchSize(9000, 4096);
+  ok(
+    over.tag === "clamped" && over.n === 4096,
+    "over-cap train B clamps to the cap instead of reaching record()'s throw"
+  );
+  ok(
+    over.tag === "clamped" && over.requested === 9000 && over.cap === 4096,
+    "the clamp carries its provenance (requested + cap) for the warning"
+  );
+  ok(resolveTrainBatchSize(0.2, 4096).n === 1, "sub-1 train B floors at 1, never 0");
+  let nonFiniteRejected = false;
+  try {
+    resolveTrainBatchSize(Number.NaN, 4096);
+  } catch {
+    nonFiniteRejected = true;
+  }
+  ok(nonFiniteRejected, "non-finite train B is a typed error, not a silent default");
+}
 
 console.log("\n§3 LIVE UNIFORM + TFJS PREDICTOR LR");
 // TypeScript private is runtime-normal: isolate the setter/getter contract

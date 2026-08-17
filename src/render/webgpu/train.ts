@@ -23,6 +23,8 @@ import {
   TRAIN_WG,
   TRAIN_WG_B,
   MAX_BATCH,
+  maxBatchForScratch,
+  maxBatchForLoss,
   type FieldLossSpec,
 } from "./train_wgsl";
 
@@ -62,6 +64,11 @@ export interface TrainStepOpts {
 
 const ADAM_DEFAULTS = { beta1: 0.9, beta2: 0.999, eps: 1e-7 } as const;
 
+/** WebGPU's guaranteed floors for the two limits that gate the scratch buffer.
+ *  Only used when a device shim omits `limits` — real browsers report both. */
+const DEFAULT_MAX_STORAGE_BINDING = 128 * 1024 * 1024;
+const DEFAULT_MAX_BUFFER = 256 * 1024 * 1024;
+
 export class FusedTrainer {
   readonly layout: FieldLayout;
   readonly weightsBuf: GPUBuffer;
@@ -91,7 +98,14 @@ export class FusedTrainer {
   private readonly uniBData = new ArrayBuffer(32);
   private bindA: GPUBindGroup;
   private readonly bindB: GPUBindGroup;
-  private readonly batchCap: number;
+  /**
+   * The batch size this trainer can actually run, after clamping the requested
+   * cap to MAX_BATCH and to what the device's storage buffers hold. PUBLIC on
+   * purpose: the UI batch slider bounds itself with this instead of guessing a
+   * constant, which is what let the "train B" slider hand `record()` an n it
+   * had to reject (see the guard there).
+   */
+  readonly batchCap: number;
   private partPos: GPUBuffer | null = null;
   private partVel: GPUBuffer | null = null;
   private partCount = 0;
@@ -131,8 +145,41 @@ export class FusedTrainer {
   ) {
     this.device = device;
     this.layout = layout;
-    this.batchCap = Math.min(opts.batchCap ?? MAX_BATCH, MAX_BATCH);
     this.kSteps = opts.kSteps ?? 1;
+    // Resolve the batch cap ONCE, here, against the two things that really
+    // bound it: the architectural MAX_BATCH and what this device will hold for
+    // this layout at this K. Over-asking is CLAMPED with a warning, never fatal
+    // — a too-large scratch buffer would otherwise surface as an opaque WebGPU
+    // OOM/validation error at createBuffer, mid-startup.
+    //
+    // BOTH limits gate the scratch buffer and neither is guaranteed to be the
+    // smaller: createBuffer validates against maxBufferSize (256 MiB default)
+    // while BINDING it as storage validates against maxStorageBufferBindingSize
+    // (128 MiB default). Take the min.
+    // (Spec guarantees device.limits; the ?? covers minimal test shims.)
+    const scratchLimit = Math.min(
+      device.limits?.maxStorageBufferBindingSize ?? DEFAULT_MAX_STORAGE_BINDING,
+      device.limits?.maxBufferSize ?? DEFAULT_MAX_BUFFER
+    );
+    const memoryCap = maxBatchForScratch(layout, this.kSteps, scratchLimit);
+    // Memory is not the only bound. The cover objective's backward is
+    // superlinear in the batch (full-batch NN scan per cover sample) while its
+    // scratch stays small, so it hits a COMPUTE wall the memory bound cannot
+    // see — seconds per step, i.e. driver-TDR territory. See maxBatchForLoss.
+    const lossCap = maxBatchForLoss(opts.loss);
+    const wanted = Math.max(1, Math.floor(opts.batchCap ?? MAX_BATCH));
+    this.batchCap = Math.min(wanted, memoryCap, lossCap);
+    if (wanted > this.batchCap) {
+      const reason =
+        lossCap < memoryCap
+          ? `this objective's backward is superlinear in the batch (compute cap ${lossCap})`
+          : `scratch ${(scratchBytes(layout, wanted, this.kSteps) / 1048576).toFixed(1)} MiB > ` +
+            `device limit ${(scratchLimit / 1048576).toFixed(0)} MiB`;
+      console.warn(
+        `[train] batchCap ${wanted} exceeds what this device/layout/loss ` +
+          `supports — ${reason}; clamped to ${this.batchCap}`
+      );
+    }
     const extGradBuffers =
       opts.extGradBuffers ?? (opts.extGradBuffer ? [opts.extGradBuffer] : []);
     if (extGradBuffers.length > 2) {
@@ -315,8 +362,17 @@ export class FusedTrainer {
     tsA?: PassTimestampWrites,
     tsB?: PassTimestampWrites
   ): void {
+    // INVARIANT, not a user-facing path. Callers canonicalize against the
+    // published `batchCap` before they get here (main.ts setSampleRate). This
+    // throw runs inside the rAF tick, and `tick` re-arms itself on its LAST
+    // line — so anything thrown here permanently stops the frame loop. Keep it
+    // unreachable from any live control; it exists to catch a wiring bug, not
+    // to police the UI.
     if (o.n > this.batchCap) {
-      throw new Error(`train: n=${o.n} > batchCap ${this.batchCap}`);
+      throw new Error(
+        `train: n=${o.n} > batchCap ${this.batchCap} — clamp against ` +
+          `FusedTrainer.batchCap before calling encodeStep`
+      );
     }
     const apply = o.apply ?? true;
     if (apply) this.adamStep++;

@@ -47,6 +47,11 @@ export const PIECES = Object.freeze({
   quad6: "Adversary · Quad WTA K=6",
   agree: "Adversary · Agree + Disagree RGB",
   weave: "Adversary · Chaos Weave",
+  // The DEFAULT piece. Only fused since the hashgrid adversary port, so the
+  // "every sample reports the fused adversary" gate below is the end-to-end
+  // proof of that work — it fails on any build where fusedAdvOk still excludes
+  // hashgrid encodings.
+  hashgrid: "Adversary · Pair · HashGrid · Curl",
 });
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));

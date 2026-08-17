@@ -256,6 +256,24 @@ Live controls backed by `LoopHandle`:
 
 - particle count, shared field/adversary training batch, max velocity,
   dimensionless drive and respawn rate;
+  - The batch ("train B") ceiling is **not a constant**. `FusedTrainer`
+    resolves it from `MAX_BATCH` (16384) ∧ the device's storage-buffer limit
+    for this layout at this rollout K ∧ the **objective's** compute cap, and
+    publishes it as `.batchCap`; the slider bounds itself with
+    `LoopHandle.getMaxSampleRate()`. A K=16 hashgrid piece typically lands near
+    ~6.5k, a K=2 helmholtz piece at the full 16384.
+  - **Cover-loss pieces (`W_COVER ≠ 0`, e.g. Spiral Cover) cap at 1024** and
+    did not gain any headroom. Their backward scans the whole batch per cover
+    sample — O(COVER_SAMPLES·n²) aggregate — while scratch stays small, so the
+    memory bound cannot see the wall. Measured ms/step: 256→9.4, 1024→36.8,
+    4096→223, 16384→1811. Past ~1k that is driver-TDR territory and nothing in
+    `src/` recovers from device-lost. See `maxBatchForLoss` in `train_wgsl.ts`.
+  - Over-cap requests **clamp with a console warning** — they must never
+    reach `FusedTrainer.record()`, whose throw runs inside the rAF tick and so
+    stops the animation permanently. Regression test:
+    `bun tools/train_batch_cap_test.ts`.
+  - The fused adversary and pixel discriminator keep their own smaller caps
+    (1024 / 512) and clamp the shared batch down independently.
 - generator and predictor/discriminator learning rates plus their displayed
   ratio;
 - trail decay, stroke style, stroke length;

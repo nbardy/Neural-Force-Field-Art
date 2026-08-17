@@ -102,8 +102,58 @@ gaps, asymmetry — not a single fillable diagonal stripe.
 | `real-fake` | `Pixel · RealFake` |
 | `inpaint` | `Pixel · Inpaint` |
 
+## The critic must be the ONLY gradient
+
+Every Pixel piece ships `fieldLoss: ZERO_FIELD_LOSS`. This is load-bearing, not
+housekeeping.
+
+The field trainer's pass B builds one gradient and hands it to one Adam:
+
+```wgsl
+// src/render/webgpu/train_wgsl.ts
+g = <structural field loss>;
+g = g + extGrad0[t];      // ← the critic's entire influence
+grads[t] = g;
+```
+
+So a piece that declares both a structural loss *and* a game is running two
+optimizers against one weight buffer, and the scales are nowhere near each
+other. Measured at the shipped dims (`tools/pixel_disc_authority_probe.ts`):
+
+| piece fieldLoss | ‖extGrad‖ | ‖grads‖ (total) | critic authority |
+|---|---|---|---|
+| `ZERO_FIELD_LOSS` | 3e-4 … 9e-3 | same | **100%** |
+| `W_CHAOS .2 / W_ISO .6 / W_DIV .1` | 5e-4 … 8e-3 | ~8.5 | **0.006% – 0.09%** |
+
+The failure is silent by construction. Nothing errors, no pass is skipped, no
+gradient is non-finite, `tools/pixel_disc_test.ts` stays green — the artwork is
+just 99.99% W_ISO, which looks exactly like "the pixel adversary does nothing."
+
+Two corollaries worth remembering:
+
+- **It is not a device bug.** All four pieces were first reported dead on a
+  phone. `sampleAndSplat` normalizes by `uni.width`/`uni.height`, so authority
+  is identical at 390×844 and 1280×800 — the probe asserts both. A pixel piece
+  that behaves differently across viewports has a *new* bug.
+- **`pixelDisc.weight` is only meaningful once the critic is uncontested.**
+  Adam rescales by `sqrt(v)`, so a small-but-sole `extGrad` still takes
+  full-size steps; the same `extGrad` summed under a structural loss is noise
+  no matter how the weight is set. Shape a piece with `weight`, not by
+  reintroducing `W_ISO`.
+
 ## Verify
 
 ```bash
 bun tools/pixel_disc_test.ts
 ```
+
+Kernel-vs-oracle correctness (CPU oracle, gradients, GPU smoke). Note it runs
+`G=8 E=4 K=8` on a small raw field — smaller than the gallery's
+`G=16 E=8 K=16 hidden=32` on `ARCH.dualFourier`.
+
+```bash
+bun tools/pixel_disc_authority_probe.ts
+```
+
+Regression guard for the above: runs the **shipped** dims and asserts each
+kind's critic still owns ≥50% of the applied gradient, across both viewports.

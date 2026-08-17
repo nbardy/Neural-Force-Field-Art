@@ -17,6 +17,8 @@ import {
   GALLERY,
   GAME_LEARNING_RATE_RANGE,
   INK_LOOK_DECAY,
+  TRAIN_BATCH_MAX,
+  TRAIN_BATCH_MIN,
   adversaryLossOf,
   adversaryTargetOf,
   describeFieldArch,
@@ -33,11 +35,18 @@ import {
   type InkLook,
   type LoopHandle,
 } from "./main";
+import { objectiveDims } from "./core/gan/adversary";
 import type {
   AdversaryLoss,
   AdversaryTarget,
   TupleEncoding,
 } from "./core/gan/adversary";
+import {
+  decodeDockParam,
+  encodeDockParam,
+  resolveSharedPiece,
+  type SharedPiece,
+} from "./share";
 import type { ColormapName } from "./draw/colormap";
 import type { BorderMode } from "./render/webgpu/advect_wgsl";
 import type { SplatStyle } from "./render/webgpu/splat";
@@ -93,7 +102,24 @@ interface PersistedDock {
   colorMode: ColorMode;
 }
 
+/**
+ * The v2 blob as it travels in a LINK: the same object localStorage holds,
+ * plus the piece's name.
+ *
+ * The name is redundant with `runtime.piece` on the build that wrote it and is
+ * the tie-breaker on every other build — see {@link resolveSharedPiece}. It is
+ * additive on purpose: a shared blob is still a valid stored blob, and a
+ * stored blob is still (name-less) shareable input.
+ */
+interface SharedDock extends PersistedDock {
+  readonly pieceName: string;
+}
+
 const DOCK_STORAGE_KEY = "nffa.dock.v2";
+/** Query parameter carrying a whole dock, base64url-encoded. */
+const DOCK_SHARE_PARAM = "dock";
+/** How long "COPIED ✓" stays on the button. */
+const COPY_FLASH_MS = 1500;
 
 /**
  * Where "mobile" starts for the collapsible HUD — the SAME 640px breakpoint the
@@ -294,7 +320,67 @@ function clamp(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n));
 }
 
-function parsePersistedDock(raw: unknown): PersistedDock | null {
+/**
+ * Who owns the adversary RECIPE — observer / target / loss / K / ε and the
+ * reward — inside a restored blob.
+ *
+ * - "piece": the gallery piece's baked recipe wins. This is the localStorage
+ *   policy. A saved blob is a side effect of clicking around, and an early
+ *   dock build carried raw-vector / weight 0 from another piece onto Pair and
+ *   SAVED that poison (Euclidean amplitude games go diagonal; the soft-angle
+ *   swirls vanish). Nobody chose it, so it does not get to win.
+ * - "blob": the blob's own recipe wins. This is the share-link policy. A
+ *   `?dock=` link is an explicit act carrying an explicitly-tuned recipe —
+ *   exactly like `?advLoss=` / `?advTau=` / `?advK=`, which already outrank
+ *   storage AND the piece defaults (see urlHasDockOverrides). Under "piece"
+ *   the settings this feature exists to share are unrepresentable: tuple
+ *   POINT / K 8 / ε 0.22 on a piece baked as PAIR / K 4 / ε 0.05 would come
+ *   back silently as PAIR / 4 / 0.05, i.e. a link that lies about itself.
+ */
+type RecipePolicy = "piece" | "blob";
+
+/** Exactly the fields {@link RecipePolicy} arbitrates. */
+interface RestoredRecipe {
+  readonly encoding: TupleEncoding;
+  readonly target: AdversaryTarget;
+  readonly loss: AdversaryLoss;
+  readonly k: number;
+  readonly relaxEps: number;
+  readonly advWeight: number;
+}
+
+/** Thin dispatcher: one handler per policy, both fed already-validated values. */
+function restoredRecipe(
+  policy: RecipePolicy,
+  piece: RuntimeConfig,
+  pieceWeight: number,
+  blob: RestoredRecipe
+): RestoredRecipe {
+  switch (policy) {
+    case "blob":
+      return blob;
+    case "piece":
+      return {
+        encoding: piece.encoding,
+        target: piece.target,
+        loss: piece.loss,
+        k: piece.k,
+        relaxEps: piece.relaxEps,
+        // A STORED 0 reward with the game on is v1 poison, not a parked dial,
+        // so the piece's own reward comes back. (pieceWeight is itself 0 on a
+        // piece with no adversary, which is why this needs no kind test.) A
+        // LINK's 0 is a real choice — "run the game, feed the HUD, do not
+        // steer the field" — and "blob" keeps it, the same reading main.ts's
+        // floatParam already gives an explicit `?advWeight=0`.
+        advWeight: blob.advWeight === 0 ? pieceWeight : blob.advWeight,
+      };
+  }
+}
+
+function parsePersistedDock(
+  raw: unknown,
+  policy: RecipePolicy
+): PersistedDock | null {
   if (!raw || typeof raw !== "object") return null;
   const data = raw as Partial<PersistedDock>;
   const runtime = data.runtime as Partial<RuntimeConfig> | undefined;
@@ -358,15 +444,34 @@ function parsePersistedDock(raw: unknown): PersistedDock | null {
   }
   if (!isColorMode(data.colorMode)) return null;
 
-  // Kind + recipe must match what the restored piece actually runs. An early
-  // dock build carried raw-vector / weight=0 across gallery clicks and saved
-  // that poison onto Pair — Euclidean amplitude games go diagonal and soft-
-  // angle swirls vanish. Live dials still come from storage; the piece's
-  // baked observer/loss/K win on reload (same policy as gallery switch).
-  const recipe = defaultsForPiece(piece);
+  // Which half of the runtime the blob is trusted with is a POLICY decision,
+  // made once, by the caller — see RecipePolicy.
+  const pieceRecipe = defaultsForPiece(piece);
   const galleryAdv = GALLERY[piece].adversary;
   const pieceWeight = galleryAdv?.tag === "on" ? galleryAdv.weight : 0;
-  const restoredWeight = clamp(advWeight, ADV_WEIGHT_MIN, ADV_WEIGHT_MAX);
+  // `k = 1` IS the variant "single"; createAdversary THROWS on a wta with
+  // k < 2 (src/core/gan/adversary.ts:1483), which on a hand-edited link would
+  // take the page down instead of the link. The floor therefore follows the
+  // piece's kind — the only place that knows whether k is even read.
+  const kFloor = pieceRecipe.adversaryKind === "wta" ? 2 : 1;
+  const recipe = restoredRecipe(policy, pieceRecipe, pieceWeight, {
+    encoding: runtime.encoding,
+    target: runtime.target,
+    loss: runtime.loss,
+    k: clamp(Math.round(k), kFloor, 12),
+    relaxEps: clamp(relaxEps, 0, 0.45),
+    advWeight: clamp(advWeight, ADV_WEIGHT_MIN, ADV_WEIGHT_MAX),
+  });
+  // The one cross-field invariant the per-field guards above cannot see, and
+  // the one startLoop itself THROWS on (main.ts calls objectiveDims before
+  // building the loop): a post-velocity target is point-only. A hand-edited
+  // link pairing it with a relational observer must be rejected as bad input
+  // here, not crash the page there.
+  try {
+    objectiveDims(recipe.encoding, recipe.target, recipe.loss);
+  } catch {
+    return null;
+  }
   return {
     runtime: {
       piece,
@@ -374,13 +479,20 @@ function parsePersistedDock(raw: unknown): PersistedDock | null {
       encoding: recipe.encoding,
       target: recipe.target,
       loss: recipe.loss,
-      adversaryKind: recipe.adversaryKind,
+      // The adversary's EXISTENCE is piece identity, never a dial: startLoop
+      // resolves it from GALLERY + `?adv=` and no dock override can switch a
+      // game on. Adopting a blob's kind onto a piece that has none would draw
+      // a full adversary panel over a loop that reports no telemetry.
+      adversaryKind: pieceRecipe.adversaryKind,
       k: recipe.k,
       relaxEps: recipe.relaxEps,
       archPreset,
     },
     particles: clamp(Math.round(particles), PMIN, PMAX),
-    samples: clamp(Math.round(samples), 16, 1024),
+    // Restored dock values are bounded by the architectural ceiling only; the
+    // live trainer's device-derived cap re-clamps in setSampleRate. (Was a
+    // hard 1024 — a stale narrower bound than the slider itself allowed.)
+    samples: clamp(Math.round(samples), TRAIN_BATCH_MIN, TRAIN_BATCH_MAX),
     maxVelocity: clamp(maxVelocity, 1, 200),
     drive: clamp(drive, 0, 1),
     generatorLearningRate: clamp(generatorLearningRate, G_LR_MIN, G_LR_MAX),
@@ -395,51 +507,265 @@ function parsePersistedDock(raw: unknown): PersistedDock | null {
     blend: clamp(blend, 0, 1),
     strokeStyle: data.strokeStyle,
     strokeLength: clamp(strokeLength, 0.5, 16),
-    advWeight:
-      recipe.adversaryKind !== "off" && restoredWeight === 0
-        ? pieceWeight
-        : restoredWeight,
+    advWeight: recipe.advWeight,
     colorMode: data.colorMode,
   };
 }
 
+/** The single-knob deep links. Explicit and per-field, so they win outright. */
+const DOCK_OVERRIDE_PARAMS = [
+  "adv",
+  "advK",
+  "advM",
+  "advEps",
+  "advWeight",
+  "advTarget",
+  "advLoss",
+  "advTau",
+  "advScaleWeight",
+  "advEnergyWeight",
+  "advEnergyTarget",
+  "advPolar",
+  "advNematic",
+  "advPolarTau",
+  "gLR",
+  "dLR",
+  "drive",
+  "color",
+  "cmap",
+  "decay",
+  "stroke",
+  "strokeLen",
+] as const;
+
 /** Explicit shareable URL knobs win over a saved dock (deep links stay honest). */
 function urlHasDockOverrides(q: URLSearchParams): boolean {
-  return [
-    "adv",
-    "advK",
-    "advM",
-    "advEps",
-    "advWeight",
-    "advTarget",
-    "advLoss",
-    "advTau",
-    "advScaleWeight",
-    "advEnergyWeight",
-    "advEnergyTarget",
-    "gLR",
-    "dLR",
-    "drive",
-    "color",
-    "cmap",
-    "decay",
-    "stroke",
-    "strokeLen",
-  ].some((key) => q.has(key));
+  return DOCK_OVERRIDE_PARAMS.some((key) => q.has(key));
 }
 
-function loadPersistedDock(): PersistedDock | null {
+function loadStoredDock(): PersistedDock | null {
+  try {
+    const raw = window.localStorage.getItem(DOCK_STORAGE_KEY);
+    if (!raw) return null;
+    return parsePersistedDock(JSON.parse(raw), "piece");
+  } catch {
+    return null;
+  }
+}
+
+/* ─── export / share ──────────────────────────────────────────────────────
+   The dock's live state, out as a link and back in again. ONE serializer:
+   the App builds a single PersistedDock per render and hands the SAME object
+   to savePersistedDock and to these, so a copied link and a saved session can
+   never describe different settings.                                        */
+
+function sharedDock(dock: PersistedDock): SharedDock {
+  return { ...dock, pieceName: GALLERY[dock.runtime.piece].name };
+}
+
+/** Every dial in the dock, as a link back to this page. */
+function dockToShareUrl(dock: PersistedDock): string {
+  const base = `${window.location.origin}${window.location.pathname}`;
+  return `${base}?${DOCK_SHARE_PARAM}=${encodeDockParam(sharedDock(dock))}`;
+}
+
+/** The same blob, readable — for bug reports and durable pasting. */
+function dockToShareJson(dock: PersistedDock): string {
+  return JSON.stringify(sharedDock(dock), null, 2);
+}
+
+/** The query string as parameters, or the reason it is not readable at all. */
+type Query =
+  | { readonly tag: "ok"; readonly params: URLSearchParams }
+  | { readonly tag: "malformed"; readonly reason: string };
+
+/**
+ * `new URLSearchParams("?%%%")` THROWS URIError on a malformed percent-escape,
+ * and dock ingestion runs inside a render, where an unhandled throw unmounts
+ * the tree and leaves a BLANK PAGE — the worst possible answer to a mistyped
+ * link. base64url contains no "%", so no honestly-truncated share link reaches
+ * this; a hand-mangled one does.
+ *
+ * DEFENCE IN DEPTH, NOT A CURE: measured with `?dock=%%%not-base64%%%`, tfjs's
+ * own module-level `populateURLFlags` parses the same query string at IMPORT
+ * time and throws the identical URIError before one line of app code runs, so
+ * that URL still blanks the page. Fixing that means guarding the tfjs import,
+ * not this function — but this layer must not be the second place it breaks.
+ */
+function readQuery(search: string): Query {
+  try {
+    return { tag: "ok", params: new URLSearchParams(search) };
+  } catch (error) {
+    return {
+      tag: "malformed",
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/** A `?dock=` parameter, canonicalized. */
+type DockParam =
+  | { readonly tag: "absent" }
+  | { readonly tag: "invalid"; readonly reason: string }
+  | {
+      readonly tag: "ok";
+      readonly dock: PersistedDock;
+      readonly piece: SharedPiece;
+    };
+
+/**
+ * κ — the ONE place a `?dock=` parameter becomes a dock. Transport, then piece
+ * identity, then the same v2 validator storage uses (under "blob" policy).
+ * Reports; never repairs.
+ */
+function parseDockParam(search: string): DockParam {
+  const query = readQuery(search);
+  if (query.tag === "malformed") {
+    return { tag: "invalid", reason: `query string is undecodable (${query.reason})` };
+  }
+  const raw = query.params.get(DOCK_SHARE_PARAM);
+  if (raw === null) return { tag: "absent" };
+  const decoded = decodeDockParam(raw);
+  if (decoded.tag === "invalid") return decoded;
+  if (!decoded.json || typeof decoded.json !== "object") {
+    return { tag: "invalid", reason: "decoded to a non-object" };
+  }
+  const blob = decoded.json as Partial<SharedDock>;
+  const piece = resolveSharedPiece(
+    GALLERY.map((entry) => entry.name),
+    (blob.runtime as Partial<RuntimeConfig> | undefined)?.piece,
+    blob.pieceName
+  );
+  // Name beats stale index — so the index the validator bounds-checks below is
+  // the resolved one, not the one that travelled.
+  const dock = parsePersistedDock(
+    { ...blob, runtime: { ...(blob.runtime ?? {}), piece: piece.piece } },
+    "blob"
+  );
+  if (!dock) return { tag: "invalid", reason: "failed v2 dock validation" };
+  return { tag: "ok", dock, piece };
+}
+
+/** One handler per identity outcome; two of the three are worth saying aloud. */
+function warnSharedPiece(piece: SharedPiece): void {
+  switch (piece.tag) {
+    case "index":
+      return;
+    case "renamed":
+      console.warn(
+        `[dock] shared link names piece "${piece.name}" but carries index ` +
+          `${piece.staleIndex}; resolving BY NAME to index ${piece.piece}. ` +
+          `GALLERY is append-only, so this link predates a reorder.`
+      );
+      return;
+    case "unknown-name":
+      console.warn(
+        `[dock] shared link names piece "${piece.name}", which is not in this ` +
+          `build's GALLERY (renamed or removed); falling back to its index ` +
+          `${piece.piece}, which may be a DIFFERENT artwork.`
+      );
+      return;
+  }
+}
+
+/**
+ * Where the dock's opening state comes from. Precedence, highest first:
+ *
+ *   explicit knob params (?gLR, ?advLoss, …) > ?dock= > localStorage > piece defaults
+ *
+ * The single-knob params win COARSELY: their presence suppresses both restore
+ * sources and hands the whole decision to main.ts's κ, which is the only thing
+ * that can apply them to the running loop. Half-restoring a dock underneath
+ * them would put the sliders and the artwork in different states — the exact
+ * dishonesty the "deep links stay honest" rule exists to prevent.
+ */
+function initialDock(): PersistedDock | null {
   try {
     // Retire the v1 blob that could store raw-vector on Pair.
     window.localStorage.removeItem("nffa.dock.v1");
-    if (urlHasDockOverrides(new URLSearchParams(window.location.search))) {
-      return null;
-    }
-    const raw = window.localStorage.getItem(DOCK_STORAGE_KEY);
-    if (!raw) return null;
-    return parsePersistedDock(JSON.parse(raw));
   } catch {
+    // Private mode / disabled storage — nothing to retire.
+  }
+  const search = window.location.search;
+  const query = readQuery(search);
+  if (query.tag === "malformed") {
+    // Nothing in this URL can be trusted — including whether a knob param is
+    // present — so neither restore source may run. Piece defaults it is.
+    console.warn(
+      `[dock] query string is undecodable (${query.reason}); ` +
+        `ignoring the whole URL and opening on piece defaults.`
+    );
     return null;
+  }
+  const shared = parseDockParam(search);
+  if (urlHasDockOverrides(query.params)) {
+    if (shared.tag !== "absent") {
+      const knobs = DOCK_OVERRIDE_PARAMS.filter((key) => query.params.has(key));
+      console.warn(
+        `[dock] ignoring ?${DOCK_SHARE_PARAM}= — explicit knob params ` +
+          `(${knobs.join(", ")}) outrank a shared dock. Drop them to use the link.`
+      );
+    }
+    return null;
+  }
+  switch (shared.tag) {
+    case "ok":
+      warnSharedPiece(shared.piece);
+      console.info(
+        `[dock] adopted ?${DOCK_SHARE_PARAM}= share link · piece ` +
+          `"${GALLERY[shared.dock.runtime.piece].name}"`
+      );
+      return shared.dock;
+    case "invalid":
+      console.warn(
+        `[dock] ignoring ?${DOCK_SHARE_PARAM}= — ${shared.reason}. ` +
+          `Falling back to localStorage, then piece defaults.`
+      );
+      return loadStoredDock();
+    case "absent":
+      return loadStoredDock();
+  }
+}
+
+/**
+ * κ for the clipboard API. Some contexts (plain http:, old webviews, locked-
+ * down embeds) do not expose it at all, and that has to reach the button as a
+ * rejected promise — not as a TypeError thrown out of a click handler.
+ */
+function writeClipboard(text: string): Promise<void> {
+  const clipboard = navigator.clipboard;
+  return clipboard
+    ? clipboard.writeText(text)
+    : Promise.reject(
+        new Error("navigator.clipboard is unavailable (needs a secure context)")
+      );
+}
+
+type CopyTarget = "link" | "json";
+
+/** What the share row is showing right now. */
+type CopyState =
+  | { readonly tag: "idle" }
+  | { readonly tag: "copied"; readonly target: CopyTarget }
+  | { readonly tag: "failed"; readonly target: CopyTarget };
+
+/** Label + flash for ONE button, so the two can never disagree. */
+function copyView(
+  state: CopyState,
+  target: CopyTarget,
+  idle: string
+): { label: string; flash: string } {
+  switch (state.tag) {
+    case "idle":
+      return { label: idle, flash: "none" };
+    case "copied":
+      return state.target === target
+        ? { label: "COPIED ✓", flash: "copied" }
+        : { label: idle, flash: "none" };
+    case "failed":
+      return state.target === target
+        ? { label: "FAILED ✗", flash: "failed" }
+        : { label: idle, flash: "none" };
   }
 }
 
@@ -744,40 +1070,51 @@ function App(): ReactElement {
   const handleRef = useRef<LoopHandle | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const lastStartedPieceRef = useRef<number | null>(null);
-  const initialDockRef = useRef<PersistedDock | null>(loadPersistedDock());
-  const seededFromStorage = initialDockRef.current !== null;
+  // useState's LAZY initializer, NOT `useRef(initialDock())`: a bare useRef
+  // argument is re-evaluated on EVERY render even though only the first result
+  // is kept. That was invisible while ingestion was a silent localStorage read;
+  // with URL ingestion it re-decoded the `?dock=` param and re-logged every
+  // [dock] diagnostic on each render — five times a second, forever, once the
+  // telemetry poll starts. The value never changes, so the setter is dropped.
+  const [restoredDock] = useState<PersistedDock | null>(initialDock);
+  const seededFromRestore = restoredDock !== null;
 
   // No saved dock ⇒ open on the default piece. Resolved by NAME in main.ts
   // (DEFAULT_PIECE_INDEX), never a literal here: a hardcoded 0 is what made
   // "the default" a property of GALLERY's ORDER instead of a named choice.
   const [runtime, setRuntime] = useState<RuntimeConfig>(
-    () => initialDockRef.current?.runtime ?? defaultsForPiece(DEFAULT_PIECE_INDEX)
+    () => restoredDock?.runtime ?? defaultsForPiece(DEFAULT_PIECE_INDEX)
   );
 
   const [particles, setParticles] = useState(
-    () => initialDockRef.current?.particles ?? 1_000
+    () => restoredDock?.particles ?? 1_000
   );
   const [samples, setSamples] = useState(
-    () => initialDockRef.current?.samples ?? 256
+    () => restoredDock?.samples ?? 256
   );
+  // The "train B" ceiling is a property of the LIVE trainer (device storage
+  // limits × field layout × rollout K), not a constant. Seeded optimistically
+  // and replaced from the handle once the loop is up; the handle clamps too, so
+  // a stale value here is cosmetic, never fatal.
+  const [maxSamples, setMaxSamples] = useState(TRAIN_BATCH_MAX);
   const [maxVelocity, setMaxVelocity] = useState(
-    () => initialDockRef.current?.maxVelocity ?? 24
+    () => restoredDock?.maxVelocity ?? 24
   );
-  const [drive, setDrive] = useState(() => initialDockRef.current?.drive ?? 0.65);
+  const [drive, setDrive] = useState(() => restoredDock?.drive ?? 0.65);
   const [generatorLearningRate, setGeneratorLearningRate] = useState(
-    () => initialDockRef.current?.generatorLearningRate ?? 1e-3
+    () => restoredDock?.generatorLearningRate ?? 1e-3
   );
   const [discriminatorLearningRate, setDiscriminatorLearningRate] = useState(
-    () => initialDockRef.current?.discriminatorLearningRate ?? 3e-3
+    () => restoredDock?.discriminatorLearningRate ?? 3e-3
   );
   const [resetRate, setResetRate] = useState(
-    () => initialDockRef.current?.resetRate ?? 0.01
+    () => restoredDock?.resetRate ?? 0.01
   );
-  const [decay, setDecay] = useState(() => initialDockRef.current?.decay ?? 0);
+  const [decay, setDecay] = useState(() => restoredDock?.decay ?? 0);
   const [look, setLook] = useState<InkLook>(
-    () => initialDockRef.current?.look ?? "ghost"
+    () => restoredDock?.look ?? "ghost"
   );
-  const [blend, setBlend] = useState(() => initialDockRef.current?.blend ?? 0.5);
+  const [blend, setBlend] = useState(() => restoredDock?.blend ?? 0.5);
   // Same ladder the loop uses (main.ts resolveStrokeStyle): a saved dock is the
   // user's own last choice and outranks both, then `?stroke=` > the piece's
   // declared stroke > "dot". Calling the shared resolver — rather than
@@ -785,16 +1122,16 @@ function App(): ReactElement {
   // DOT while the canvas is already drawing the piece's curl.
   const [strokeStyle, setStrokeStyle] = useState<SplatStyle>(
     () =>
-      initialDockRef.current?.strokeStyle ??
+      restoredDock?.strokeStyle ??
       resolveStrokeStyle(GALLERY[runtime.piece], new URLSearchParams(window.location.search))
   );
   const [strokeLength, setStrokeLength] = useState(
     () =>
-      initialDockRef.current?.strokeLength ??
+      restoredDock?.strokeLength ??
       resolveStrokeLength(GALLERY[runtime.piece], new URLSearchParams(window.location.search))
   );
   const [advWeight, setAdvWeight] = useState(
-    () => initialDockRef.current?.advWeight ?? 0
+    () => restoredDock?.advWeight ?? 0
   );
   // The artwork is the point of the app, so on a narrow viewport BOTH panels
   // start collapsed and leave only their toggle chips over the canvas. Desktop
@@ -804,7 +1141,7 @@ function App(): ReactElement {
   const [dockOpen, setDockOpen] = useState(() => !hudStartsCollapsed());
   const [telemetry, setTelemetry] = useState<AdversaryTelemetry>({ tag: "off" });
   const [colorMode, setColorMode] = useState<ColorMode>(
-    () => initialDockRef.current?.colorMode ?? { tag: "velocity" }
+    () => restoredDock?.colorMode ?? { tag: "velocity" }
   );
   const [surpriseSpan, setSurpriseSpan] = useState<{
     lo: number;
@@ -815,6 +1152,17 @@ function App(): ReactElement {
   } | null>(null);
   const [discHistory, setDiscHistory] = useState<number[]>([]);
   const [genHistory, setGenHistory] = useState<number[]>([]);
+  const [copyState, setCopyState] = useState<CopyState>({ tag: "idle" });
+  const copyTimerRef = useRef<number | null>(null);
+
+  // The flash timer outlives a fast unmount otherwise, and setState on a dead
+  // component is a warning in the console of an app whose console IS its HUD.
+  useEffect(
+    () => () => {
+      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+    },
+    []
+  );
 
   const piece = GALLERY[runtime.piece];
   const adversary = runtime.adversaryKind !== "off";
@@ -859,24 +1207,32 @@ function App(): ReactElement {
     return () => query.removeEventListener("change", onChange);
   }, []);
 
+  // ONE canonical dock value per render. The save effect below and the share
+  // buttons serialize THIS object, so a stored session and a copied link can
+  // never drift apart — there is only one serializer to keep in sync.
+  const dock: PersistedDock = {
+    runtime,
+    particles,
+    samples,
+    maxVelocity,
+    drive,
+    generatorLearningRate,
+    discriminatorLearningRate,
+    resetRate,
+    decay,
+    look,
+    blend,
+    strokeStyle,
+    strokeLength,
+    advWeight,
+    colorMode,
+  };
+
   useEffect(() => {
-    savePersistedDock({
-      runtime,
-      particles,
-      samples,
-      maxVelocity,
-      drive,
-      generatorLearningRate,
-      discriminatorLearningRate,
-      resetRate,
-      decay,
-      look,
-      blend,
-      strokeStyle,
-      strokeLength,
-      advWeight,
-      colorMode,
-    });
+    savePersistedDock(dock);
+    // Deps are the FIELDS, not `dock`: the object is rebuilt every render, so
+    // depending on its identity would rewrite localStorage on every telemetry
+    // poll (5 Hz). These are exactly the fields it is built from.
   }, [
     runtime,
     particles,
@@ -913,7 +1269,7 @@ function App(): ReactElement {
     const samePieceRebuild = previousPiece === runtime.piece;
     lastStartedPieceRef.current = runtime.piece;
     const preserveLiveControls =
-      (isFirstStart && seededFromStorage) || (!isFirstStart && samePieceRebuild);
+      (isFirstStart && seededFromRestore) || (!isFirstStart && samePieceRebuild);
     cleanupRef.current?.();
     handleRef.current = null;
     let current = true;
@@ -923,9 +1279,15 @@ function App(): ReactElement {
       (handle) => {
         if (!current) return;
         handleRef.current = handle;
+        // Bound the batch slider by what this trainer can actually run before
+        // any restore below pushes a value through it.
+        setMaxSamples(handle.getMaxSampleRate());
         if (preserveLiveControls) {
           handle.setParticleCount(particles);
           handle.setSampleRate(samples);
+          // setSampleRate clamps; mirror the accepted value so the slider does
+          // not sit at a number the trainer refused.
+          setSamples(handle.getSampleRate());
           handle.setMaxVelocity(maxVelocity);
           handle.setDrive(drive);
           handle.setGeneratorLearningRate(generatorLearningRate);
@@ -1007,6 +1369,29 @@ function App(): ReactElement {
     setColorMode(next);
   };
 
+  // Clipboard writes need a user gesture, which a click is — but they still
+  // reject (permission policy, insecure context, an embed that blocks it), and
+  // a share button that silently does nothing is worse than one that says so.
+  const copy = (target: CopyTarget, text: string): void => {
+    if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+    const flash = (state: CopyState): void => {
+      setCopyState(state);
+      copyTimerRef.current = window.setTimeout(
+        () => setCopyState({ tag: "idle" }),
+        COPY_FLASH_MS
+      );
+    };
+    writeClipboard(text).then(
+      () => flash({ tag: "copied", target }),
+      (error: unknown) => {
+        console.warn(`[dock] clipboard write failed — ${String(error)}`);
+        flash({ tag: "failed", target });
+      }
+    );
+  };
+  const linkView = copyView(copyState, "link", "COPY LINK");
+  const jsonView = copyView(copyState, "json", "JSON");
+
   return (
     <main className="art-shell">
       <canvas ref={canvasRef} id="myCanvas" aria-label="Neural force-field artwork" />
@@ -1071,6 +1456,40 @@ function App(): ReactElement {
             </button>
           </header>
 
+          {/* Inside the collapsible region, not the header: collapsing exists
+              to uncover the artwork, and a share row pinned above it would be
+              the one chrome that never goes away on a phone. */}
+          <ControlSection title="share" testid="share-controls">
+            <div className="tui-segment-row" data-testid="share-row">
+              <span className="tui-label">export</span>
+              <div className="tui-segments">
+                <button
+                  type="button"
+                  className="tui-chip"
+                  data-testid="copy-link-button"
+                  data-flash={linkView.flash}
+                  title="Copy a link that reproduces every dial in this dock"
+                  onClick={() => copy("link", dockToShareUrl(dock))}
+                >
+                  {linkView.label}
+                </button>
+                <button
+                  type="button"
+                  className="tui-chip share-secondary"
+                  data-testid="copy-json-button"
+                  data-flash={jsonView.flash}
+                  title="Copy the raw settings blob — durable sharing, bug reports"
+                  onClick={() => copy("json", dockToShareJson(dock))}
+                >
+                  {jsonView.label}
+                </button>
+              </div>
+            </div>
+            <p className="tui-note">
+              ?dock= carries every dial · piece resolved by name
+            </p>
+          </ControlSection>
+
           <ControlSection title="simulation" testid="simulation-controls">
             <RangeRow
               label="particles"
@@ -1089,8 +1508,8 @@ function App(): ReactElement {
             <RangeRow
               label="train B"
               value={samples}
-              min={16}
-              max={4096}
+              min={TRAIN_BATCH_MIN}
+              max={maxSamples}
               step={16}
               display={`${samples}`}
               testid="samples-control"

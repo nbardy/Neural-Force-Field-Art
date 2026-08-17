@@ -481,25 +481,17 @@ export function emitFwdStore(
  *   fourier  — full dEnc = W0ᵀ·δ0, then du = J_γᵀ·dEnc where J_γ REUSES the
  *              stored sin/cos features as their own derivatives (d sin(ωx)/dx
  *              = ω·cos(ωx) = ω·enc[o+2] — zero new transcendentals, plan §5)
- *   hashgrid — dEnc stored to scratch (pass B's grid scatter reads it), du via
- *              the bilinear-interp jacobian (grid-value differences × (gs−1),
- *              clip-masked like tfjs clipByValue: zero gradient outside [0,1])
- *
- * `dEncMode` names which emitted head SEEDS the shared per-site dL/dEnc block
- * ("seed" = `=`) and which ACCUMULATE into it ("accumulate" = `+=`). It is a
- * property of the SHADER BEING EMITTED, not of the head index: the adversary
- * emits a single field head when `fieldLane` selects one (adversary_wgsl.ts),
- * and that head must seed even when it is head 1. Callers that emit every head
- * pass "seed" for the first. Ignored by raw/fourier (no dEnc block), so their
- * generated text is unchanged.
+ *   hashgrid — dEnc stored to scratch (pass B's grid scatter reads it; head 0
+ *              seeds, head 1 accumulates), du via the bilinear-interp jacobian
+ *              (grid-value differences × (gs−1), clip-masked like tfjs
+ *              clipByValue: zero gradient outside [0,1])
  */
 export function emitBwdStore(
   h: number,
   head: HeadSpec,
   sl: TrainScratchLayout,
   maxW: number,
-  enc: Encoding,
-  dEncMode: "seed" | "accumulate"
+  enc: Encoding
 ): string {
   const nL = head.layers.length;
   const lines: string[] = [];
@@ -577,10 +569,9 @@ export function emitBwdStore(
   }
   // hashgrid
   const { gridSize: gs, features: F } = enc;
-  const store = dEncMode === "seed"
-    ? `scratch[dEncBase + i] = dEnc[i];`
-    : `scratch[dEncBase + i] = scratch[dEncBase + i] + dEnc[i];`;
-  lines.push(`  // pass B's grid scatter reads dEnc; this head ${dEncMode}s the block`);
+  const store = h === 0 ? `scratch[dEncBase + i] = dEnc[i];`
+                        : `scratch[dEncBase + i] = scratch[dEncBase + i] + dEnc[i];`;
+  lines.push(`  // pass B's grid scatter reads dEnc; head 0 seeds, head 1 accumulates`);
   lines.push(`  for (var i = 0u; i < ${F}u; i = i + 1u) { ${store} }`);
   lines.push(`  // du through the bilinear interp (corner geometry recomputed from uIn)`);
   lines.push(`  let gxf = clamp(uIn.x, 0.0, 1.0) * ${(gs - 1).toFixed(1)};`);
@@ -862,7 +853,7 @@ ${coverBake}
 ${enc.kind === "raw" ? "" : emitEncode(enc) + "\n"}
 ${heads.map((h, i) => emitFwdStore(i, h, sl, maxW, enc)).join("\n\n")}
 
-${heads.map((h, i) => emitBwdStore(i, h, sl, maxW, enc, i === 0 ? "seed" : "accumulate")).join("\n\n")}
+${heads.map((h, i) => emitBwdStore(i, h, sl, maxW, enc)).join("\n\n")}
 
 // per-workgroup reduction scratch: vec4(Σ Fs.x², Σ Fs.y², Σ Fs.xy, Σ loss)
 // — the Fs sums run over ALL K steps' forces (isotropy batch = N·K).

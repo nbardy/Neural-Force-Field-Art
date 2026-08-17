@@ -846,7 +846,7 @@ export function pixelDiscShader(
     .map((h, i) => emitFwdStore(i, h, sl, maxW, enc))
     .join("\n");
   const bwdStores = heads
-    .map((h, i) => emitBwdStore(i, h, sl, maxW, enc))
+    .map((h, i) => emitBwdStore(i, h, sl, maxW, enc, i === 0 ? "seed" : "accumulate"))
     .join("\n");
   const encodeFn = enc.kind === "raw" ? "" : emitEncode(enc);
   const critEncInit =

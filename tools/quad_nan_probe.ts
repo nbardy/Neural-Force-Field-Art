@@ -8,10 +8,17 @@
  *
  *   bun tools/quad_nan_probe.ts
  *   STEPS=5000 REPORT=30 bun tools/quad_nan_probe.ts
+ *
+ * `TAG` selects the TUPLE observer; `ENC` selects the FIELD ENCODING (raw |
+ * hashgrid). The default gallery piece is
+ *   TAG=pair-rotation-scale-adjusted ENC=hashgrid K=4 N=60000 WEIGHT=0.015
+ * which is also the configuration the fused hashgrid adversary must survive.
  */
 import { setupGlobals } from "bun-webgpu";
 import {
   layoutField,
+  encodingDim,
+  type Encoding,
   type LayerDims,
 } from "../src/render/webgpu/advect_wgsl";
 import { advectShader } from "../src/render/webgpu/advect_wgsl";
@@ -46,7 +53,22 @@ const TAG = (process.env.TAG ?? "quad-labelled") as
   | "quad-labelled"
   | "tri"
   | "pair"
+  | "pair-rotation"
+  | "pair-rotation-scale-raw"
+  | "pair-rotation-scale-adjusted"
   | "point";
+const ENC_KIND = process.env.ENC ?? "raw";
+if (ENC_KIND !== "raw" && ENC_KIND !== "hashgrid") {
+  throw new Error(`ENC '${ENC_KIND}' not one of raw|hashgrid`);
+}
+const ENCODING: Encoding =
+  ENC_KIND === "hashgrid"
+    ? {
+        kind: "hashgrid",
+        gridSize: Number(process.env.GRID ?? 32),
+        features: Number(process.env.GRID_F ?? 4),
+      }
+    : { kind: "raw" };
 const FINE_AFTER = Number(process.env.FINE_AFTER ?? -1);
 const FRICTION = 0.97;
 const MAX_VEL = 24;
@@ -83,17 +105,27 @@ function gaussian(rnd: () => number): number {
 }
 function dims(): LayerDims[] {
   return [
-    { inSize: 2, outSize: 32, activation: "selu" },
+    { inSize: encodingDim(ENCODING), outSize: 32, activation: "selu" },
     { inSize: 32, outSize: 32, activation: "selu" },
     { inSize: 32, outSize: 2, activation: "tanh" },
   ];
 }
 
-const layout = layoutField("helmholtz", [dims(), dims()]);
+const layout = layoutField("helmholtz", [dims(), dims()], { encoding: ENCODING });
 const fieldInit = new Float32Array(layout.totalFloats);
 {
   const rnd = mulberry32(101);
   for (const seg of layout.segments) {
+    // The hashgrid feature table has no fan-in/fan-out — it is the ENCODING,
+    // not a layer. Seed it U(-0.1, 0.1), matching HelmholtzField's own init.
+    // Leaving it at zero would make every head input identically 0, i.e. a
+    // constant field whose backward is trivially finite — a FALSE pass.
+    if (seg.role === "grid") {
+      for (let i = 0; i < seg.floatLength; i++) {
+        fieldInit[seg.floatOffset + i] = (rnd() * 2 - 1) * 0.1;
+      }
+      continue;
+    }
     if (seg.role !== "kernel") continue;
     const L = layout.spec.heads[seg.head].layers[seg.layer];
     const std = Math.sqrt(2 / (L.inSize + L.outSize));
@@ -218,7 +250,7 @@ function fmt(s: Summary): string {
 }
 
 console.log(
-  `coupled tag=${TAG} steps=${STEPS} B=${B} K=${K} N=${N} ` +
+  `coupled tag=${TAG} enc=${ENC_KIND} steps=${STEPS} B=${B} K=${K} N=${N} ` +
     `fieldLR=${FIELD_LR} discLR=${DISC_LR} weight=${WEIGHT} drive=${DRIVE} ` +
     `force=${FORCE.toFixed(4)}`
 );

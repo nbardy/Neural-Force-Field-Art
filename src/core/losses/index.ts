@@ -6,11 +6,12 @@
  * chain into the field weights. Compose them with weighted sums.
  *
  *   isotropyLoss     — scale-invariant force-covariance anisotropy penalty
+ *   directionOrderLoss — polar + nematic DIRECTION order (adversary anti-collapse)
  *   divergencePenalty — finite-difference ∇·F (measure preservation)
  *   chaosLoss        — local finite-time Lyapunov proxy (rewards sensitivity)
  *   spectrumLoss     — best-effort power-law spectral slope shaping (optional)
  */
-export { isotropyLoss } from "./isotropy";
+export { isotropyLoss, directionOrderLoss } from "./isotropy";
 export { divergencePenalty } from "./divergence";
 export { chaosLoss } from "./chaos";
 export { spectrumLoss } from "./spectrum";

@@ -345,6 +345,23 @@ input {
   outline-offset: 1px;
 }
 
+/* Share row. The label carries the whole state (COPY LINK → COPIED ✓), so the
+   colour is confirmation, not information — nothing here is colour-only. */
+.share-secondary {
+  font-size: 8px;
+  opacity: 0.82;
+}
+
+.tui-chip[data-flash="copied"] {
+  border-color: var(--tui-green);
+  color: var(--tui-green);
+}
+
+.tui-chip[data-flash="failed"] {
+  border-color: #ff4d6d;
+  color: #ff4d6d;
+}
+
 .tui-note {
   margin: 1px 0 3px 65px;
   color: #5f6d85;

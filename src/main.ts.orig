@@ -2253,21 +2253,22 @@ export const GALLERY: ArtPieceConfig[] = [
     // filaments; α stays at the Pair piece's 0.55 so the position ENCODING is
     // the only deliberate difference between the two.
     //
-    // THIS PIECE TRAINS FULLY FUSED as of the hashgrid adversary port
-    // (D, generator reward AND field in one encodeStep). It used to be the one
-    // gallery piece on the tfjs autograd path — the fused adversary refused
-    // hashgrid fields, which cost ~40 ms/step here against ~0.8 ms for the
-    // fused raw-MLP Pair piece. The port added a per-member dL/dEnc scratch
-    // block plus the gather-side grid block in adversary_wgsl's fieldGrad; see
-    // agent_notes/2026-08-17_120215_KST_hashgrid_adversary_fusion.md.
+    // MEASURED COST OF THE HASHGRID, not of the stroke: the fused adversary
+    // kernel refuses hashgrid fields (`fusedAdvOk` in startLoop tests
+    // `encoding.kind !== "hashgrid"`), so this piece runs the tfjs autograd
+    // adversary and the loop logs that choice. Metal, 70k particles, headless
+    // Chrome: ~24 fps / learn ≈ 40 ms here vs 60 fps / ~0.8 ms for the fused
+    // raw-MLP Pair piece. Fusing hashgrid backward for the adversary is the
+    // one change that would buy it back.
     //
     // renderer "alpha-fade", NOT "surprise" — deliberate, and load-bearing.
     // A surprise piece resolves to a surprise colour mode (resolveColorMode)
     // and the surprise renderer then takes the WHOLE render pass (see the
     // render step in `tick`); the splat, and therefore `stroke`, never runs.
     // Curl strokes are the point of this piece, so it colours by velocity with
-    // ghost trails. (The RAW/PER-UNIT surprise diagnostic is fused-only; it now
-    // WOULD be available here, but the stroke still wins the render pass.)
+    // ghost trails. (The RAW/PER-UNIT diagnostic is fused-only anyway — see the
+    // cost note above — so a surprise piece here would have declared an
+    // instrument it cannot drive.)
     name: "Adversary · Pair · HashGrid · Curl",
     particleCount: 70000,
     friction: 0.97,
@@ -2877,18 +2878,8 @@ export function startLoop(
   // as ~10KB of GPU→GPU copies per frame; particle state never touches tfjs,
   // so particle count scales to 1M+ without touching the train cost.
   async function tick() {
-    // TEMP INSTRUMENTATION — remove before commit.
-    if (!running || !(optimizer || trainer) || !advect || !wh || !device) {
-      (window as any).__nffDead = {
-        piece: cfg.name, frame,
-        running, hasOptimizer: !!optimizer, hasTrainer: !!trainer,
-        hasAdvect: !!advect, hasWh: !!wh, hasDevice: !!device,
-      };
-      console.warn("[loop] tick bailed without rescheduling", (window as any).__nffDead);
-      return;
-    }
+    if (!running || !(optimizer || trainer) || !advect || !wh || !device) return;
     frame++;
-    (window as any).__nff = { frame, piece: cfg.name, t: performance.now() };
 
     // ONE command encoder for the whole frame. On the FUSED path it records
     // trainer pass A+B, the advect pass, and the render, then submits ONCE —
@@ -3495,11 +3486,8 @@ export function startLoop(
     // trainer's pass B) into the same frame encoder. Verified vs the AD-IR
     // oracle AND tf.variableGrads at cos = 1.0000000 (tools/train_wta_test.ts);
     // measured 0.7-0.8 ms/step at B=512 vs the tfjs path's 19-32 ms.
-    // HASHGRID IS NOW FUSED TOO (the default piece): the adversary scratch
-    // carries a per-member dL/dEnc block and fieldGrad carries the gather-side
-    // grid block, gated vs live tfjs autograd in tools/train_wta_hashgrid_test.ts.
-    // Class-aware fields and ?train=tfjs keep the tfjs autograd path, and the
-    // loop says which one it picked out loud.
+    // hashgrid/class-aware fields and ?train=tfjs keep the tfjs autograd path,
+    // and the loop says which one it picked out loud.
     const adversaryDisabled = advSpec.tag === "on" && fieldClasses > 0;
     // The anti-collapse pressure is a TFJS-ONLY prototype (no WGSL codegen
     // yet). Routing it to the tfjs trainer is loud and correct; letting the
@@ -3514,7 +3502,8 @@ export function startLoop(
       !!field &&
       !wantTfjsTrainer &&
       pressureTag === "none" &&
-      advect.layout.classes === 0;
+      advect.layout.classes === 0 &&
+      advect.layout.encoding.kind !== "hashgrid";
     const agreeDisagreeField = advect.layout.spec.kind === "agree-disagree";
     if (
       (agreeDisagreeGame && !agreeDisagreeField) ||

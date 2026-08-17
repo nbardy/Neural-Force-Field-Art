@@ -14,3 +14,6 @@ output/
 
 # build outputs (parcel --dist-dir variants)
 dist*/
+
+# Claude Code session-local state (agent worktrees, local settings)
+.claude/

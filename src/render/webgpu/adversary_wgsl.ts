@@ -55,8 +55,14 @@
  * oracle, tfjs, and finite differences in tools/{ad_,train_}wta_test.ts.
  *
  * SCOPE (loud throws, no silent fallback):
- *   - field must be helmholtz, classes == 0, encoding raw | fourier.
- *     hashgrid needs the dEnc scatter blocks ported into fieldGrad — not done.
+ *   - field must be helmholtz / agree-disagree, classes == 0. Every encoding
+ *     (raw | fourier | hashgrid) is supported: hashgrid stores per-member
+ *     dL/dEnc in its own scratch block and fieldGrad carries the gather-side
+ *     grid block transliterated from train_wgsl's field pass B. Class-aware
+ *     fields remain unsupported — an orthogonal gap (layer-0 one-hot channels
+ *     have no encoded-input counterpart).
+ *     NOTE the PIXEL critic (pixel_disc_wgsl.ts) still refuses hashgrid; this
+ *     port covers the RELATIONAL adversary only.
  *   - adversary head activations: selu/tanh/sigmoid/linear (no sin — its
  *     backward needs a pre-act checkpoint the adversary layout doesn't carry).
  */
@@ -324,8 +330,11 @@ export interface AdvScratchLayout {
   uOff: number;        // du: encoded context (adversary layer-0 a_in)
   yOff: number;        // dy: encoded target
   siteInOff: number;   // m·2: normalized member positions pn
-  /** field-encoding store (fourier: m·encDim; raw: 0 — offsets collapse) */
+  /** field-encoding store (fourier/hashgrid: m·encDim; raw: 0 — offsets collapse) */
   encOff: number;
+  /** per-member dL/dEnc store (hashgrid: m·encDim; raw/fourier: 0 — collapses).
+   *  Written by the field heads' backward, read by fieldGrad's grid block. */
+  dEncOff: number;
   /** per member, field head blocks [head0 | head1] (train_wgsl offsets) */
   fieldSiteOff: number;
   /** per adversary head: [activations][deltas] */
@@ -378,12 +387,17 @@ export function advScratchLayout(
   const yOff = uOff + du;
   const siteInOff = yOff + dy;
   const encOff = siteInOff + 2 * m;
-  const fieldSiteOff = encOff + m * fieldSl.encStore;
+  // Same discipline as trainScratchLayout: encStore/dEncStore are 0 for the
+  // encodings that do not use them, so raw and fourier strides — and every
+  // generated shader built on them — stay byte-identical to the pre-hashgrid
+  // adversary (kernel_test's f32 codegen guard depends on that).
+  const dEncOff = encOff + m * fieldSl.encStore;
+  const fieldSiteOff = dEncOff + m * fieldSl.dEncStore;
   const advOff = fieldSiteOff + m * fieldSl.siteBlk;
   const stride = advOff + advL.k * advBlk;
   return {
     tag, m, k: advL.k, du, dy, vectorDy, scaleDy,
-    idxOff, surOff, winOff, uOff, yOff, siteInOff, encOff, fieldSiteOff,
+    idxOff, surOff, winOff, uOff, yOff, siteInOff, encOff, dEncOff, fieldSiteOff,
     advOff, stride, fieldSiteBlk: fieldSl.siteBlk, fieldSl, advBlk,
     advAOff, advDOff,
   };
@@ -414,12 +428,6 @@ export function validateAdversaryFusion(field: FieldLayout, advL: AdversaryLayou
   if (field.classes > 0) {
     throw new Error(
       "adversary: class-aware fields are not supported by the fused adversary yet"
-    );
-  }
-  if (field.encoding.kind === "hashgrid") {
-    throw new Error(
-      "adversary: hashgrid fields are not supported by the fused adversary yet " +
-        "(fieldGrad lacks the grid-scatter blocks)"
     );
   }
   for (const h of advL.heads) {
@@ -976,16 +984,28 @@ export function adversaryPassAShader(
   const fieldBase = (site: string, h: number) =>
     `sBase + ${sl.fieldSiteOff}u + (${site}) * ${sl.fieldSiteBlk}u + ${h === 0 ? 0 : fsl.headBlk[0]}u`;
   const encBase = (site: string) => `sBase + ${sl.encOff}u + (${site}) * ${fsl.encDim}u`;
+  const dEncBase = (site: string) => `sBase + ${sl.dEncOff}u + (${site}) * ${fsl.encDim}u`;
   const encodeAt = (uExpr: string, site: string) =>
     enc.kind === "raw" ? `` : `encodeSite(${uExpr}, ${encBase(site)});\n      `;
   const fwdCall = (h: number, uExpr: string, site: string) =>
     enc.kind === "raw"
       ? `fwd_head_${h}(${uExpr}, ${fieldBase(site, h)}, 0u)`
       : `fwd_head_${h}(${encBase(site)}, ${fieldBase(site, h)})`;
+  // One call shape per encoding kind — the emitBwdStore signature is
+  // type-directed the same way (train_wgsl.ts). `pn[site]` is the normalized
+  // member position, live at every backward site; hashgrid's backward
+  // recomputes its corner geometry from it rather than storing four indices.
   const bwdCall = (h: number, dExpr: string, site: string) =>
     enc.kind === "raw"
       ? `bwd_head_${h}(${dExpr}, ${fieldBase(site, h)})`
-      : `bwd_head_${h}(${dExpr}, ${fieldBase(site, h)}, ${encBase(site)})`;
+      : enc.kind === "fourier"
+      ? `bwd_head_${h}(${dExpr}, ${fieldBase(site, h)}, ${encBase(site)})`
+      : `bwd_head_${h}(${dExpr}, ${fieldBase(site, h)}, pn[${site}], ${dEncBase(site)})`;
+  // Which field head SEEDS the shared per-site dL/dEnc block (hashgrid only).
+  // `fieldBackward` calls both heads on the blend lane and exactly one head on
+  // a direct lane, so the seed is the lane, NOT head 0: a lane-1 game (Agree +
+  // Disagree lane B) would otherwise `+=` into a block nobody wrote.
+  const dEncSeedHead = fieldLane === "blend" ? 0 : fieldLane;
   const fieldForward = (site: string) =>
     fieldLane === "blend"
       ? `(1.0 - u.alpha) * ${fwdCall(0, "uk", site)} + u.alpha * ${fwdCall(1, "uk", site)}`
@@ -1370,7 +1390,7 @@ fn softSphereGradY(a : vec2f, b : vec2f) -> vec2f {
 ${enc.kind === "raw" ? "" : emitEncode(enc) + "\n"}
 ${heads.map((h, i) => emitFwdStore(i, h, fsl, maxWField, enc)).join("\n\n")}
 
-${heads.map((h, i) => emitBwdStore(i, h, fsl, maxWField, enc)).join("\n\n")}
+${heads.map((h, i) => emitBwdStore(i, h, fsl, maxWField, enc, i === dEncSeedHead ? "seed" : "accumulate")).join("\n\n")}
 
 ${advL.heads.map((h, j) => emitAdvFwd(j, h, sl, maxWAdv)).join("\n\n")}
 
@@ -1748,7 +1768,50 @@ export function adversaryPassBShader(
   // --- field weight blocks (thread = FIELD weight float → extGrads) --------
   const fieldBlocks: string[] = [];
   for (const seg of field.segments) {
-    // grid segments are rejected by validateAdversaryFusion
+    if (seg.role === "grid") {
+      // hashgrid feature table (field weights offset 0): thread = one grid
+      // float (cell, feature). Transliterated from train_wgsl's field pass B
+      // (same gather-side formulation: each grid float scans the (tuple,
+      // member) sites and claims the bilinear corners that land on its cell,
+      // so there is exactly ONE writer per grid float and no atomics). At the
+      // clamp border ix1==ix makes TWO corners match — both add, matching tfjs
+      // summing coincident scatters.
+      //
+      // NOTE the ordering: this branch is deliberately ABOVE the fieldLane
+      // skip below. The grid table is shared by both field heads, and lane
+      // isolation has already happened upstream — only the active lane's
+      // bwd_head wrote dEnc.
+      if (enc.kind !== "hashgrid") {
+        throw new Error(
+          `adversary: grid segment on a ${enc.kind} encoding — layout is inconsistent`
+        );
+      }
+      const { gridSize: gs, features: F } = enc;
+      fieldBlocks.push(`
+  if (t >= ${seg.floatOffset}u && t < ${seg.floatOffset + seg.floatLength}u) {
+    let cell = (t - ${seg.floatOffset}u) / ${F}u;
+    let f = (t - ${seg.floatOffset}u) % ${F}u;
+    for (var s = 0u; s < ub.b; s = s + 1u) {
+      let sBase = s * ${STRIDE}u;
+      for (var site = 0u; site < ${m}u; site = site + 1u) {
+        let ux = scratch[sBase + ${sl.siteInOff}u + site * 2u];
+        let uy = scratch[sBase + ${sl.siteInOff}u + site * 2u + 1u];
+        let gxf = clamp(ux, 0.0, 1.0) * ${(gs - 1).toFixed(1)};
+        let gyf = clamp(uy, 0.0, 1.0) * ${(gs - 1).toFixed(1)};
+        let ix = u32(floor(gxf)); let iy = u32(floor(gyf));
+        let fx = gxf - floor(gxf); let fy = gyf - floor(gyf);
+        let ix1 = min(ix + 1u, ${gs - 1}u); let iy1 = min(iy + 1u, ${gs - 1}u);
+        var wsum = 0.0;
+        if (iy * ${gs}u + ix == cell) { wsum = wsum + (1.0 - fx) * (1.0 - fy); }
+        if (iy * ${gs}u + ix1 == cell) { wsum = wsum + fx * (1.0 - fy); }
+        if (iy1 * ${gs}u + ix == cell) { wsum = wsum + (1.0 - fx) * fy; }
+        if (iy1 * ${gs}u + ix1 == cell) { wsum = wsum + fx * fy; }
+        g = g + wsum * scratch[sBase + ${sl.dEncOff}u + site * ${fsl.encDim}u + f];
+      }
+    }
+  }`);
+      continue;
+    }
     const h = seg.head;
     // Direct lanes are structurally isolated. No block means g remains exact
     // zero for every packed weight owned by the inactive field head.
