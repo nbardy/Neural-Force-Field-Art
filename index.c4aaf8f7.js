@@ -15,27 +15,83 @@ var n="function"==typeof a[s]&&a[s];if(!r&&n)return n(t,!0);// If there are othe
 if(o)return o(t,!0);// Try the node require function if it exists.
 if(l&&"string"==typeof t)return l(t);var p=Error("Cannot find module '"+t+"'");throw p.code="MODULE_NOT_FOUND",p}d.resolve=function(r){var s=e[t][1][r];return null!=s?s:r},d.cache={};var c=i[t]=new u.Module(t);e[t][0].call(c.exports,d,c,c.exports,this)}return i[t].exports;function d(e){var t=d.resolve(e);return!1===t?{}:u(t)}}u.isParcelRequire=!0,u.Module=function(e){this.id=e,this.bundle=u,this.exports={}},u.modules=e,u.cache=i,u.parent=o,u.register=function(t,r){e[t]=[function(e,t){t.exports=r},{}]},Object.defineProperty(u,"root",{get:function(){return a[s]}}),a[s]=u;for(var p=0;p<t.length;p++)u(t[p]);if(r){// Expose entry point to Node, AMD or browser globals
 // Based on https://github.com/ForbesLindesay/umd/blob/master/template.js
-var c=u(r);"object"==typeof exports&&"undefined"!=typeof module?module.exports=c:"function"==typeof define&&define.amd?define(function(){return c}):n&&(this[n]=c)}}({"4zTVb":[function(e,t,r){var s=e("@parcel/transformer-js/src/esmodule-helpers.js"),n=e("react/jsx-runtime"),a=e("react");s.interopDefault(a);var o=e("react-dom/client"),i=e("./main");e("./ui.css");let l=document.getElementById("app");if(!l)throw Error("Container not found");let u=["inferno","viridis","coolwarm"],p=i.GAME_LEARNING_RATE_RANGE.generator.min,c=i.GAME_LEARNING_RATE_RANGE.generator.max,d=i.GAME_LEARNING_RATE_RANGE.discriminator.min,h=i.GAME_LEARNING_RATE_RANGE.discriminator.max,f=i.ADVERSARY_WEIGHT_RANGE.min,m=i.ADVERSARY_WEIGHT_RANGE.max,g="nffa.dock.v2",x="(max-width: 640px)";/**
+var c=u(r);"object"==typeof exports&&"undefined"!=typeof module?module.exports=c:"function"==typeof define&&define.amd?define(function(){return c}):n&&(this[n]=c)}}({"4zTVb":[function(e,t,r){var s=e("@parcel/transformer-js/src/esmodule-helpers.js"),n=e("react/jsx-runtime"),a=e("react");s.interopDefault(a);var o=e("react-dom/client"),i=e("./main"),l=e("./core/gan/adversary"),u=e("./share");e("./ui.css");let p=document.getElementById("app");if(!p)throw Error("Container not found");let c=["inferno","viridis","coolwarm"],d=i.GAME_LEARNING_RATE_RANGE.generator.min,h=i.GAME_LEARNING_RATE_RANGE.generator.max,f=i.GAME_LEARNING_RATE_RANGE.discriminator.min,m=i.GAME_LEARNING_RATE_RANGE.discriminator.max,g=i.ADVERSARY_WEIGHT_RANGE.min,x=i.ADVERSARY_WEIGHT_RANGE.max,v="nffa.dock.v2",y="dock",b="(max-width: 640px)";/**
  * Initial collapse decision. Called from a useState initializer, i.e. during
  * the first render and BEFORE first paint — reading it in an effect instead
  * would paint the dock expanded over the artwork and then snap it shut, which
  * on a phone is the whole screen flashing.
- */function v(){return window.matchMedia(x).matches}function y(e,t){let r="tau"in t?t.tau:i.ADVERSARY_OBJECTIVE_DEFAULTS.tau,s="scaleWeight"in t?t.scaleWeight:i.ADVERSARY_OBJECTIVE_DEFAULTS.scaleWeight,n="energyWeight"in t?t.energyWeight:i.ADVERSARY_OBJECTIVE_DEFAULTS.energyWeight,a="energyTarget"in t?t.energyTarget:i.ADVERSARY_OBJECTIVE_DEFAULTS.energyTarget;switch(e){case"raw-vector":return{tag:e};case"soft-angle":return{tag:e,tau:r};case"angle-relative-scale":case"angle-scale-hold":return{tag:e,tau:r,scaleWeight:s,energyWeight:n,energyTarget:a}}}function b(e){return"angle-relative-scale"===e.tag||"angle-scale-hold"===e.tag}let k=e=>Math.log(Math.min(Math.max(e,200),1e6)/200)/Math.log(5e3),_=e=>{let t=200*Math.pow(5e3,e),r=Math.pow(10,Math.max(0,Math.floor(Math.log10(t))-1));return Math.round(t/r)*r},w=(e,t,r)=>Math.log(Math.min(r,Math.max(t,e))/t)/Math.log(r/t),I=(e,t,r)=>t*Math.pow(r/t,e);function j(e){// URL adversary knobs are intentionally GLOBAL: selecting another gallery
+ */function k(){return window.matchMedia(b).matches}function _(e,t){let r="tau"in t?t.tau:i.ADVERSARY_OBJECTIVE_DEFAULTS.tau,s="scaleWeight"in t?t.scaleWeight:i.ADVERSARY_OBJECTIVE_DEFAULTS.scaleWeight,n="energyWeight"in t?t.energyWeight:i.ADVERSARY_OBJECTIVE_DEFAULTS.energyWeight,a="energyTarget"in t?t.energyTarget:i.ADVERSARY_OBJECTIVE_DEFAULTS.energyTarget;switch(e){case"raw-vector":return{tag:e};case"soft-angle":return{tag:e,tau:r};case"angle-relative-scale":case"angle-scale-hold":return{tag:e,tau:r,scaleWeight:s,energyWeight:n,energyTarget:a}}}function w(e){return"angle-relative-scale"===e.tag||"angle-scale-hold"===e.tag}let I=e=>Math.log(Math.min(Math.max(e,200),1e6)/200)/Math.log(5e3),j=e=>{let t=200*Math.pow(5e3,e),r=Math.pow(10,Math.max(0,Math.floor(Math.log10(t))-1));return Math.round(t/r)*r},S=(e,t,r)=>Math.log(Math.min(r,Math.max(t,e))/t)/Math.log(r/t),C=(e,t,r)=>t*Math.pow(r/t,e);function T(e){// URL adversary knobs are intentionally GLOBAL: selecting another gallery
 // piece re-resolves that piece through the same query. This matches
 // startLoop's canonical URL policy and prevents React from masking
 // ?advM/?advK/?advEps by passing the piece defaults back as overrides.
-let t=(0,i.resolveAdversary)(i.GALLERY[e].adversary,new URLSearchParams(window.location.search));return{piece:e,border:{tag:"wrap"},encoding:"on"===t.tag?t.encoding:{tag:"pair-rotation"},target:"on"===t.tag?(0,i.adversaryTargetOf)(t):{tag:"force"},loss:"on"===t.tag?(0,i.adversaryLossOf)(t):{tag:"raw-vector"},adversaryKind:"on"===t.tag?t.kind.tag:"off",k:"on"===t.tag&&"wta"===t.kind.tag?t.kind.k:1,relaxEps:"on"===t.tag&&"wta"===t.kind.tag?t.kind.relaxEps:0,archPreset:null}}function S(e,t,r){return Math.min(r,Math.max(t,e))}function C(e){switch(e.tag){case"pair":case"pair-rotation":return"rotation";case"pair-rotation-scale-raw":return"rotation-scale-raw";case"pair-rotation-scale-adjusted":return"rotation-scale-adjusted";default:return null}}function T({title:e,children:t,testid:r}){return/*#__PURE__*/(0,n.jsxs)("section",{className:"tui-section","aria-label":e,"data-testid":r,children:[/*#__PURE__*/(0,n.jsx)("div",{className:"tui-section-title",children:e}),/*#__PURE__*/(0,n.jsx)("div",{className:"tui-section-body",children:t})]})}function N({label:e,value:t,min:r,max:s,step:a,display:o,onChange:i,testid:l}){return/*#__PURE__*/(0,n.jsxs)("label",{className:"tui-row","data-testid":l,children:[/*#__PURE__*/(0,n.jsx)("span",{className:"tui-label",children:e}),/*#__PURE__*/(0,n.jsx)("input",{className:"block-slider",type:"range",min:r,max:s,step:a,value:t,onChange:e=>i(Number(e.currentTarget.value)),"aria-label":e}),/*#__PURE__*/(0,n.jsx)("output",{className:"tui-value",children:o})]})}function E({label:e,value:t,choices:r,onChange:s,testid:a}){return/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-segment-row","data-testid":a,children:[/*#__PURE__*/(0,n.jsx)("span",{className:"tui-label",children:e}),/*#__PURE__*/(0,n.jsx)("div",{className:"tui-segments",role:"radiogroup","aria-label":e,children:r.map(e=>/*#__PURE__*/(0,n.jsx)("button",{type:"button",className:"tui-chip",role:"radio","aria-checked":t===e.value,"data-active":t===e.value?"true":"false",title:e.title,onClick:()=>s(e.value),children:e.label},e.value))})]})}function F(e,t){let r=[],s=Number.NaN;for(let n of e){if(!Number.isFinite(n)){r.push(s);continue}s=Number.isFinite(s)?s+t*(n-s):n,r.push(s)}return r}function A({data:e,smoothed:t,label:r="history"}){if(e.length<2)return/*#__PURE__*/(0,n.jsx)("svg",{className:"sparkline",viewBox:"0 0 160 28",role:"img","aria-label":`${r} awaiting samples`});let s=[...e,...t??[]].filter(Number.isFinite);if(!s.length)return/*#__PURE__*/(0,n.jsx)("svg",{className:"sparkline",viewBox:"0 0 160 28",role:"img","aria-label":`${r} unavailable`});let a=Math.min(...s),o=Math.max(...s),i=o-a<=.001*Math.max(Math.abs(o),1e-12),l=Math.max(o-a,1e-30),u=e=>e.map((t,r)=>{let s=r/(e.length-1)*158+1,n=i?14:26-(Number.isFinite(t)?t-a:0)/l*24;return`${s.toFixed(1)},${n.toFixed(1)}`}).join(" ");return/*#__PURE__*/(0,n.jsxs)("svg",{className:"sparkline",viewBox:"0 0 160 28",role:"img","aria-label":`${r} from ${a.toExponential(1)} to ${o.toExponential(1)}`,children:[/*#__PURE__*/(0,n.jsx)("polyline",{className:"sparkline-raw",points:u(e)}),t&&t.length>=2&&/*#__PURE__*/(0,n.jsx)("polyline",{className:"sparkline-smooth",points:u(t)})]})}function D({fractions:e}){let t=Math.max(1,e.length),r=.05/t;return/*#__PURE__*/(0,n.jsx)("div",{className:"head-bars","aria-label":"Predictor-head win fractions",children:e.map((e,s)=>/*#__PURE__*/(0,n.jsx)("span",{className:"head-bar","data-starved":e<r?"true":"false",title:`head ${s}: ${(100*e).toFixed(1)}%`,style:{height:`${Math.max(2,Math.min(18,e*t*9))}px`}},s))})}function $(e){switch(e.tag){case"pileup":return"PILEUP";case"separated-unresolved":return"SKEW \xb7 SUPPORT?";case"unresolved":return"UNPROBED";case"ok":return"OK"}}(0,o.createRoot)(l).render(/*#__PURE__*/(0,n.jsx)(function(){let e=(0,a.useRef)(null),t=(0,a.useRef)(null),r=(0,a.useRef)(null),s=(0,a.useRef)(null),o=(0,a.useRef)(null),l=(0,a.useRef)(function(){try{var e;if(// Retire the v1 blob that could store raw-vector on Pair.
-window.localStorage.removeItem("nffa.dock.v1"),e=new URLSearchParams(window.location.search),["adv","advK","advM","advEps","advWeight","advTarget","advLoss","advTau","advScaleWeight","advEnergyWeight","advEnergyTarget","gLR","dLR","drive","color","cmap","decay","stroke","strokeLen"].some(t=>e.has(t)))return null;let t=window.localStorage.getItem(g);if(!t)return null;return function(e){var t,r,s;if(!e||"object"!=typeof e)return null;let n=e.runtime;if(!n)return null;let a=Number(n.piece);if(!Number.isInteger(a)||a<0||a>=i.GALLERY.length||!((t=n.border)&&"object"==typeof t&&"tag"in t&&("wrap"===t.tag||"bounce"===t.tag||"reset"===t.tag))||!function(e){if(!e||"object"!=typeof e||!("tag"in e))return!1;let t=e.tag;return"point"===t||"pair"===t||"pair-rotation"===t||"pair-rotation-scale-raw"===t||"pair-rotation-scale-adjusted"===t||"tri"===t||"quad-labelled"===t}(n.encoding)||!((r=n.target)&&"object"==typeof r&&"tag"in r&&("force"===r.tag||"post-velocity"===r.tag))||!function(e){if(!e||"object"!=typeof e||!("tag"in e))return!1;switch(e.tag){case"raw-vector":return!0;case"soft-angle":return Number.isFinite(e.tau)&&e.tau>0;case"angle-relative-scale":case"angle-scale-hold":return Number.isFinite(e.tau)&&e.tau>0&&Number.isFinite(e.scaleWeight)&&e.scaleWeight>=0&&Number.isFinite(e.energyWeight)&&e.energyWeight>=0&&Number.isFinite(e.energyTarget)&&e.energyTarget>0;default:return!1}}(n.loss)||"off"!==n.adversaryKind&&"single"!==n.adversaryKind&&"wta"!==n.adversaryKind)return null;let o=Number(n.k),l=Number(n.relaxEps);if(!Number.isFinite(o)||!Number.isFinite(l))return null;let g=null===n.archPreset||void 0===n.archPreset?null:(0,i.isArchPresetKey)(n.archPreset)?n.archPreset:null,x=Number(e.particles),v=Number(e.samples),y=Number(e.maxVelocity),b=Number(e.drive),k=Number(e.generatorLearningRate),_=Number(e.discriminatorLearningRate),w=Number(e.resetRate),I=Number(e.decay),C=Number(e.blend),T=Number(e.strokeLength),N=Number(e.advWeight);if(![x,v,y,b,k,_,w,I,C,T,N].every(Number.isFinite)||"ghost"!==e.look&&"clean"!==e.look&&"trails"!==e.look||"dot"!==e.strokeStyle&&"vel"!==e.strokeStyle&&"curl"!==e.strokeStyle||!((s=e.colorMode)&&"object"==typeof s&&"tag"in s&&("velocity"===s.tag||("surprise-raw"===s.tag||"surprise-per-unit"===s.tag)&&u.includes(s.colormap))))return null;// Kind + recipe must match what the restored piece actually runs. An early
-// dock build carried raw-vector / weight=0 across gallery clicks and saved
-// that poison onto Pair — Euclidean amplitude games go diagonal and soft-
-// angle swirls vanish. Live dials still come from storage; the piece's
-// baked observer/loss/K win on reload (same policy as gallery switch).
-let E=j(a),F=i.GALLERY[a].adversary,A=F?.tag==="on"?F.weight:0,D=S(N,f,m);return{runtime:{piece:a,border:n.border,encoding:E.encoding,target:E.target,loss:E.loss,adversaryKind:E.adversaryKind,k:E.k,relaxEps:E.relaxEps,archPreset:g},particles:S(Math.round(x),200,1e6),samples:S(Math.round(v),16,1024),maxVelocity:S(y,1,200),drive:S(b,0,1),generatorLearningRate:S(k,p,c),discriminatorLearningRate:S(_,d,h),resetRate:S(w,0,1),decay:S(I,0,.99),look:e.look,blend:S(C,0,1),strokeStyle:e.strokeStyle,strokeLength:S(T,.5,16),advWeight:"off"!==E.adversaryKind&&0===D?A:D,colorMode:e.colorMode}}(JSON.parse(t))}catch{return null}}()),R=null!==l.current,[P,M]=(0,a.useState)(()=>l.current?.runtime??j(i.DEFAULT_PIECE_INDEX)),[O,B]=(0,a.useState)(()=>l.current?.particles??1e3),[z,L]=(0,a.useState)(()=>l.current?.samples??256),[G,V]=(0,a.useState)(()=>l.current?.maxVelocity??24),[U,W]=(0,a.useState)(()=>l.current?.drive??.65),[q,H]=(0,a.useState)(()=>l.current?.generatorLearningRate??.001),[K,Y]=(0,a.useState)(()=>l.current?.discriminatorLearningRate??.003),[X,Z]=(0,a.useState)(()=>l.current?.resetRate??.01),[J,Q]=(0,a.useState)(()=>l.current?.decay??0),[ee,et]=(0,a.useState)(()=>l.current?.look??"ghost"),[er,es]=(0,a.useState)(()=>l.current?.blend??.5),[en,ea]=(0,a.useState)(()=>l.current?.strokeStyle??(0,i.resolveStrokeStyle)(i.GALLERY[P.piece],new URLSearchParams(window.location.search))),[eo,ei]=(0,a.useState)(()=>l.current?.strokeLength??(0,i.resolveStrokeLength)(i.GALLERY[P.piece],new URLSearchParams(window.location.search))),[el,eu]=(0,a.useState)(()=>l.current?.advWeight??0),[ep,ec]=(0,a.useState)(()=>!v()),[ed,eh]=(0,a.useState)(()=>!v()),[ef,em]=(0,a.useState)({tag:"off"}),[eg,ex]=(0,a.useState)(()=>l.current?.colorMode??{tag:"velocity"}),[ev,ey]=(0,a.useState)(null),[eb,ek]=(0,a.useState)([]),[e_,ew]=(0,a.useState)([]),eI=i.GALLERY[P.piece],ej="off"!==P.adversaryKind,eS=(0,i.archDockPresets)(eI.archDock??"aesthetic"),eC=eI.fieldArch?eI.archEditable&&P.archPreset&&(0,i.isArchPresetKey)(P.archPreset)?(0,i.applyArchDockPreset)(eI.fieldArch,i.ARCH[P.archPreset]):eI.fieldArch:null,eT=(eC?.heads??eI.fieldArch?.heads??(eI.createField?2:1))===2,eN="agree-disagree"===eI.mode,eE="wta"===P.adversaryKind,eF=!!eI.fieldLoss&&(0!==eI.fieldLoss.W_CHAOS||0!==eI.fieldLoss.W_ISO||0!==eI.fieldLoss.W_DIV||0!==eI.fieldLoss.W_SPIRAL||(eI.fieldLoss.W_COVER??0)!==0||(eI.fieldLoss.W_CENTER??0)!==0),eA=C(P.encoding);// Re-apply the regime default when the breakpoint is CROSSED (rotation, a
+let t=(0,i.resolveAdversary)(i.GALLERY[e].adversary,new URLSearchParams(window.location.search));return{piece:e,border:{tag:"wrap"},encoding:"on"===t.tag?t.encoding:{tag:"pair-rotation"},target:"on"===t.tag?(0,i.adversaryTargetOf)(t):{tag:"force"},loss:"on"===t.tag?(0,i.adversaryLossOf)(t):{tag:"raw-vector"},adversaryKind:"on"===t.tag?t.kind.tag:"off",k:"on"===t.tag&&"wta"===t.kind.tag?t.kind.k:1,relaxEps:"on"===t.tag&&"wta"===t.kind.tag?t.kind.relaxEps:0,archPreset:null}}function N(e,t,r){return Math.min(r,Math.max(t,e))}function E(e,t){var r,s,n;if(!e||"object"!=typeof e)return null;let a=e.runtime;if(!a)return null;let o=Number(a.piece);if(!Number.isInteger(o)||o<0||o>=i.GALLERY.length||!((r=a.border)&&"object"==typeof r&&"tag"in r&&("wrap"===r.tag||"bounce"===r.tag||"reset"===r.tag))||!function(e){if(!e||"object"!=typeof e||!("tag"in e))return!1;let t=e.tag;return"point"===t||"pair"===t||"pair-rotation"===t||"pair-rotation-scale-raw"===t||"pair-rotation-scale-adjusted"===t||"tri"===t||"quad-labelled"===t}(a.encoding)||!((s=a.target)&&"object"==typeof s&&"tag"in s&&("force"===s.tag||"post-velocity"===s.tag))||!function(e){if(!e||"object"!=typeof e||!("tag"in e))return!1;switch(e.tag){case"raw-vector":return!0;case"soft-angle":return Number.isFinite(e.tau)&&e.tau>0;case"angle-relative-scale":case"angle-scale-hold":return Number.isFinite(e.tau)&&e.tau>0&&Number.isFinite(e.scaleWeight)&&e.scaleWeight>=0&&Number.isFinite(e.energyWeight)&&e.energyWeight>=0&&Number.isFinite(e.energyTarget)&&e.energyTarget>0;default:return!1}}(a.loss)||"off"!==a.adversaryKind&&"single"!==a.adversaryKind&&"wta"!==a.adversaryKind)return null;let u=Number(a.k),p=Number(a.relaxEps);if(!Number.isFinite(u)||!Number.isFinite(p))return null;let v=null===a.archPreset||void 0===a.archPreset?null:(0,i.isArchPresetKey)(a.archPreset)?a.archPreset:null,y=Number(e.particles),b=Number(e.samples),k=Number(e.maxVelocity),_=Number(e.drive),w=Number(e.generatorLearningRate),I=Number(e.discriminatorLearningRate),j=Number(e.resetRate),S=Number(e.decay),C=Number(e.blend),E=Number(e.strokeLength),F=Number(e.advWeight);if(![y,b,k,_,w,I,j,S,C,E,F].every(Number.isFinite)||"ghost"!==e.look&&"clean"!==e.look&&"trails"!==e.look||"dot"!==e.strokeStyle&&"vel"!==e.strokeStyle&&"curl"!==e.strokeStyle||!((n=e.colorMode)&&"object"==typeof n&&"tag"in n&&("velocity"===n.tag||("surprise-raw"===n.tag||"surprise-per-unit"===n.tag)&&c.includes(n.colormap))))return null;// Which half of the runtime the blob is trusted with is a POLICY decision,
+// made once, by the caller — see RecipePolicy.
+let A=T(o),D=i.GALLERY[o].adversary,$=D?.tag==="on"?D.weight:0,R="wta"===A.adversaryKind?2:1,P=/** Thin dispatcher: one handler per policy, both fed already-validated values. */function(e,t,r,s){switch(e){case"blob":return s;case"piece":return{encoding:t.encoding,target:t.target,loss:t.loss,k:t.k,relaxEps:t.relaxEps,// A STORED 0 reward with the game on is v1 poison, not a parked dial,
+// so the piece's own reward comes back. (pieceWeight is itself 0 on a
+// piece with no adversary, which is why this needs no kind test.) A
+// LINK's 0 is a real choice — "run the game, feed the HUD, do not
+// steer the field" — and "blob" keeps it, the same reading main.ts's
+// floatParam already gives an explicit `?advWeight=0`.
+advWeight:0===s.advWeight?r:s.advWeight}}}(t,A,$,{encoding:a.encoding,target:a.target,loss:a.loss,k:N(Math.round(u),R,12),relaxEps:N(p,0,.45),advWeight:N(F,g,x)});// The one cross-field invariant the per-field guards above cannot see, and
+// the one startLoop itself THROWS on (main.ts calls objectiveDims before
+// building the loop): a post-velocity target is point-only. A hand-edited
+// link pairing it with a relational observer must be rejected as bad input
+// here, not crash the page there.
+try{(0,l.objectiveDims)(P.encoding,P.target,P.loss)}catch{return null}return{runtime:{piece:o,border:a.border,encoding:P.encoding,target:P.target,loss:P.loss,// The adversary's EXISTENCE is piece identity, never a dial: startLoop
+// resolves it from GALLERY + `?adv=` and no dock override can switch a
+// game on. Adopting a blob's kind onto a piece that has none would draw
+// a full adversary panel over a loop that reports no telemetry.
+adversaryKind:A.adversaryKind,k:P.k,relaxEps:P.relaxEps,archPreset:v},particles:N(Math.round(y),200,1e6),// Restored dock values are bounded by the architectural ceiling only; the
+// live trainer's device-derived cap re-clamps in setSampleRate. (Was a
+// hard 1024 — a stale narrower bound than the slider itself allowed.)
+samples:N(Math.round(b),i.TRAIN_BATCH_MIN,i.TRAIN_BATCH_MAX),maxVelocity:N(k,1,200),drive:N(_,0,1),generatorLearningRate:N(w,d,h),discriminatorLearningRate:N(I,f,m),resetRate:N(j,0,1),decay:N(S,0,.99),look:e.look,blend:N(C,0,1),strokeStyle:e.strokeStyle,strokeLength:N(E,.5,16),advWeight:P.advWeight,colorMode:e.colorMode}}/** The single-knob deep links. Explicit and per-field, so they win outright. */let F=["adv","advK","advM","advEps","advWeight","advTarget","advLoss","advTau","advScaleWeight","advEnergyWeight","advEnergyTarget","advPolar","advNematic","advPolarTau","gLR","dLR","drive","color","cmap","decay","stroke","strokeLen"];function A(){try{let e=window.localStorage.getItem(v);if(!e)return null;return E(JSON.parse(e),"piece")}catch{return null}}/* ─── export / share ──────────────────────────────────────────────────────
+   The dock's live state, out as a link and back in again. ONE serializer:
+   the App builds a single PersistedDock per render and hands the SAME object
+   to savePersistedDock and to these, so a copied link and a saved session can
+   never describe different settings.                                        */function D(e){return{...e,pieceName:i.GALLERY[e.runtime.piece].name}}/**
+ * `new URLSearchParams("?%%%")` THROWS URIError on a malformed percent-escape,
+ * and dock ingestion runs inside a render, where an unhandled throw unmounts
+ * the tree and leaves a BLANK PAGE — the worst possible answer to a mistyped
+ * link. base64url contains no "%", so no honestly-truncated share link reaches
+ * this; a hand-mangled one does.
+ *
+ * DEFENCE IN DEPTH, NOT A CURE: measured with `?dock=%%%not-base64%%%`, tfjs's
+ * own module-level `populateURLFlags` parses the same query string at IMPORT
+ * time and throws the identical URIError before one line of app code runs, so
+ * that URL still blanks the page. Fixing that means guarding the tfjs import,
+ * not this function — but this layer must not be the second place it breaks.
+ */function $(e){try{return{tag:"ok",params:new URLSearchParams(e)}}catch(e){return{tag:"malformed",reason:e instanceof Error?e.message:String(e)}}}/**
+ * Where the dock's opening state comes from. Precedence, highest first:
+ *
+ *   explicit knob params (?gLR, ?advLoss, …) > ?dock= > localStorage > piece defaults
+ *
+ * The single-knob params win COARSELY: their presence suppresses both restore
+ * sources and hands the whole decision to main.ts's κ, which is the only thing
+ * that can apply them to the running loop. Half-restoring a dock underneath
+ * them would put the sliders and the artwork in different states — the exact
+ * dishonesty the "deep links stay honest" rule exists to prevent.
+ */function R(){var e;try{// Retire the v1 blob that could store raw-vector on Pair.
+window.localStorage.removeItem("nffa.dock.v1")}catch{// Private mode / disabled storage — nothing to retire.
+}let t=window.location.search,r=$(t);if("malformed"===r.tag)return(// Nothing in this URL can be trusted — including whether a knob param is
+// present — so neither restore source may run. Piece defaults it is.
+console.warn(`[dock] query string is undecodable (${r.reason}); ignoring the whole URL and opening on piece defaults.`),null);let s=/**
+ * κ — the ONE place a `?dock=` parameter becomes a dock. Transport, then piece
+ * identity, then the same v2 validator storage uses (under "blob" policy).
+ * Reports; never repairs.
+ */function(e){let t=$(e);if("malformed"===t.tag)return{tag:"invalid",reason:`query string is undecodable (${t.reason})`};let r=t.params.get(y);if(null===r)return{tag:"absent"};let s=(0,u.decodeDockParam)(r);if("invalid"===s.tag)return s;if(!s.json||"object"!=typeof s.json)return{tag:"invalid",reason:"decoded to a non-object"};let n=s.json,a=(0,u.resolveSharedPiece)((0,i.GALLERY).map(e=>e.name),n.runtime?.piece,n.pieceName),o=E({...n,runtime:{...n.runtime??{},piece:a.piece}},"blob");return o?{tag:"ok",dock:o,piece:a}:{tag:"invalid",reason:"failed v2 dock validation"}}(t);if(e=r.params,F.some(t=>e.has(t))){if("absent"!==s.tag){let e=F.filter(e=>r.params.has(e));console.warn(`[dock] ignoring ?${y}= — explicit knob params (${e.join(", ")}) outrank a shared dock. Drop them to use the link.`)}return null}switch(s.tag){case"ok":return!/** One handler per identity outcome; two of the three are worth saying aloud. */function(e){switch(e.tag){case"index":return;case"renamed":console.warn(`[dock] shared link names piece "${e.name}" but carries index ${e.staleIndex}; resolving BY NAME to index ${e.piece}. GALLERY is append-only, so this link predates a reorder.`);return;case"unknown-name":console.warn(`[dock] shared link names piece "${e.name}", which is not in this build's GALLERY (renamed or removed); falling back to its index ${e.piece}, which may be a DIFFERENT artwork.`);return}}(s.piece),console.info(`[dock] adopted ?${y}= share link \xb7 piece "${i.GALLERY[s.dock.runtime.piece].name}"`),s.dock;case"invalid":return console.warn(`[dock] ignoring ?${y}= — ${s.reason}. Falling back to localStorage, then piece defaults.`),A();case"absent":return A()}}/** Label + flash for ONE button, so the two can never disagree. */function P(e,t,r){switch(e.tag){case"idle":return{label:r,flash:"none"};case"copied":return e.target===t?{label:"COPIED ✓",flash:"copied"}:{label:r,flash:"none"};case"failed":return e.target===t?{label:"FAILED ✗",flash:"failed"}:{label:r,flash:"none"}}}function M(e){switch(e.tag){case"pair":case"pair-rotation":return"rotation";case"pair-rotation-scale-raw":return"rotation-scale-raw";case"pair-rotation-scale-adjusted":return"rotation-scale-adjusted";default:return null}}function O({title:e,children:t,testid:r}){return/*#__PURE__*/(0,n.jsxs)("section",{className:"tui-section","aria-label":e,"data-testid":r,children:[/*#__PURE__*/(0,n.jsx)("div",{className:"tui-section-title",children:e}),/*#__PURE__*/(0,n.jsx)("div",{className:"tui-section-body",children:t})]})}function B({label:e,value:t,min:r,max:s,step:a,display:o,onChange:i,testid:l}){return/*#__PURE__*/(0,n.jsxs)("label",{className:"tui-row","data-testid":l,children:[/*#__PURE__*/(0,n.jsx)("span",{className:"tui-label",children:e}),/*#__PURE__*/(0,n.jsx)("input",{className:"block-slider",type:"range",min:r,max:s,step:a,value:t,onChange:e=>i(Number(e.currentTarget.value)),"aria-label":e}),/*#__PURE__*/(0,n.jsx)("output",{className:"tui-value",children:o})]})}function z({label:e,value:t,choices:r,onChange:s,testid:a}){return/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-segment-row","data-testid":a,children:[/*#__PURE__*/(0,n.jsx)("span",{className:"tui-label",children:e}),/*#__PURE__*/(0,n.jsx)("div",{className:"tui-segments",role:"radiogroup","aria-label":e,children:r.map(e=>/*#__PURE__*/(0,n.jsx)("button",{type:"button",className:"tui-chip",role:"radio","aria-checked":t===e.value,"data-active":t===e.value?"true":"false",title:e.title,onClick:()=>s(e.value),children:e.label},e.value))})]})}function L(e,t){let r=[],s=Number.NaN;for(let n of e){if(!Number.isFinite(n)){r.push(s);continue}s=Number.isFinite(s)?s+t*(n-s):n,r.push(s)}return r}function G({data:e,smoothed:t,label:r="history"}){if(e.length<2)return/*#__PURE__*/(0,n.jsx)("svg",{className:"sparkline",viewBox:"0 0 160 28",role:"img","aria-label":`${r} awaiting samples`});let s=[...e,...t??[]].filter(Number.isFinite);if(!s.length)return/*#__PURE__*/(0,n.jsx)("svg",{className:"sparkline",viewBox:"0 0 160 28",role:"img","aria-label":`${r} unavailable`});let a=Math.min(...s),o=Math.max(...s),i=o-a<=.001*Math.max(Math.abs(o),1e-12),l=Math.max(o-a,1e-30),u=e=>e.map((t,r)=>{let s=r/(e.length-1)*158+1,n=i?14:26-(Number.isFinite(t)?t-a:0)/l*24;return`${s.toFixed(1)},${n.toFixed(1)}`}).join(" ");return/*#__PURE__*/(0,n.jsxs)("svg",{className:"sparkline",viewBox:"0 0 160 28",role:"img","aria-label":`${r} from ${a.toExponential(1)} to ${o.toExponential(1)}`,children:[/*#__PURE__*/(0,n.jsx)("polyline",{className:"sparkline-raw",points:u(e)}),t&&t.length>=2&&/*#__PURE__*/(0,n.jsx)("polyline",{className:"sparkline-smooth",points:u(t)})]})}function V({fractions:e}){let t=Math.max(1,e.length),r=.05/t;return/*#__PURE__*/(0,n.jsx)("div",{className:"head-bars","aria-label":"Predictor-head win fractions",children:e.map((e,s)=>/*#__PURE__*/(0,n.jsx)("span",{className:"head-bar","data-starved":e<r?"true":"false",title:`head ${s}: ${(100*e).toFixed(1)}%`,style:{height:`${Math.max(2,Math.min(18,e*t*9))}px`}},s))})}function U(e){switch(e.tag){case"pileup":return"PILEUP";case"separated-unresolved":return"SKEW \xb7 SUPPORT?";case"unresolved":return"UNPROBED";case"ok":return"OK"}}(0,o.createRoot)(p).render(/*#__PURE__*/(0,n.jsx)(function(){let e=(0,a.useRef)(null),t=(0,a.useRef)(null),r=(0,a.useRef)(null),s=(0,a.useRef)(null),o=(0,a.useRef)(null),[l]=(0,a.useState)(R),p=null!==l,[N,E]=(0,a.useState)(()=>l?.runtime??T(i.DEFAULT_PIECE_INDEX)),[F,A]=(0,a.useState)(()=>l?.particles??1e3),[$,W]=(0,a.useState)(()=>l?.samples??256),[q,H]=(0,a.useState)(i.TRAIN_BATCH_MAX),[K,Y]=(0,a.useState)(()=>l?.maxVelocity??24),[X,Z]=(0,a.useState)(()=>l?.drive??.65),[J,Q]=(0,a.useState)(()=>l?.generatorLearningRate??.001),[ee,et]=(0,a.useState)(()=>l?.discriminatorLearningRate??.003),[er,es]=(0,a.useState)(()=>l?.resetRate??.01),[en,ea]=(0,a.useState)(()=>l?.decay??0),[eo,ei]=(0,a.useState)(()=>l?.look??"ghost"),[el,eu]=(0,a.useState)(()=>l?.blend??.5),[ep,ec]=(0,a.useState)(()=>l?.strokeStyle??(0,i.resolveStrokeStyle)(i.GALLERY[N.piece],new URLSearchParams(window.location.search))),[ed,eh]=(0,a.useState)(()=>l?.strokeLength??(0,i.resolveStrokeLength)(i.GALLERY[N.piece],new URLSearchParams(window.location.search))),[ef,em]=(0,a.useState)(()=>l?.advWeight??0),[eg,ex]=(0,a.useState)(()=>!k()),[ev,ey]=(0,a.useState)(()=>!k()),[eb,ek]=(0,a.useState)({tag:"off"}),[e_,ew]=(0,a.useState)(()=>l?.colorMode??{tag:"velocity"}),[eI,ej]=(0,a.useState)(null),[eS,eC]=(0,a.useState)([]),[eT,eN]=(0,a.useState)([]),[eE,eF]=(0,a.useState)({tag:"idle"}),eA=(0,a.useRef)(null);// The flash timer outlives a fast unmount otherwise, and setState on a dead
+// component is a warning in the console of an app whose console IS its HUD.
+(0,a.useEffect)(()=>()=>{null!==eA.current&&window.clearTimeout(eA.current)},[]);let eD=i.GALLERY[N.piece],e$="off"!==N.adversaryKind,eR=(0,i.archDockPresets)(eD.archDock??"aesthetic"),eP=eD.fieldArch?eD.archEditable&&N.archPreset&&(0,i.isArchPresetKey)(N.archPreset)?(0,i.applyArchDockPreset)(eD.fieldArch,i.ARCH[N.archPreset]):eD.fieldArch:null,eM=(eP?.heads??eD.fieldArch?.heads??(eD.createField?2:1))===2,eO="agree-disagree"===eD.mode,eB="wta"===N.adversaryKind,ez=!!eD.fieldLoss&&(0!==eD.fieldLoss.W_CHAOS||0!==eD.fieldLoss.W_ISO||0!==eD.fieldLoss.W_DIV||0!==eD.fieldLoss.W_SPIRAL||(eD.fieldLoss.W_COVER??0)!==0||(eD.fieldLoss.W_CENTER??0)!==0),eL=M(N.encoding);// Re-apply the regime default when the breakpoint is CROSSED (rotation, a
 // resized window). MediaQueryList fires only when `matches` actually flips,
 // so resizing inside one regime — or a mobile URL bar sliding away — leaves
 // a manual toggle alone; only a real phone↔desktop transition overrides it.
-(0,a.useEffect)(()=>{let e=window.matchMedia(x),t=e=>{ec(!e.matches),eh(!e.matches)};return e.addEventListener("change",t),()=>e.removeEventListener("change",t)},[]),(0,a.useEffect)(()=>{!function(e){try{window.localStorage.setItem(g,JSON.stringify(e))}catch{// Quota / private mode — dock still works in-session.
-}}({runtime:P,particles:O,samples:z,maxVelocity:G,drive:U,generatorLearningRate:q,discriminatorLearningRate:K,resetRate:X,decay:J,look:ee,blend:er,strokeStyle:en,strokeLength:eo,advWeight:el,colorMode:eg})},[P,O,z,G,U,q,K,X,J,ee,er,en,eo,el,eg]),(0,a.useLayoutEffect)(()=>{let n=e.current;if(!n)return;// Preserve live dials only across same-piece compile rebuilds (border /
+(0,a.useEffect)(()=>{let e=window.matchMedia(b),t=e=>{ex(!e.matches),ey(!e.matches)};return e.addEventListener("change",t),()=>e.removeEventListener("change",t)},[]);// ONE canonical dock value per render. The save effect below and the share
+// buttons serialize THIS object, so a stored session and a copied link can
+// never drift apart — there is only one serializer to keep in sync.
+let eG={runtime:N,particles:F,samples:$,maxVelocity:K,drive:X,generatorLearningRate:J,discriminatorLearningRate:ee,resetRate:er,decay:en,look:eo,blend:el,strokeStyle:ep,strokeLength:ed,advWeight:ef,colorMode:e_};(0,a.useEffect)(()=>{!function(e){try{window.localStorage.setItem(v,JSON.stringify(e))}catch{// Quota / private mode — dock still works in-session.
+}}(eG);// Deps are the FIELDS, not `dock`: the object is rebuilt every render, so
+// depending on its identity would rewrite localStorage on every telemetry
+// poll (5 Hz). These are exactly the fields it is built from.
+},[N,F,$,K,X,J,ee,er,en,eo,el,ep,ed,ef,e_]),(0,a.useLayoutEffect)(()=>{let n=e.current;if(!n)return;// Preserve live dials only across same-piece compile rebuilds (border /
 // arch / adversary recipe change) and the first paint from localStorage.
 // Gallery switches adopt the new piece's baked particles / LRs / advWeight /
 // colorMode — otherwise Pair inherits weight=0 and raw-vector from Spiral.
@@ -44,12 +100,20 @@ let E=j(a),F=i.GALLERY[a].adversary,A=F?.tag==="on"?F.weight:0,D=S(N,f,m);return
 // its declared stroke wins on switch exactly like its renderer-derived ink
 // look does two lines down. The dock control stays live afterwards, and a
 // same-piece rebuild pushes the user's current stroke back in.
-let a=o.current,l=null===a,u=a===P.piece;o.current=P.piece;let p=l&&R||!l&&u;s.current?.(),r.current=null;let c=!0;return s.current=(0,i.startLoop)(n,P.piece,e=>{c&&(r.current=e,p?(e.setParticleCount(O),e.setSampleRate(z),e.setMaxVelocity(G),e.setDrive(U),e.setGeneratorLearningRate(q),e.setDiscriminatorLearningRate(K),e.setResetRate(X),e.setDecay(J),e.setBlend(er),e.setStrokeStyle(en),e.setStrokeLength(eo),e.setAdversaryWeight(el),e.setColorMode(eg)):(B(e.getParticleCount()),L(e.getSampleRate()),V(e.getMaxVelocity()),W(e.getDrive()),H(e.getGeneratorLearningRate()),Y(e.getDiscriminatorLearningRate()),Z(e.getResetRate()),Q(e.getDecay()),et((0,i.inkLookFromRenderer)(eI.renderer)),es(e.getBlend()),ea(e.getStrokeStyle()),ei(e.getStrokeLength()),eu(e.getAdversaryWeight()),ex(e.getColorMode())))},{telemetryHost:t.current??void 0,overrides:{border:P.border,adversaryEncoding:P.encoding,adversaryTarget:P.target,adversaryLoss:P.loss,k:P.k,relaxEps:P.relaxEps,fieldArch:eC??void 0}}),()=>{c=!1,s.current?.(),s.current=null,r.current=null}},[P]),(0,a.useEffect)(()=>{ek([]),ew([]),em({tag:"off"}),ey(null);let e=window.setInterval(()=>{let e=r.current;if(!e)return;let t=e.getAdversaryTelemetry();em(t),ey(e.getSurpriseSpan()),ex(e.getColorMode()),"on"===t.tag&&(// D minimizes predLoss; G (disagree) maximizes surprise/payoff residual.
+let a=o.current,l=null===a,u=a===N.piece;o.current=N.piece;let c=l&&p||!l&&u;s.current?.(),r.current=null;let d=!0;return s.current=(0,i.startLoop)(n,N.piece,e=>{d&&(r.current=e,// Bound the batch slider by what this trainer can actually run before
+// any restore below pushes a value through it.
+H(e.getMaxSampleRate()),c?(e.setParticleCount(F),e.setSampleRate($),// setSampleRate clamps; mirror the accepted value so the slider does
+// not sit at a number the trainer refused.
+W(e.getSampleRate()),e.setMaxVelocity(K),e.setDrive(X),e.setGeneratorLearningRate(J),e.setDiscriminatorLearningRate(ee),e.setResetRate(er),e.setDecay(en),e.setBlend(el),e.setStrokeStyle(ep),e.setStrokeLength(ed),e.setAdversaryWeight(ef),e.setColorMode(e_)):(A(e.getParticleCount()),W(e.getSampleRate()),Y(e.getMaxVelocity()),Z(e.getDrive()),Q(e.getGeneratorLearningRate()),et(e.getDiscriminatorLearningRate()),es(e.getResetRate()),ea(e.getDecay()),ei((0,i.inkLookFromRenderer)(eD.renderer)),eu(e.getBlend()),ec(e.getStrokeStyle()),eh(e.getStrokeLength()),em(e.getAdversaryWeight()),ew(e.getColorMode())))},{telemetryHost:t.current??void 0,overrides:{border:N.border,adversaryEncoding:N.encoding,adversaryTarget:N.target,adversaryLoss:N.loss,k:N.k,relaxEps:N.relaxEps,fieldArch:eP??void 0}}),()=>{d=!1,s.current?.(),s.current=null,r.current=null}},[N]),(0,a.useEffect)(()=>{eC([]),eN([]),ek({tag:"off"}),ej(null);let e=window.setInterval(()=>{let e=r.current;if(!e)return;let t=e.getAdversaryTelemetry();ek(t),ej(e.getSurpriseSpan()),ew(e.getColorMode()),"on"===t.tag&&(// D minimizes predLoss; G (disagree) maximizes surprise/payoff residual.
 // On raw-vector they often track closely; soft-angle / hold modes diverge.
-ek(e=>e.concat(t.predLoss).slice(-360)),ew(e=>e.concat(t.surprise).slice(-360)))},200);return()=>window.clearInterval(e)},[P]);let eD=e=>{r.current?.setColorMode(e),ex(e)};return/*#__PURE__*/(0,n.jsxs)("main",{className:"art-shell",children:[/*#__PURE__*/(0,n.jsx)("canvas",{ref:e,id:"myCanvas","aria-label":"Neural force-field artwork"}),/*#__PURE__*/(0,n.jsxs)("aside",{className:"hud-stack","aria-label":"Performance and piece controls",children:[/*#__PURE__*/(0,n.jsxs)("div",{className:"telemetry-panel","data-testid":"telemetry-panel","data-collapsed":ep?"false":"true",children:[/*#__PURE__*/(0,n.jsxs)("button",{type:"button",className:"hud-toggle","aria-expanded":ep,"aria-controls":"telemetry-host","data-testid":"telemetry-toggle",title:ep?"Hide telemetry":"Show telemetry",onClick:()=>ec(e=>!e),children:[/*#__PURE__*/(0,n.jsx)("span",{className:"hud-toggle-title",children:"fps \xb7 telemetry"}),/*#__PURE__*/(0,n.jsx)("span",{className:"hud-caret","aria-hidden":"true",children:ep?"▾":"▸"})]}),/*#__PURE__*/(0,n.jsx)("div",{ref:t,id:"telemetry-host",className:"telemetry-host","data-testid":"telemetry-host","aria-live":"polite"})]}),/*#__PURE__*/(0,n.jsxs)("div",{className:"config-dock",id:"piece-config-dock","data-testid":"piece-config-dock","data-collapsed":ed?"false":"true",children:[/*#__PURE__*/(0,n.jsx)("header",{className:"dock-header","aria-label":`Controls for ${eI.name}`,children:/*#__PURE__*/(0,n.jsxs)("button",{type:"button",className:"hud-toggle","aria-expanded":ed,"aria-controls":"piece-config-dock","data-testid":"piece-config-toggle",title:`${eI.name} — ${ed?"hide":"show"} controls`,onClick:()=>eh(e=>!e),children:[/*#__PURE__*/(0,n.jsx)("span",{className:"dock-piece",children:eI.name}),/*#__PURE__*/(0,n.jsx)("span",{className:"hud-caret","aria-hidden":"true",children:ed?"▾":"▸"})]})}),/*#__PURE__*/(0,n.jsxs)(T,{title:"simulation",testid:"simulation-controls",children:[/*#__PURE__*/(0,n.jsx)(N,{label:"particles",value:k(O),min:0,max:1,step:.002,display:O.toLocaleString(),testid:"particles-control",onChange:e=>{let t=_(e);B(t),r.current?.setParticleCount(t)}}),/*#__PURE__*/(0,n.jsx)(N,{label:"train B",value:z,min:16,max:4096,step:16,display:`${z}`,testid:"samples-control",onChange:e=>{L(e),r.current?.setSampleRate(e)}}),/*#__PURE__*/(0,n.jsx)(N,{label:"max vel",value:G,min:.25,max:80,step:.25,display:G.toFixed(1),testid:"max-velocity-control",onChange:e=>{V(e),r.current?.setMaxVelocity(e)}}),ej&&void 0!==eI.drive&&/*#__PURE__*/(0,n.jsx)(N,{label:"drive",value:U,min:0,max:1,step:.01,display:`${U.toFixed(2)}\xd7 clip`,testid:"drive-control",onChange:e=>{W(e),r.current?.setDrive(e)}}),/*#__PURE__*/(0,n.jsx)(N,{label:"respawn",value:X,min:0,max:.05,step:.001,display:`${(100*X).toFixed(1)}%`,testid:"random-reset-control",onChange:e=>{Z(e),r.current?.setResetRate(e)}}),/*#__PURE__*/(0,n.jsx)(E,{label:"border",value:P.border.tag,testid:"border-control",choices:[{value:"wrap",label:"WRAP",title:"Periodic torus"},{value:"bounce",label:"BOUNCE",title:"Reflect at the box edge"},{value:"reset",label:"RESET",title:"Respawn when leaving the box"}],onChange:e=>M(t=>({...t,border:{tag:e}}))}),/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note restart-note",children:"border is compiled \xb7 changing it restarts"})]}),/*#__PURE__*/(0,n.jsxs)(T,{title:"ink",testid:"ink-controls",children:[eI.lookEditable&&/*#__PURE__*/(0,n.jsx)(E,{label:"look",value:ee,testid:"ink-look-control",choices:[{value:"ghost",label:"GHOST",title:"Soft alpha trails"},{value:"clean",label:"CLEAN",title:"No trails"},{value:"trails",label:"TRAILS",title:"Long streak persistence"}],onChange:e=>{let t=i.INK_LOOK_DECAY[e];et(e),Q(t),r.current?.setDecay(t)}}),/*#__PURE__*/(0,n.jsx)(N,{label:"trails",value:J,min:0,max:.99,step:.005,display:J.toFixed(2),testid:"trails-control",onChange:e=>{Q(e),r.current?.setDecay(e)}}),/*#__PURE__*/(0,n.jsx)(E,{label:"stroke",value:en,testid:"stroke-style-control",choices:[{value:"dot",label:"DOT"},{value:"vel",label:"VEL"},{value:"curl",label:"CURL"}],onChange:e=>{ea(e),r.current?.setStrokeStyle(e)}}),"dot"!==en&&/*#__PURE__*/(0,n.jsx)(N,{label:"length",value:eo,min:.5,max:16,step:.5,display:eo.toFixed(1),testid:"stroke-length-control",onChange:e=>{ei(e),r.current?.setStrokeLength(e)}})]}),eI.fieldArch&&/*#__PURE__*/(0,n.jsxs)(T,{title:"model",testid:"model-arch-controls",children:[/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-note","data-testid":"model-arch-summary",children:[(0,i.describeFieldArch)(eC??eI.fieldArch),eI.fieldLoss?"":" \xb7 train tfjs"]}),eI.archEditable&&/*#__PURE__*/(0,n.jsx)(E,{label:"arch",value:P.archPreset??"default",choices:[{value:"default",label:"default"},...eS.map(e=>({value:e.key,label:e.label}))],onChange:e=>M(t=>({...t,archPreset:"default"===e?null:e})),testid:"model-arch-presets"}),eI.archEditable&&/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note restart-note",children:"arch is compiled \xb7 changing it restarts"})]}),eT&&/*#__PURE__*/(0,n.jsxs)(T,{title:eN?"A/B/C roles":"two-head field",testid:"field-controls",children:[/*#__PURE__*/(0,n.jsx)(N,{label:eN?"blend C":"blend A/B",value:er,min:0,max:1,step:.01,display:er.toFixed(2),testid:"head-blend-control",onChange:e=>{es(e),r.current?.setBlend(e)}}),eN?/*#__PURE__*/(0,n.jsxs)("div",{className:"rgb-role-legend","data-testid":"rgb-role-legend",children:[/*#__PURE__*/(0,n.jsx)("span",{className:"role-a",children:"R \xb7 A disagree"}),/*#__PURE__*/(0,n.jsx)("span",{className:"role-b",children:"G \xb7 B agree"}),/*#__PURE__*/(0,n.jsx)("span",{className:"role-c",children:"B \xb7 C blend (no loss)"})]}):/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note",children:"neutral output mix — not order ↔ chaos"})]}),ej&&/*#__PURE__*/(0,n.jsxs)(T,{title:"adversary",testid:"adversary-controls",children:[/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row","data-testid":"objective-contract",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"objective"}),/*#__PURE__*/(0,n.jsx)("strong",{children:"angle-scale-hold"===P.loss.tag?"ANGLE OPPOSE \xb7 SCALE AGREE":"angle-relative-scale"===P.loss.tag?"ANGLE + SCALE OPPOSE \xb7 ENERGY HOLD":eN?"A OPPOSE \xb7 B COOPERATE":eF?"GAME + MAX CHAOS":"raw-vector"===P.loss.tag?"RAW VECTOR \xb7 BASELINE":"ANGLE OPPONENT GAME"})]}),/*#__PURE__*/(0,n.jsx)(E,{label:"target",value:P.target.tag,testid:"adversary-target-control",choices:[{value:"force",label:"FORCE",title:"Predict raw neural field output F(x)"},{value:"post-velocity",label:"POST-V",title:"Predict normalized velocity after force, friction and clip; context includes incoming velocity"}],onChange:e=>M(t=>{let r={tag:e};return"post-velocity"===e?{...t,target:r,encoding:{tag:"point"},loss:b(t.loss)?y("soft-angle",t.loss):t.loss}:{...t,target:r}})}),/*#__PURE__*/(0,n.jsx)(E,{label:"loss",value:P.loss.tag,testid:"adversary-loss-control",choices:[{value:"raw-vector",label:"RAW",title:"Euclidean ‖ŷ−y‖ — easy baseline (amplitude shortcut OK). Compare to ANGLE."},{value:"soft-angle",label:"ANGLE",title:"Exact smooth S\xb2 chord loss with bounded Jacobian"},{value:"angle-relative-scale",label:"A+S ADV",title:"Adversarial direction and relative magnitude contrast"},{value:"angle-scale-hold",label:"A+S HOLD",title:"Direction adversarial; relative scale cooperative; absolute energy held"}],onChange:e=>M(t=>{let r=y(e,t.loss);return b(r)?{...t,target:{tag:"force"},encoding:"point"===t.encoding.tag?{tag:"pair-rotation-scale-adjusted"}:t.encoding,loss:r}:{...t,loss:r}})}),"raw-vector"!==P.loss.tag&&/*#__PURE__*/(0,n.jsx)(N,{label:"soft τ",value:P.loss.tau,min:.005,max:.25,step:.005,display:P.loss.tau.toFixed(3),testid:"adversary-angle-tau-control",onChange:e=>M(t=>({...t,loss:"raw-vector"===t.loss.tag?t.loss:{...t.loss,tau:e}}))}),b(P.loss)&&/*#__PURE__*/(0,n.jsxs)(n.Fragment,{children:[/*#__PURE__*/(0,n.jsx)(N,{label:"scale w",value:P.loss.scaleWeight,min:0,max:2,step:.05,display:P.loss.scaleWeight.toFixed(2),testid:"adversary-scale-weight-control",onChange:e=>M(t=>({...t,loss:b(t.loss)?{...t.loss,scaleWeight:e}:t.loss}))}),/*#__PURE__*/(0,n.jsx)(N,{label:"energy w",value:P.loss.energyWeight,min:0,max:1,step:.01,display:P.loss.energyWeight.toFixed(2),testid:"adversary-energy-weight-control",onChange:e=>M(t=>({...t,loss:b(t.loss)?{...t.loss,energyWeight:e}:t.loss}))}),/*#__PURE__*/(0,n.jsx)(N,{label:"energy",value:P.loss.energyTarget,min:.02,max:1,step:.01,display:P.loss.energyTarget.toFixed(2),testid:"adversary-energy-target-control",onChange:e=>M(t=>({...t,loss:b(t.loss)?{...t.loss,energyTarget:e}:t.loss}))})]}),"post-velocity"===P.target.tag&&/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note","data-testid":"post-velocity-contract",children:"context = x + incoming v \xb7 target is pre-border normalized v+"}),b(P.loss)&&/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note","data-testid":"relative-scale-contract",children:"scale = within-tuple contrast \xb7 energy fixes absolute RMS"}),"angle-scale-hold"===P.loss.tag&&/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note","data-testid":"scale-hold-diagnostic-contract",children:"displayed D-joint is not G reward \xb7 G raises angle, lowers scale error"}),/*#__PURE__*/(0,n.jsx)(E,{label:"tuple",value:function(e){switch(e.tag){case"point":return"point";case"pair":case"pair-rotation":case"pair-rotation-scale-raw":case"pair-rotation-scale-adjusted":return"pair";case"tri":return"tri";case"quad-labelled":return"quad-labelled"}}(P.encoding),testid:"adversary-tuple-control",choices:[{value:"point",label:"1 \xb7 POINT"},{value:"pair",label:"2 \xb7 PAIR"},{value:"tri",label:"3 \xb7 TRI"},{value:"quad-labelled",label:"4L \xb7 QUAD",title:"Four labelled points; translation+rotation quotient only"}],onChange:e=>M(t=>{let r=function(e,t){switch(e){case"point":return{tag:"point"};case"pair":// Preserve the selected pair quotient. Entering pair mode from another
+eC(e=>e.concat(t.predLoss).slice(-360)),eN(e=>e.concat(t.surprise).slice(-360)))},200);return()=>window.clearInterval(e)},[N]);let eV=e=>{r.current?.setColorMode(e),ew(e)},eU=(e,t)=>{null!==eA.current&&window.clearTimeout(eA.current);let r=e=>{eF(e),eA.current=window.setTimeout(()=>eF({tag:"idle"}),1500)};/**
+ * κ for the clipboard API. Some contexts (plain http:, old webviews, locked-
+ * down embeds) do not expose it at all, and that has to reach the button as a
+ * rejected promise — not as a TypeError thrown out of a click handler.
+ */(function(e){let t=navigator.clipboard;return t?t.writeText(e):Promise.reject(Error("navigator.clipboard is unavailable (needs a secure context)"))})(t).then(()=>r({tag:"copied",target:e}),t=>{console.warn(`[dock] clipboard write failed — ${String(t)}`),r({tag:"failed",target:e})})},eW=P(eE,"link","COPY LINK"),eq=P(eE,"json","JSON");return/*#__PURE__*/(0,n.jsxs)("main",{className:"art-shell",children:[/*#__PURE__*/(0,n.jsx)("canvas",{ref:e,id:"myCanvas","aria-label":"Neural force-field artwork"}),/*#__PURE__*/(0,n.jsxs)("aside",{className:"hud-stack","aria-label":"Performance and piece controls",children:[/*#__PURE__*/(0,n.jsxs)("div",{className:"telemetry-panel","data-testid":"telemetry-panel","data-collapsed":eg?"false":"true",children:[/*#__PURE__*/(0,n.jsxs)("button",{type:"button",className:"hud-toggle","aria-expanded":eg,"aria-controls":"telemetry-host","data-testid":"telemetry-toggle",title:eg?"Hide telemetry":"Show telemetry",onClick:()=>ex(e=>!e),children:[/*#__PURE__*/(0,n.jsx)("span",{className:"hud-toggle-title",children:"fps \xb7 telemetry"}),/*#__PURE__*/(0,n.jsx)("span",{className:"hud-caret","aria-hidden":"true",children:eg?"▾":"▸"})]}),/*#__PURE__*/(0,n.jsx)("div",{ref:t,id:"telemetry-host",className:"telemetry-host","data-testid":"telemetry-host","aria-live":"polite"})]}),/*#__PURE__*/(0,n.jsxs)("div",{className:"config-dock",id:"piece-config-dock","data-testid":"piece-config-dock","data-collapsed":ev?"false":"true",children:[/*#__PURE__*/(0,n.jsx)("header",{className:"dock-header","aria-label":`Controls for ${eD.name}`,children:/*#__PURE__*/(0,n.jsxs)("button",{type:"button",className:"hud-toggle","aria-expanded":ev,"aria-controls":"piece-config-dock","data-testid":"piece-config-toggle",title:`${eD.name} — ${ev?"hide":"show"} controls`,onClick:()=>ey(e=>!e),children:[/*#__PURE__*/(0,n.jsx)("span",{className:"dock-piece",children:eD.name}),/*#__PURE__*/(0,n.jsx)("span",{className:"hud-caret","aria-hidden":"true",children:ev?"▾":"▸"})]})}),/*#__PURE__*/(0,n.jsxs)(O,{title:"share",testid:"share-controls",children:[/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-segment-row","data-testid":"share-row",children:[/*#__PURE__*/(0,n.jsx)("span",{className:"tui-label",children:"export"}),/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-segments",children:[/*#__PURE__*/(0,n.jsx)("button",{type:"button",className:"tui-chip","data-testid":"copy-link-button","data-flash":eW.flash,title:"Copy a link that reproduces every dial in this dock",onClick:()=>eU("link",/** Every dial in the dock, as a link back to this page. */function(e){let t=`${window.location.origin}${window.location.pathname}`;return`${t}?${y}=${(0,u.encodeDockParam)(D(e))}`}(eG)),children:eW.label}),/*#__PURE__*/(0,n.jsx)("button",{type:"button",className:"tui-chip share-secondary","data-testid":"copy-json-button","data-flash":eq.flash,title:"Copy the raw settings blob — durable sharing, bug reports",onClick:()=>eU("json",JSON.stringify(D(eG),null,2)),children:eq.label})]})]}),/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note",children:"?dock= carries every dial \xb7 piece resolved by name"})]}),/*#__PURE__*/(0,n.jsxs)(O,{title:"simulation",testid:"simulation-controls",children:[/*#__PURE__*/(0,n.jsx)(B,{label:"particles",value:I(F),min:0,max:1,step:.002,display:F.toLocaleString(),testid:"particles-control",onChange:e=>{let t=j(e);A(t),r.current?.setParticleCount(t)}}),/*#__PURE__*/(0,n.jsx)(B,{label:"train B",value:$,min:i.TRAIN_BATCH_MIN,max:q,step:16,display:`${$}`,testid:"samples-control",onChange:e=>{W(e),r.current?.setSampleRate(e)}}),/*#__PURE__*/(0,n.jsx)(B,{label:"max vel",value:K,min:.25,max:80,step:.25,display:K.toFixed(1),testid:"max-velocity-control",onChange:e=>{Y(e),r.current?.setMaxVelocity(e)}}),e$&&void 0!==eD.drive&&/*#__PURE__*/(0,n.jsx)(B,{label:"drive",value:X,min:0,max:1,step:.01,display:`${X.toFixed(2)}\xd7 clip`,testid:"drive-control",onChange:e=>{Z(e),r.current?.setDrive(e)}}),/*#__PURE__*/(0,n.jsx)(B,{label:"respawn",value:er,min:0,max:.05,step:.001,display:`${(100*er).toFixed(1)}%`,testid:"random-reset-control",onChange:e=>{es(e),r.current?.setResetRate(e)}}),/*#__PURE__*/(0,n.jsx)(z,{label:"border",value:N.border.tag,testid:"border-control",choices:[{value:"wrap",label:"WRAP",title:"Periodic torus"},{value:"bounce",label:"BOUNCE",title:"Reflect at the box edge"},{value:"reset",label:"RESET",title:"Respawn when leaving the box"}],onChange:e=>E(t=>({...t,border:{tag:e}}))}),/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note restart-note",children:"border is compiled \xb7 changing it restarts"})]}),/*#__PURE__*/(0,n.jsxs)(O,{title:"ink",testid:"ink-controls",children:[eD.lookEditable&&/*#__PURE__*/(0,n.jsx)(z,{label:"look",value:eo,testid:"ink-look-control",choices:[{value:"ghost",label:"GHOST",title:"Soft alpha trails"},{value:"clean",label:"CLEAN",title:"No trails"},{value:"trails",label:"TRAILS",title:"Long streak persistence"}],onChange:e=>{let t=i.INK_LOOK_DECAY[e];ei(e),ea(t),r.current?.setDecay(t)}}),/*#__PURE__*/(0,n.jsx)(B,{label:"trails",value:en,min:0,max:.99,step:.005,display:en.toFixed(2),testid:"trails-control",onChange:e=>{ea(e),r.current?.setDecay(e)}}),/*#__PURE__*/(0,n.jsx)(z,{label:"stroke",value:ep,testid:"stroke-style-control",choices:[{value:"dot",label:"DOT"},{value:"vel",label:"VEL"},{value:"curl",label:"CURL"}],onChange:e=>{ec(e),r.current?.setStrokeStyle(e)}}),"dot"!==ep&&/*#__PURE__*/(0,n.jsx)(B,{label:"length",value:ed,min:.5,max:16,step:.5,display:ed.toFixed(1),testid:"stroke-length-control",onChange:e=>{eh(e),r.current?.setStrokeLength(e)}})]}),eD.fieldArch&&/*#__PURE__*/(0,n.jsxs)(O,{title:"model",testid:"model-arch-controls",children:[/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-note","data-testid":"model-arch-summary",children:[(0,i.describeFieldArch)(eP??eD.fieldArch),eD.fieldLoss?"":" \xb7 train tfjs"]}),eD.archEditable&&/*#__PURE__*/(0,n.jsx)(z,{label:"arch",value:N.archPreset??"default",choices:[{value:"default",label:"default"},...eR.map(e=>({value:e.key,label:e.label}))],onChange:e=>E(t=>({...t,archPreset:"default"===e?null:e})),testid:"model-arch-presets"}),eD.archEditable&&/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note restart-note",children:"arch is compiled \xb7 changing it restarts"})]}),eM&&/*#__PURE__*/(0,n.jsxs)(O,{title:eO?"A/B/C roles":"two-head field",testid:"field-controls",children:[/*#__PURE__*/(0,n.jsx)(B,{label:eO?"blend C":"blend A/B",value:el,min:0,max:1,step:.01,display:el.toFixed(2),testid:"head-blend-control",onChange:e=>{eu(e),r.current?.setBlend(e)}}),eO?/*#__PURE__*/(0,n.jsxs)("div",{className:"rgb-role-legend","data-testid":"rgb-role-legend",children:[/*#__PURE__*/(0,n.jsx)("span",{className:"role-a",children:"R \xb7 A disagree"}),/*#__PURE__*/(0,n.jsx)("span",{className:"role-b",children:"G \xb7 B agree"}),/*#__PURE__*/(0,n.jsx)("span",{className:"role-c",children:"B \xb7 C blend (no loss)"})]}):/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note",children:"neutral output mix — not order ↔ chaos"})]}),e$&&/*#__PURE__*/(0,n.jsxs)(O,{title:"adversary",testid:"adversary-controls",children:[/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row","data-testid":"objective-contract",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"objective"}),/*#__PURE__*/(0,n.jsx)("strong",{children:"angle-scale-hold"===N.loss.tag?"ANGLE OPPOSE \xb7 SCALE AGREE":"angle-relative-scale"===N.loss.tag?"ANGLE + SCALE OPPOSE \xb7 ENERGY HOLD":eO?"A OPPOSE \xb7 B COOPERATE":ez?"GAME + MAX CHAOS":"raw-vector"===N.loss.tag?"RAW VECTOR \xb7 BASELINE":"ANGLE OPPONENT GAME"})]}),/*#__PURE__*/(0,n.jsx)(z,{label:"target",value:N.target.tag,testid:"adversary-target-control",choices:[{value:"force",label:"FORCE",title:"Predict raw neural field output F(x)"},{value:"post-velocity",label:"POST-V",title:"Predict normalized velocity after force, friction and clip; context includes incoming velocity"}],onChange:e=>E(t=>{let r={tag:e};return"post-velocity"===e?{...t,target:r,encoding:{tag:"point"},loss:w(t.loss)?_("soft-angle",t.loss):t.loss}:{...t,target:r}})}),/*#__PURE__*/(0,n.jsx)(z,{label:"loss",value:N.loss.tag,testid:"adversary-loss-control",choices:[{value:"raw-vector",label:"RAW",title:"Euclidean ‖ŷ−y‖ — easy baseline (amplitude shortcut OK). Compare to ANGLE."},{value:"soft-angle",label:"ANGLE",title:"Exact smooth S\xb2 chord loss with bounded Jacobian"},{value:"angle-relative-scale",label:"A+S ADV",title:"Adversarial direction and relative magnitude contrast"},{value:"angle-scale-hold",label:"A+S HOLD",title:"Direction adversarial; relative scale cooperative; absolute energy held"}],onChange:e=>E(t=>{let r=_(e,t.loss);return w(r)?{...t,target:{tag:"force"},encoding:"point"===t.encoding.tag?{tag:"pair-rotation-scale-adjusted"}:t.encoding,loss:r}:{...t,loss:r}})}),"raw-vector"!==N.loss.tag&&/*#__PURE__*/(0,n.jsx)(B,{label:"soft τ",value:N.loss.tau,min:.005,max:.25,step:.005,display:N.loss.tau.toFixed(3),testid:"adversary-angle-tau-control",onChange:e=>E(t=>({...t,loss:"raw-vector"===t.loss.tag?t.loss:{...t.loss,tau:e}}))}),w(N.loss)&&/*#__PURE__*/(0,n.jsxs)(n.Fragment,{children:[/*#__PURE__*/(0,n.jsx)(B,{label:"scale w",value:N.loss.scaleWeight,min:0,max:2,step:.05,display:N.loss.scaleWeight.toFixed(2),testid:"adversary-scale-weight-control",onChange:e=>E(t=>({...t,loss:w(t.loss)?{...t.loss,scaleWeight:e}:t.loss}))}),/*#__PURE__*/(0,n.jsx)(B,{label:"energy w",value:N.loss.energyWeight,min:0,max:1,step:.01,display:N.loss.energyWeight.toFixed(2),testid:"adversary-energy-weight-control",onChange:e=>E(t=>({...t,loss:w(t.loss)?{...t.loss,energyWeight:e}:t.loss}))}),/*#__PURE__*/(0,n.jsx)(B,{label:"energy",value:N.loss.energyTarget,min:.02,max:1,step:.01,display:N.loss.energyTarget.toFixed(2),testid:"adversary-energy-target-control",onChange:e=>E(t=>({...t,loss:w(t.loss)?{...t.loss,energyTarget:e}:t.loss}))})]}),"post-velocity"===N.target.tag&&/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note","data-testid":"post-velocity-contract",children:"context = x + incoming v \xb7 target is pre-border normalized v+"}),w(N.loss)&&/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note","data-testid":"relative-scale-contract",children:"scale = within-tuple contrast \xb7 energy fixes absolute RMS"}),"angle-scale-hold"===N.loss.tag&&/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note","data-testid":"scale-hold-diagnostic-contract",children:"displayed D-joint is not G reward \xb7 G raises angle, lowers scale error"}),/*#__PURE__*/(0,n.jsx)(z,{label:"tuple",value:function(e){switch(e.tag){case"point":return"point";case"pair":case"pair-rotation":case"pair-rotation-scale-raw":case"pair-rotation-scale-adjusted":return"pair";case"tri":return"tri";case"quad-labelled":return"quad-labelled"}}(N.encoding),testid:"adversary-tuple-control",choices:[{value:"point",label:"1 \xb7 POINT"},{value:"pair",label:"2 \xb7 PAIR"},{value:"tri",label:"3 \xb7 TRI"},{value:"quad-labelled",label:"4L \xb7 QUAD",title:"Four labelled points; translation+rotation quotient only"}],onChange:e=>E(t=>{let r=function(e,t){switch(e){case"point":return{tag:"point"};case"pair":// Preserve the selected pair quotient. Entering pair mode from another
     // arity chooses the scale-adjusted observer (flagship), not raw
     // pair-rotation (the easier amplitude-baseline observer).
-    return C(t)?t:{tag:"pair-rotation-scale-adjusted"};case"tri":return{tag:"tri"};case"quad-labelled":return{tag:"quad-labelled"}}}(e,t.encoding);return{...t,encoding:r,target:"point"===e?t.target:{tag:"force"},loss:"point"===e&&b(t.loss)?y("soft-angle",t.loss):t.loss}})}),eA?/*#__PURE__*/(0,n.jsx)(E,{label:"observer",value:eA,testid:"adversary-view-control",choices:[{value:"rotation",label:"R",title:"Quotient translation and rotation; keep scale observable"},{value:"rotation-scale-raw",label:"R+S RAW",title:"Scale-blind context; selecting it also chooses the raw-vector cheat control"},{value:"rotation-scale-adjusted",label:"R+S ADJ",title:"Same scale-blind context; selecting it chooses exact smooth soft-angle"}],onChange:e=>M(t=>({...t,encoding:function(e){switch(e){case"rotation":return{tag:"pair-rotation"};case"rotation-scale-raw":return{tag:"pair-rotation-scale-raw"};case"rotation-scale-adjusted":return{tag:"pair-rotation-scale-adjusted"}}}(e),loss:"rotation-scale-raw"===e?y("raw-vector",t.loss):"rotation-scale-adjusted"===e?y("soft-angle",t.loss):t.loss}))}):/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row","data-testid":"adversary-view-control",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"observer"}),/*#__PURE__*/(0,n.jsx)("strong",{children:function(e,t){switch(e.tag){case"point":return"post-velocity"===t.tag?"POINT \xb7 absolute x + incoming v → pre-border v+":"POINT \xb7 absolute x → F(x)";case"pair":case"pair-rotation":return"PAIR \xb7 rotation quotient";case"pair-rotation-scale-raw":return"PAIR \xb7 similarity-blind context, raw preset";case"pair-rotation-scale-adjusted":return"PAIR \xb7 similarity-blind context, angle preset";case"tri":return"TRI \xb7 unordered E(2); ties inactive";case"quad-labelled":return"QUAD-L \xb7 labelled rotation quotient; raw scale"}}(P.encoding,P.target)})]}),/*#__PURE__*/(0,n.jsx)(N,{label:"angle-scale-hold"===P.loss.tag?"game w":"reward",value:el,min:f,max:m,step:5e-4,display:el.toFixed(3),testid:"adversary-reward-control",onChange:e=>{eu(e),r.current?.setAdversaryWeight(e)}}),/*#__PURE__*/(0,n.jsx)(N,{label:"G lr",value:w(q,p,c),min:0,max:1,step:.005,display:q.toExponential(1),testid:"generator-learning-rate-control",onChange:e=>{let t=I(e,p,c);H(t),r.current?.setGeneratorLearningRate(t)}}),/*#__PURE__*/(0,n.jsx)(N,{label:"D lr",value:w(K,d,h),min:0,max:1,step:.005,display:K.toExponential(1),testid:"discriminator-learning-rate-control",onChange:e=>{let t=I(e,d,h);Y(t),r.current?.setDiscriminatorLearningRate(t)}}),/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row","data-testid":"learning-rate-ratio",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"D / G"}),/*#__PURE__*/(0,n.jsxs)("strong",{children:[(K/q).toFixed(2),"\xd7"]})]}),eE?/*#__PURE__*/(0,n.jsxs)(n.Fragment,{children:[/*#__PURE__*/(0,n.jsx)(N,{label:"guesses K",value:P.k,min:2,max:12,step:1,display:`${P.k}`,testid:"adversary-k-control",onChange:e=>M(t=>({...t,k:Math.round(e)}))}),/*#__PURE__*/(0,n.jsx)(N,{label:"relax ε",value:P.relaxEps,min:0,max:.45,step:.01,display:P.relaxEps.toFixed(2),testid:"adversary-epsilon-control",onChange:e=>M(t=>({...t,relaxEps:e}))})]}):/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"predictor"}),/*#__PURE__*/(0,n.jsx)("strong",{children:"single-head control"})]}),/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note restart-note",children:"target, loss, tuple, observer, K and ε rebuild GPU pipelines"}),eN?/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row","data-testid":"color-mode-control",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"color"}),/*#__PURE__*/(0,n.jsx)("strong",{children:"RGB \xb7 A / B / derived C"})]}):/*#__PURE__*/(0,n.jsx)(E,{label:"color",value:eg.tag,testid:"color-mode-control",choices:[{value:"velocity",label:"VEL"},{value:"surprise-raw",label:"RAW"},{value:"surprise-per-unit",label:"PER UNIT"}],onChange:e=>eD("velocity"===e?{tag:"velocity"}:{tag:e,colormap:"velocity"!==eg.tag?eg.colormap:"inferno"})}),!eN&&"velocity"!==eg.tag&&/*#__PURE__*/(0,n.jsx)(E,{label:"map",value:eg.colormap,testid:"colormap-control",choices:u.map(e=>({value:e,label:e.toUpperCase()})),onChange:e=>eD({...eg,colormap:e})})]}),ej&&/*#__PURE__*/(0,n.jsxs)(T,{title:"diagnostics",testid:"adversary-diagnostics",children:["on"===ef.tag?/*#__PURE__*/(0,n.jsxs)(n.Fragment,{children:[/*#__PURE__*/(0,n.jsxs)("div",{className:"diagnostic-row","data-testid":"disc-loss-chart",children:[/*#__PURE__*/(0,n.jsx)("span",{className:"diagnostic-name",title:"Discriminator objective (minimize)",children:"D loss"}),/*#__PURE__*/(0,n.jsx)(A,{label:"discriminator loss",data:eb,smoothed:F(eb,.08)}),/*#__PURE__*/(0,n.jsx)("strong",{children:ef.predLoss.toExponential(2)})]}),/*#__PURE__*/(0,n.jsxs)("div",{className:"diagnostic-row","data-testid":"gen-loss-chart",children:[/*#__PURE__*/(0,n.jsx)("span",{className:"diagnostic-name",title:"Generator payoff / residual (disagree maximizes)",children:"G residual"}),/*#__PURE__*/(0,n.jsx)(A,{label:"generator residual",data:e_,smoothed:F(e_,.08)}),/*#__PURE__*/(0,n.jsx)("strong",{children:ef.surprise.toExponential(2)})]}),/*#__PURE__*/(0,n.jsxs)("div",{className:"chart-legend","aria-hidden":"true",children:["dim=raw \xb7 bright=EMA \xb7 ~",Math.round(1.2),"m window"]}),/*#__PURE__*/(0,n.jsxs)("div",{className:"diagnostic-row",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"heads"}),/*#__PURE__*/(0,n.jsx)(D,{fractions:ef.winFractions}),/*#__PURE__*/(0,n.jsx)("strong",{className:`health health-${ef.health.tag}`,"data-testid":"head-health",children:$(ef.health)})]}),ef.branches&&/*#__PURE__*/(0,n.jsxs)(n.Fragment,{children:[/*#__PURE__*/(0,n.jsxs)("div",{className:"diagnostic-row","data-testid":"disagree-head-health",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"A disagree"}),/*#__PURE__*/(0,n.jsx)(D,{fractions:ef.branches.disagree.winFractions}),/*#__PURE__*/(0,n.jsx)("strong",{className:`health health-${ef.branches.disagree.health.tag}`,children:$(ef.branches.disagree.health)})]}),/*#__PURE__*/(0,n.jsxs)("div",{className:"diagnostic-row","data-testid":"agree-head-health",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"B agree"}),/*#__PURE__*/(0,n.jsx)(D,{fractions:ef.branches.agree.winFractions}),/*#__PURE__*/(0,n.jsx)("strong",{className:`health health-${ef.branches.agree.health.tag}`,children:$(ef.branches.agree.health)})]})]})]}):/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"game"}),/*#__PURE__*/(0,n.jsx)("strong",{children:"initialising…"})]}),"velocity"!==eg.tag&&ev&&/*#__PURE__*/(0,n.jsxs)("div",{className:"span-readout","data-testid":"surprise-span",children:["surprise-raw"===eg.tag?"RAW":"PER UNIT"," \xb7 p2"," ",ev.lo.toExponential(1)," \xb7 p98"," ",ev.hi.toExponential(1)," \xb7"," ",Math.round(100*ev.covered),"%",ev.collapsed?" \xb7 FLAT":""]})]})]})]}),/*#__PURE__*/(0,n.jsx)("nav",{className:"gallery-radio",role:"radiogroup","aria-label":"Art piece","data-testid":"art-piece-gallery",children:(0,i.GALLERY).map((e,t)=>/*#__PURE__*/(0,n.jsx)("button",{type:"button",role:"radio","aria-checked":t===P.piece,"data-active":t===P.piece?"true":"false",onClick:()=>M(e=>/** Switch gallery piece without wiping dock dials. */(function(e,t){if(e.piece===t)return e;let r=j(t);// Re-adopt the piece's baked observer + loss + target + K/ε. Those are the
+    return M(t)?t:{tag:"pair-rotation-scale-adjusted"};case"tri":return{tag:"tri"};case"quad-labelled":return{tag:"quad-labelled"}}}(e,t.encoding);return{...t,encoding:r,target:"point"===e?t.target:{tag:"force"},loss:"point"===e&&w(t.loss)?_("soft-angle",t.loss):t.loss}})}),eL?/*#__PURE__*/(0,n.jsx)(z,{label:"observer",value:eL,testid:"adversary-view-control",choices:[{value:"rotation",label:"R",title:"Quotient translation and rotation; keep scale observable"},{value:"rotation-scale-raw",label:"R+S RAW",title:"Scale-blind context; selecting it also chooses the raw-vector cheat control"},{value:"rotation-scale-adjusted",label:"R+S ADJ",title:"Same scale-blind context; selecting it chooses exact smooth soft-angle"}],onChange:e=>E(t=>({...t,encoding:function(e){switch(e){case"rotation":return{tag:"pair-rotation"};case"rotation-scale-raw":return{tag:"pair-rotation-scale-raw"};case"rotation-scale-adjusted":return{tag:"pair-rotation-scale-adjusted"}}}(e),loss:"rotation-scale-raw"===e?_("raw-vector",t.loss):"rotation-scale-adjusted"===e?_("soft-angle",t.loss):t.loss}))}):/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row","data-testid":"adversary-view-control",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"observer"}),/*#__PURE__*/(0,n.jsx)("strong",{children:function(e,t){switch(e.tag){case"point":return"post-velocity"===t.tag?"POINT \xb7 absolute x + incoming v → pre-border v+":"POINT \xb7 absolute x → F(x)";case"pair":case"pair-rotation":return"PAIR \xb7 rotation quotient";case"pair-rotation-scale-raw":return"PAIR \xb7 similarity-blind context, raw preset";case"pair-rotation-scale-adjusted":return"PAIR \xb7 similarity-blind context, angle preset";case"tri":return"TRI \xb7 unordered E(2); ties inactive";case"quad-labelled":return"QUAD-L \xb7 labelled rotation quotient; raw scale"}}(N.encoding,N.target)})]}),/*#__PURE__*/(0,n.jsx)(B,{label:"angle-scale-hold"===N.loss.tag?"game w":"reward",value:ef,min:g,max:x,step:5e-4,display:ef.toFixed(3),testid:"adversary-reward-control",onChange:e=>{em(e),r.current?.setAdversaryWeight(e)}}),/*#__PURE__*/(0,n.jsx)(B,{label:"G lr",value:S(J,d,h),min:0,max:1,step:.005,display:J.toExponential(1),testid:"generator-learning-rate-control",onChange:e=>{let t=C(e,d,h);Q(t),r.current?.setGeneratorLearningRate(t)}}),/*#__PURE__*/(0,n.jsx)(B,{label:"D lr",value:S(ee,f,m),min:0,max:1,step:.005,display:ee.toExponential(1),testid:"discriminator-learning-rate-control",onChange:e=>{let t=C(e,f,m);et(t),r.current?.setDiscriminatorLearningRate(t)}}),/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row","data-testid":"learning-rate-ratio",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"D / G"}),/*#__PURE__*/(0,n.jsxs)("strong",{children:[(ee/J).toFixed(2),"\xd7"]})]}),eB?/*#__PURE__*/(0,n.jsxs)(n.Fragment,{children:[/*#__PURE__*/(0,n.jsx)(B,{label:"guesses K",value:N.k,min:2,max:12,step:1,display:`${N.k}`,testid:"adversary-k-control",onChange:e=>E(t=>({...t,k:Math.round(e)}))}),/*#__PURE__*/(0,n.jsx)(B,{label:"relax ε",value:N.relaxEps,min:0,max:.45,step:.01,display:N.relaxEps.toFixed(2),testid:"adversary-epsilon-control",onChange:e=>E(t=>({...t,relaxEps:e}))})]}):/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"predictor"}),/*#__PURE__*/(0,n.jsx)("strong",{children:"single-head control"})]}),/*#__PURE__*/(0,n.jsx)("p",{className:"tui-note restart-note",children:"target, loss, tuple, observer, K and ε rebuild GPU pipelines"}),eO?/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row","data-testid":"color-mode-control",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"color"}),/*#__PURE__*/(0,n.jsx)("strong",{children:"RGB \xb7 A / B / derived C"})]}):/*#__PURE__*/(0,n.jsx)(z,{label:"color",value:e_.tag,testid:"color-mode-control",choices:[{value:"velocity",label:"VEL"},{value:"surprise-raw",label:"RAW"},{value:"surprise-per-unit",label:"PER UNIT"}],onChange:e=>eV("velocity"===e?{tag:"velocity"}:{tag:e,colormap:"velocity"!==e_.tag?e_.colormap:"inferno"})}),!eO&&"velocity"!==e_.tag&&/*#__PURE__*/(0,n.jsx)(z,{label:"map",value:e_.colormap,testid:"colormap-control",choices:c.map(e=>({value:e,label:e.toUpperCase()})),onChange:e=>eV({...e_,colormap:e})})]}),e$&&/*#__PURE__*/(0,n.jsxs)(O,{title:"diagnostics",testid:"adversary-diagnostics",children:["on"===eb.tag?/*#__PURE__*/(0,n.jsxs)(n.Fragment,{children:[/*#__PURE__*/(0,n.jsxs)("div",{className:"diagnostic-row","data-testid":"disc-loss-chart",children:[/*#__PURE__*/(0,n.jsx)("span",{className:"diagnostic-name",title:"Discriminator objective (minimize)",children:"D loss"}),/*#__PURE__*/(0,n.jsx)(G,{label:"discriminator loss",data:eS,smoothed:L(eS,.08)}),/*#__PURE__*/(0,n.jsx)("strong",{children:eb.predLoss.toExponential(2)})]}),/*#__PURE__*/(0,n.jsxs)("div",{className:"diagnostic-row","data-testid":"gen-loss-chart",children:[/*#__PURE__*/(0,n.jsx)("span",{className:"diagnostic-name",title:"Generator payoff / residual (disagree maximizes)",children:"G residual"}),/*#__PURE__*/(0,n.jsx)(G,{label:"generator residual",data:eT,smoothed:L(eT,.08)}),/*#__PURE__*/(0,n.jsx)("strong",{children:eb.surprise.toExponential(2)})]}),/*#__PURE__*/(0,n.jsxs)("div",{className:"chart-legend","aria-hidden":"true",children:["dim=raw \xb7 bright=EMA \xb7 ~",Math.round(1.2),"m window"]}),/*#__PURE__*/(0,n.jsxs)("div",{className:"diagnostic-row",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"heads"}),/*#__PURE__*/(0,n.jsx)(V,{fractions:eb.winFractions}),/*#__PURE__*/(0,n.jsx)("strong",{className:`health health-${eb.health.tag}`,"data-testid":"head-health",children:U(eb.health)})]}),eb.branches&&/*#__PURE__*/(0,n.jsxs)(n.Fragment,{children:[/*#__PURE__*/(0,n.jsxs)("div",{className:"diagnostic-row","data-testid":"disagree-head-health",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"A disagree"}),/*#__PURE__*/(0,n.jsx)(V,{fractions:eb.branches.disagree.winFractions}),/*#__PURE__*/(0,n.jsx)("strong",{className:`health health-${eb.branches.disagree.health.tag}`,children:U(eb.branches.disagree.health)})]}),/*#__PURE__*/(0,n.jsxs)("div",{className:"diagnostic-row","data-testid":"agree-head-health",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"B agree"}),/*#__PURE__*/(0,n.jsx)(V,{fractions:eb.branches.agree.winFractions}),/*#__PURE__*/(0,n.jsx)("strong",{className:`health health-${eb.branches.agree.health.tag}`,children:U(eb.branches.agree.health)})]})]})]}):/*#__PURE__*/(0,n.jsxs)("div",{className:"tui-static-row",children:[/*#__PURE__*/(0,n.jsx)("span",{children:"game"}),/*#__PURE__*/(0,n.jsx)("strong",{children:"initialising…"})]}),"velocity"!==e_.tag&&eI&&/*#__PURE__*/(0,n.jsxs)("div",{className:"span-readout","data-testid":"surprise-span",children:["surprise-raw"===e_.tag?"RAW":"PER UNIT"," \xb7 p2"," ",eI.lo.toExponential(1)," \xb7 p98"," ",eI.hi.toExponential(1)," \xb7"," ",Math.round(100*eI.covered),"%",eI.collapsed?" \xb7 FLAT":""]})]})]})]}),/*#__PURE__*/(0,n.jsx)("nav",{className:"gallery-radio",role:"radiogroup","aria-label":"Art piece","data-testid":"art-piece-gallery",children:(0,i.GALLERY).map((e,t)=>/*#__PURE__*/(0,n.jsx)("button",{type:"button",role:"radio","aria-checked":t===N.piece,"data-active":t===N.piece?"true":"false",onClick:()=>E(e=>/** Switch gallery piece without wiping dock dials. */(function(e,t){if(e.piece===t)return e;let r=T(t);// Re-adopt the piece's baked observer + loss + target + K/ε. Those are the
             // didactic identity of each gallery entry (Pair = soft-angle, Quad =
             // raw-vector K=6, …). Keeping loss across switches used to strand Pair on
             // RAW after a Quad visit — Euclidean amplitude games go diagonal and look
@@ -58,7 +122,7 @@ ek(e=>e.concat(t.predLoss).slice(-360)),ew(e=>e.concat(t.surprise).slice(-360)))
             // (particles, LRs, drive, trails, …) stay in React state outside this
             // object and are re-synced from the new piece on gallery switch.
             return{...e,piece:t,encoding:r.encoding,target:r.target,loss:r.loss,adversaryKind:r.adversaryKind,k:r.k,relaxEps:r.relaxEps,// Don't carry an aesthetic arch preset onto a locked game piece.
-            archPreset:null}})(e,t)),children:e.name},e.name))})]})},{}))},{"react/jsx-runtime":"gaGEj",react:"6uln9","react-dom/client":"5ccwt","./main":"bZSZC","./ui.css":"fjpTf","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],gaGEj:[function(e,t,r){t.exports=e("e5e9711c2edf1a4e")},{e5e9711c2edf1a4e:"kbpKW"}],kbpKW:[function(e,t,r){var s=e("3fd2a064dc1f3641"),n=Symbol.for("react.element"),a=Symbol.for("react.fragment"),o=Object.prototype.hasOwnProperty,i=s.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentOwner,l={key:!0,ref:!0,__self:!0,__source:!0};function u(e,t,r){var s,a={},u=null,p=null;for(s in void 0!==r&&(u=""+r),void 0!==t.key&&(u=""+t.key),void 0!==t.ref&&(p=t.ref),t)o.call(t,s)&&!l.hasOwnProperty(s)&&(a[s]=t[s]);if(e&&e.defaultProps)for(s in t=e.defaultProps)void 0===a[s]&&(a[s]=t[s]);return{$$typeof:n,type:e,key:u,ref:p,props:a,_owner:i.current}}r.Fragment=a,r.jsx=u,r.jsxs=u},{"3fd2a064dc1f3641":"6uln9"}],"6uln9":[function(e,t,r){t.exports=e("956f36295e4e0134")},{"956f36295e4e0134":"8n7Eb"}],"8n7Eb":[function(e,t,r){var s=Symbol.for("react.element"),n=Symbol.for("react.portal"),a=Symbol.for("react.fragment"),o=Symbol.for("react.strict_mode"),i=Symbol.for("react.profiler"),l=Symbol.for("react.provider"),u=Symbol.for("react.context"),p=Symbol.for("react.forward_ref"),c=Symbol.for("react.suspense"),d=Symbol.for("react.memo"),h=Symbol.for("react.lazy"),f=Symbol.iterator,m={isMounted:function(){return!1},enqueueForceUpdate:function(){},enqueueReplaceState:function(){},enqueueSetState:function(){}},g=Object.assign,x={};function v(e,t,r){this.props=e,this.context=t,this.refs=x,this.updater=r||m}function y(){}function b(e,t,r){this.props=e,this.context=t,this.refs=x,this.updater=r||m}v.prototype.isReactComponent={},v.prototype.setState=function(e,t){if("object"!=typeof e&&"function"!=typeof e&&null!=e)throw Error("setState(...): takes an object of state variables to update or a function which returns an object of state variables.");this.updater.enqueueSetState(this,e,t,"setState")},v.prototype.forceUpdate=function(e){this.updater.enqueueForceUpdate(this,e,"forceUpdate")},y.prototype=v.prototype;var k=b.prototype=new y;k.constructor=b,g(k,v.prototype),k.isPureReactComponent=!0;var _=Array.isArray,w=Object.prototype.hasOwnProperty,I={current:null},j={key:!0,ref:!0,__self:!0,__source:!0};function S(e,t,r){var n,a={},o=null,i=null;if(null!=t)for(n in void 0!==t.ref&&(i=t.ref),void 0!==t.key&&(o=""+t.key),t)w.call(t,n)&&!j.hasOwnProperty(n)&&(a[n]=t[n]);var l=arguments.length-2;if(1===l)a.children=r;else if(1<l){for(var u=Array(l),p=0;p<l;p++)u[p]=arguments[p+2];a.children=u}if(e&&e.defaultProps)for(n in l=e.defaultProps)void 0===a[n]&&(a[n]=l[n]);return{$$typeof:s,type:e,key:o,ref:i,props:a,_owner:I.current}}function C(e){return"object"==typeof e&&null!==e&&e.$$typeof===s}var T=/\/+/g;function N(e,t){var r,s;return"object"==typeof e&&null!==e&&null!=e.key?(r=""+e.key,s={"=":"=0",":":"=2"},"$"+r.replace(/[=:]/g,function(e){return s[e]})):t.toString(36)}function E(e,t,r){if(null==e)return e;var a=[],o=0;return!function e(t,r,a,o,i){var l,u,p,c=typeof t;("undefined"===c||"boolean"===c)&&(t=null);var d=!1;if(null===t)d=!0;else switch(c){case"string":case"number":d=!0;break;case"object":switch(t.$$typeof){case s:case n:d=!0}}if(d)return i=i(d=t),t=""===o?"."+N(d,0):o,_(i)?(a="",null!=t&&(a=t.replace(T,"$&/")+"/"),e(i,r,a,"",function(e){return e})):null!=i&&(C(i)&&(l=i,u=a+(!i.key||d&&d.key===i.key?"":(""+i.key).replace(T,"$&/")+"/")+t,i={$$typeof:s,type:l.type,key:u,ref:l.ref,props:l.props,_owner:l._owner}),r.push(i)),1;if(d=0,o=""===o?".":o+":",_(t))for(var h=0;h<t.length;h++){var m=o+N(c=t[h],h);d+=e(c,r,a,m,i)}else if("function"==typeof(m=null===(p=t)||"object"!=typeof p?null:"function"==typeof(p=f&&p[f]||p["@@iterator"])?p:null))for(t=m.call(t),h=0;!(c=t.next()).done;)m=o+N(c=c.value,h++),d+=e(c,r,a,m,i);else if("object"===c)throw Error("Objects are not valid as a React child (found: "+("[object Object]"===(r=String(t))?"object with keys {"+Object.keys(t).join(", ")+"}":r)+"). If you meant to render a collection of children, use an array instead.");return d}(e,a,"","",function(e){return t.call(r,e,o++)}),a}function F(e){if(-1===e._status){var t=e._result;(t=t()).then(function(t){(0===e._status||-1===e._status)&&(e._status=1,e._result=t)},function(t){(0===e._status||-1===e._status)&&(e._status=2,e._result=t)}),-1===e._status&&(e._status=0,e._result=t)}if(1===e._status)return e._result.default;throw e._result}var A={current:null},D={transition:null};r.Children={map:E,forEach:function(e,t,r){E(e,function(){t.apply(this,arguments)},r)},count:function(e){var t=0;return E(e,function(){t++}),t},toArray:function(e){return E(e,function(e){return e})||[]},only:function(e){if(!C(e))throw Error("React.Children.only expected to receive a single React element child.");return e}},r.Component=v,r.Fragment=a,r.Profiler=i,r.PureComponent=b,r.StrictMode=o,r.Suspense=c,r.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED={ReactCurrentDispatcher:A,ReactCurrentBatchConfig:D,ReactCurrentOwner:I},r.cloneElement=function(e,t,r){if(null==e)throw Error("React.cloneElement(...): The argument must be a React element, but you passed "+e+".");var n=g({},e.props),a=e.key,o=e.ref,i=e._owner;if(null!=t){if(void 0!==t.ref&&(o=t.ref,i=I.current),void 0!==t.key&&(a=""+t.key),e.type&&e.type.defaultProps)var l=e.type.defaultProps;for(u in t)w.call(t,u)&&!j.hasOwnProperty(u)&&(n[u]=void 0===t[u]&&void 0!==l?l[u]:t[u])}var u=arguments.length-2;if(1===u)n.children=r;else if(1<u){l=Array(u);for(var p=0;p<u;p++)l[p]=arguments[p+2];n.children=l}return{$$typeof:s,type:e.type,key:a,ref:o,props:n,_owner:i}},r.createContext=function(e){return(e={$$typeof:u,_currentValue:e,_currentValue2:e,_threadCount:0,Provider:null,Consumer:null,_defaultValue:null,_globalName:null}).Provider={$$typeof:l,_context:e},e.Consumer=e},r.createElement=S,r.createFactory=function(e){var t=S.bind(null,e);return t.type=e,t},r.createRef=function(){return{current:null}},r.forwardRef=function(e){return{$$typeof:p,render:e}},r.isValidElement=C,r.lazy=function(e){return{$$typeof:h,_payload:{_status:-1,_result:e},_init:F}},r.memo=function(e,t){return{$$typeof:d,type:e,compare:void 0===t?null:t}},r.startTransition=function(e){var t=D.transition;D.transition={};try{e()}finally{D.transition=t}},r.unstable_act=function(){throw Error("act(...) is not supported in production builds of React.")},r.useCallback=function(e,t){return A.current.useCallback(e,t)},r.useContext=function(e){return A.current.useContext(e)},r.useDebugValue=function(){},r.useDeferredValue=function(e){return A.current.useDeferredValue(e)},r.useEffect=function(e,t){return A.current.useEffect(e,t)},r.useId=function(){return A.current.useId()},r.useImperativeHandle=function(e,t,r){return A.current.useImperativeHandle(e,t,r)},r.useInsertionEffect=function(e,t){return A.current.useInsertionEffect(e,t)},r.useLayoutEffect=function(e,t){return A.current.useLayoutEffect(e,t)},r.useMemo=function(e,t){return A.current.useMemo(e,t)},r.useReducer=function(e,t,r){return A.current.useReducer(e,t,r)},r.useRef=function(e){return A.current.useRef(e)},r.useState=function(e){return A.current.useState(e)},r.useSyncExternalStore=function(e,t,r){return A.current.useSyncExternalStore(e,t,r)},r.useTransition=function(){return A.current.useTransition()},r.version="18.2.0"},{}],"5ccwt":[function(e,t,r){var s=e("aaccff5d309d9239");r.createRoot=s.createRoot,r.hydrateRoot=s.hydrateRoot},{aaccff5d309d9239:"b8T3j"}],b8T3j:[function(e,t,r){!// DCE check should happen before ReactDOM bundle executes so that
+            archPreset:null}})(e,t)),children:e.name},e.name))})]})},{}))},{"react/jsx-runtime":"gaGEj",react:"6uln9","react-dom/client":"5ccwt","./main":"bZSZC","./core/gan/adversary":"4C16z","./share":"fvegn","./ui.css":"fjpTf","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],gaGEj:[function(e,t,r){t.exports=e("e5e9711c2edf1a4e")},{e5e9711c2edf1a4e:"kbpKW"}],kbpKW:[function(e,t,r){var s=e("3fd2a064dc1f3641"),n=Symbol.for("react.element"),a=Symbol.for("react.fragment"),o=Object.prototype.hasOwnProperty,i=s.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentOwner,l={key:!0,ref:!0,__self:!0,__source:!0};function u(e,t,r){var s,a={},u=null,p=null;for(s in void 0!==r&&(u=""+r),void 0!==t.key&&(u=""+t.key),void 0!==t.ref&&(p=t.ref),t)o.call(t,s)&&!l.hasOwnProperty(s)&&(a[s]=t[s]);if(e&&e.defaultProps)for(s in t=e.defaultProps)void 0===a[s]&&(a[s]=t[s]);return{$$typeof:n,type:e,key:u,ref:p,props:a,_owner:i.current}}r.Fragment=a,r.jsx=u,r.jsxs=u},{"3fd2a064dc1f3641":"6uln9"}],"6uln9":[function(e,t,r){t.exports=e("956f36295e4e0134")},{"956f36295e4e0134":"8n7Eb"}],"8n7Eb":[function(e,t,r){var s=Symbol.for("react.element"),n=Symbol.for("react.portal"),a=Symbol.for("react.fragment"),o=Symbol.for("react.strict_mode"),i=Symbol.for("react.profiler"),l=Symbol.for("react.provider"),u=Symbol.for("react.context"),p=Symbol.for("react.forward_ref"),c=Symbol.for("react.suspense"),d=Symbol.for("react.memo"),h=Symbol.for("react.lazy"),f=Symbol.iterator,m={isMounted:function(){return!1},enqueueForceUpdate:function(){},enqueueReplaceState:function(){},enqueueSetState:function(){}},g=Object.assign,x={};function v(e,t,r){this.props=e,this.context=t,this.refs=x,this.updater=r||m}function y(){}function b(e,t,r){this.props=e,this.context=t,this.refs=x,this.updater=r||m}v.prototype.isReactComponent={},v.prototype.setState=function(e,t){if("object"!=typeof e&&"function"!=typeof e&&null!=e)throw Error("setState(...): takes an object of state variables to update or a function which returns an object of state variables.");this.updater.enqueueSetState(this,e,t,"setState")},v.prototype.forceUpdate=function(e){this.updater.enqueueForceUpdate(this,e,"forceUpdate")},y.prototype=v.prototype;var k=b.prototype=new y;k.constructor=b,g(k,v.prototype),k.isPureReactComponent=!0;var _=Array.isArray,w=Object.prototype.hasOwnProperty,I={current:null},j={key:!0,ref:!0,__self:!0,__source:!0};function S(e,t,r){var n,a={},o=null,i=null;if(null!=t)for(n in void 0!==t.ref&&(i=t.ref),void 0!==t.key&&(o=""+t.key),t)w.call(t,n)&&!j.hasOwnProperty(n)&&(a[n]=t[n]);var l=arguments.length-2;if(1===l)a.children=r;else if(1<l){for(var u=Array(l),p=0;p<l;p++)u[p]=arguments[p+2];a.children=u}if(e&&e.defaultProps)for(n in l=e.defaultProps)void 0===a[n]&&(a[n]=l[n]);return{$$typeof:s,type:e,key:o,ref:i,props:a,_owner:I.current}}function C(e){return"object"==typeof e&&null!==e&&e.$$typeof===s}var T=/\/+/g;function N(e,t){var r,s;return"object"==typeof e&&null!==e&&null!=e.key?(r=""+e.key,s={"=":"=0",":":"=2"},"$"+r.replace(/[=:]/g,function(e){return s[e]})):t.toString(36)}function E(e,t,r){if(null==e)return e;var a=[],o=0;return!function e(t,r,a,o,i){var l,u,p,c=typeof t;("undefined"===c||"boolean"===c)&&(t=null);var d=!1;if(null===t)d=!0;else switch(c){case"string":case"number":d=!0;break;case"object":switch(t.$$typeof){case s:case n:d=!0}}if(d)return i=i(d=t),t=""===o?"."+N(d,0):o,_(i)?(a="",null!=t&&(a=t.replace(T,"$&/")+"/"),e(i,r,a,"",function(e){return e})):null!=i&&(C(i)&&(l=i,u=a+(!i.key||d&&d.key===i.key?"":(""+i.key).replace(T,"$&/")+"/")+t,i={$$typeof:s,type:l.type,key:u,ref:l.ref,props:l.props,_owner:l._owner}),r.push(i)),1;if(d=0,o=""===o?".":o+":",_(t))for(var h=0;h<t.length;h++){var m=o+N(c=t[h],h);d+=e(c,r,a,m,i)}else if("function"==typeof(m=null===(p=t)||"object"!=typeof p?null:"function"==typeof(p=f&&p[f]||p["@@iterator"])?p:null))for(t=m.call(t),h=0;!(c=t.next()).done;)m=o+N(c=c.value,h++),d+=e(c,r,a,m,i);else if("object"===c)throw Error("Objects are not valid as a React child (found: "+("[object Object]"===(r=String(t))?"object with keys {"+Object.keys(t).join(", ")+"}":r)+"). If you meant to render a collection of children, use an array instead.");return d}(e,a,"","",function(e){return t.call(r,e,o++)}),a}function F(e){if(-1===e._status){var t=e._result;(t=t()).then(function(t){(0===e._status||-1===e._status)&&(e._status=1,e._result=t)},function(t){(0===e._status||-1===e._status)&&(e._status=2,e._result=t)}),-1===e._status&&(e._status=0,e._result=t)}if(1===e._status)return e._result.default;throw e._result}var A={current:null},D={transition:null};r.Children={map:E,forEach:function(e,t,r){E(e,function(){t.apply(this,arguments)},r)},count:function(e){var t=0;return E(e,function(){t++}),t},toArray:function(e){return E(e,function(e){return e})||[]},only:function(e){if(!C(e))throw Error("React.Children.only expected to receive a single React element child.");return e}},r.Component=v,r.Fragment=a,r.Profiler=i,r.PureComponent=b,r.StrictMode=o,r.Suspense=c,r.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED={ReactCurrentDispatcher:A,ReactCurrentBatchConfig:D,ReactCurrentOwner:I},r.cloneElement=function(e,t,r){if(null==e)throw Error("React.cloneElement(...): The argument must be a React element, but you passed "+e+".");var n=g({},e.props),a=e.key,o=e.ref,i=e._owner;if(null!=t){if(void 0!==t.ref&&(o=t.ref,i=I.current),void 0!==t.key&&(a=""+t.key),e.type&&e.type.defaultProps)var l=e.type.defaultProps;for(u in t)w.call(t,u)&&!j.hasOwnProperty(u)&&(n[u]=void 0===t[u]&&void 0!==l?l[u]:t[u])}var u=arguments.length-2;if(1===u)n.children=r;else if(1<u){l=Array(u);for(var p=0;p<u;p++)l[p]=arguments[p+2];n.children=l}return{$$typeof:s,type:e.type,key:a,ref:o,props:n,_owner:i}},r.createContext=function(e){return(e={$$typeof:u,_currentValue:e,_currentValue2:e,_threadCount:0,Provider:null,Consumer:null,_defaultValue:null,_globalName:null}).Provider={$$typeof:l,_context:e},e.Consumer=e},r.createElement=S,r.createFactory=function(e){var t=S.bind(null,e);return t.type=e,t},r.createRef=function(){return{current:null}},r.forwardRef=function(e){return{$$typeof:p,render:e}},r.isValidElement=C,r.lazy=function(e){return{$$typeof:h,_payload:{_status:-1,_result:e},_init:F}},r.memo=function(e,t){return{$$typeof:d,type:e,compare:void 0===t?null:t}},r.startTransition=function(e){var t=D.transition;D.transition={};try{e()}finally{D.transition=t}},r.unstable_act=function(){throw Error("act(...) is not supported in production builds of React.")},r.useCallback=function(e,t){return A.current.useCallback(e,t)},r.useContext=function(e){return A.current.useContext(e)},r.useDebugValue=function(){},r.useDeferredValue=function(e){return A.current.useDeferredValue(e)},r.useEffect=function(e,t){return A.current.useEffect(e,t)},r.useId=function(){return A.current.useId()},r.useImperativeHandle=function(e,t,r){return A.current.useImperativeHandle(e,t,r)},r.useInsertionEffect=function(e,t){return A.current.useInsertionEffect(e,t)},r.useLayoutEffect=function(e,t){return A.current.useLayoutEffect(e,t)},r.useMemo=function(e,t){return A.current.useMemo(e,t)},r.useReducer=function(e,t,r){return A.current.useReducer(e,t,r)},r.useRef=function(e){return A.current.useRef(e)},r.useState=function(e){return A.current.useState(e)},r.useSyncExternalStore=function(e,t,r){return A.current.useSyncExternalStore(e,t,r)},r.useTransition=function(){return A.current.useTransition()},r.version="18.2.0"},{}],"5ccwt":[function(e,t,r){var s=e("aaccff5d309d9239");r.createRoot=s.createRoot,r.hydrateRoot=s.hydrateRoot},{aaccff5d309d9239:"b8T3j"}],b8T3j:[function(e,t,r){!// DCE check should happen before ReactDOM bundle executes so that
 // DevTools can report bad minification during injection.
 function e(){/* global __REACT_DEVTOOLS_GLOBAL_HOOK__ */if("undefined"!=typeof __REACT_DEVTOOLS_GLOBAL_HOOK__&&"function"==typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.checkDCE)try{// Verify that the code above has been dead code eliminated (DCE'd).
 __REACT_DEVTOOLS_GLOBAL_HOOK__.checkDCE(e)}catch(e){// DevTools shouldn't crash React, no matter what.
@@ -75,29 +139,38 @@ console.error(e)}}(),t.exports=e("9223fb8c5161e54b")},{"9223fb8c5161e54b":"bO0Ia
  *
  * The model DISCOVERS how to move particles creatively while minimising a
  * simple constraint — it is NOT told the answer directly.
- */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"ARCH",()=>o.ARCH),s.export(r,"ARCH_DOCK_DUAL",()=>o.ARCH_DOCK_DUAL),s.export(r,"ARCH_DOCK_PRESETS",()=>o.ARCH_DOCK_PRESETS),s.export(r,"applyArchDockPreset",()=>o.applyArchDockPreset),s.export(r,"archDockPresets",()=>o.archDockPresets),s.export(r,"createFieldFromArch",()=>o.createFieldFromArch),s.export(r,"describeFieldArch",()=>o.describeFieldArch),s.export(r,"isArchPresetKey",()=>o.isArchPresetKey),s.export(r,"HelmholtzField",()=>a.HelmholtzField),s.export(r,"isSurpriseColorMode",()=>x),s.export(r,"surpriseMetricOf",()=>v),s.export(r,"ADVERSARY_WEIGHT_RANGE",()=>y),/** Physical force scale for a dimensionless steady-state component bound.
+ */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"ARCH",()=>o.ARCH),s.export(r,"ARCH_DOCK_DUAL",()=>o.ARCH_DOCK_DUAL),s.export(r,"ARCH_DOCK_PRESETS",()=>o.ARCH_DOCK_PRESETS),s.export(r,"applyArchDockPreset",()=>o.applyArchDockPreset),s.export(r,"archDockPresets",()=>o.archDockPresets),s.export(r,"createFieldFromArch",()=>o.createFieldFromArch),s.export(r,"describeFieldArch",()=>o.describeFieldArch),s.export(r,"isArchPresetKey",()=>o.isArchPresetKey),s.export(r,"HelmholtzField",()=>a.HelmholtzField),s.export(r,"DEFAULT_GAME_PRESSURE",()=>v),s.export(r,"isSurpriseColorMode",()=>y),s.export(r,"surpriseMetricOf",()=>b),s.export(r,"ADVERSARY_WEIGHT_RANGE",()=>k),/** Physical force scale for a dimensionless steady-state component bound.
  *
  * If |F_t| <= 1 and |v_0| <= drive*maxVelocity, then the unclipped recurrence
  * |v_{t+1}| <= friction|v_t| + friction*forceMagnitude preserves
  * |v_t| <= drive*maxVelocity for every t. Therefore drive <= 1 never reaches
  * the component clip through the field force.
- */s.export(r,"forceMagnitudeForDrive",()=>w),/** Inverse of {@link forceMagnitudeForDrive}; used only to report legacy
- * configurations through the same LoopHandle API. */s.export(r,"driveForForceMagnitude",()=>I),s.export(r,"GAME_LEARNING_RATE_RANGE",()=>j),/** Live train-B → fused adversary batch. The UI controls sampleRate; the
+ */s.export(r,"forceMagnitudeForDrive",()=>j),/** Inverse of {@link forceMagnitudeForDrive}; used only to report legacy
+ * configurations through the same LoopHandle API. */s.export(r,"driveForForceMagnitude",()=>S),s.export(r,"GAME_LEARNING_RATE_RANGE",()=>C),s.export(r,"TRAIN_BATCH_MIN",()=>T),s.export(r,"TRAIN_BATCH_MAX",()=>N),/**
+ * Canonicalize a requested train batch size (κ — the ONE place a live control's
+ * number becomes a legal `TrainStepOpts.n`).
+ *
+ * Over-cap used to reach `FusedTrainer.record()`, which throws — inside the rAF
+ * tick, whose self-rearm is its last statement, so the whole animation stopped
+ * dead. The slider went to 4096 while the trainer was built with batchCap 1024,
+ * so the top 3/4 of the control froze the app. Now over-cap CLAMPS and reports
+ * itself as data, and the caller warns.
+ */s.export(r,"resolveTrainBatchSize",()=>E),/** Live train-B → fused adversary batch. The UI controls sampleRate; the
  * compiled predictor buffers cap one step, while particle coverage may reduce
- * it further inside AdversaryTrainer. */s.export(r,"adversaryBatchSize",()=>S),/** Canonical URL + gallery ingestion for live physical/game controls. Exported
- * so a gallery switch can be tested without constructing WebGPU or React. */s.export(r,"resolveLiveGameControls",()=>C),s.export(r,"ADVERSARY_OBJECTIVE_DEFAULTS",()=>N),/**
+ * it further inside AdversaryTrainer. */s.export(r,"adversaryBatchSize",()=>F),/** Canonical URL + gallery ingestion for live physical/game controls. Exported
+ * so a gallery switch can be tested without constructing WebGPU or React. */s.export(r,"resolveLiveGameControls",()=>A),s.export(r,"ADVERSARY_OBJECTIVE_DEFAULTS",()=>$),/**
  * Compatibility mapping for adversary specs written before target/loss became
  * orthogonal axes. The legacy "adjusted" R+S tag meant angular prediction, so
  * preserve that visible behavior with the new exact smooth S² loss. Every
  * other old spec predicted raw force with raw vector distance.
- */s.export(r,"adversaryTargetOf",()=>E),s.export(r,"adversaryLossOf",()=>F),/**
+ */s.export(r,"adversaryTargetOf",()=>R),s.export(r,"gamePressureOf",()=>P),s.export(r,"adversaryLossOf",()=>M),/**
  * Merge a piece's declared adversary with the URL overrides.
  *
  * `?adv=off|single|wta` chooses the variant outright. When `?adv` is absent the
  * piece's own spec stands, but the numeric knobs (`?advK`, `?advM`, `?advEps`,
  * `?advWeight`) still override it — that is what makes a shipped piece
  * explorable without editing the gallery.
- */s.export(r,"resolveAdversary",()=>A),/**
+ */s.export(r,"resolveAdversary",()=>O),/**
  * `?color=surprise|surprise-per-unit|velocity` overrides the piece; `?cmap=`
  * picks the ramp. `?color=surprise` remains the raw-payoff compatibility alias;
  * `?surNorm=1` selects the per-unit diagnostic for old bookmarked experiments.
@@ -106,14 +179,14 @@ console.error(e)}}(),t.exports=e("9223fb8c5161e54b")},{"9223fb8c5161e54b":"bO0Ia
  * silent default — an empty surprise channel would paint a flat field and read
  * as "the adversary is collapsed", which is a lie about a piece that never had
  * one; see the SPAN_FLOOR note in src/draw/robust_norm.ts.
- */s.export(r,"resolveColorMode",()=>D),/**
+ */s.export(r,"resolveColorMode",()=>B),/**
  * δ: (win skew, spread probe, reward scale) → verdict. Pure and exported so
  * the threshold is gateable offline (tools/adversary_wire_test.ts §7).
- */s.export(r,"classifyHeads",()=>L),/**
+ */s.export(r,"classifyHeads",()=>H),/**
  * Combine independent game-lane verdicts without averaging away a failure.
  * A measured pileup is strongest, then an uninstrumented branch, then
  * separated-but-support-unresolved skew, then healthy.
- */s.export(r,"combineHeadHealth",()=>G),s.export(r,"createAdversary",()=>U),/**
+ */s.export(r,"combineHeadHealth",()=>K),s.export(r,"createAdversary",()=>X),/**
  * Generator game term: `weight · L_G` on the explicitly selected target.
  *
  * The force target uses rawSignal and bypasses forceMagnitude/physics. The
@@ -122,16 +195,16 @@ console.error(e)}}(),t.exports=e("9223fb8c5161e54b")},{"9223fb8c5161e54b":"bO0Ia
  * S² loss; relative-scale modes use homogeneous local contrast plus a fixed
  * energy anchor. Scale-hold is intentionally general-sum rather than a strict
  * opposite-sign scalar game.
- */s.export(r,"adversaryGeneratorTerm",()=>q),/**
+ */s.export(r,"adversaryGeneratorTerm",()=>J),/** δ: GamePressure → handler. Trivial body; the work is in the loss. */s.export(r,"gamePressureLoss",()=>Q),/**
  * Legacy transition scale retained for URL/test compatibility. The strict
  * force-target game does not use this quantity.
- */s.export(r,"stepScaleOf",()=>H),/**
+ */s.export(r,"stepScaleOf",()=>ee),/**
  * Discriminator step on one detached batch of raw `F(x)`, plus telemetry.
  * Called with no generator tape open: the predictor owns the only variables.
- */s.export(r,"adversaryTrainStep",()=>K),s.export(r,"MAX_CHAOS_FIELD_LOSS",()=>X),s.export(r,"ZERO_FIELD_LOSS",()=>Z),s.export(r,"SPIRAL_FIELD_LOSS",()=>J),s.export(r,"COVER_FIELD_LOSS",()=>Q),s.export(r,"CENTER_FIELD_LOSS",()=>ee),s.export(r,"GALLERY",()=>et),s.export(r,"DEFAULT_PIECE_NAME",()=>er),s.export(r,"DEFAULT_PIECE_INDEX",()=>es),// ---------------------------------------------------------------------------
+ */s.export(r,"adversaryTrainStep",()=>et),s.export(r,"MAX_CHAOS_FIELD_LOSS",()=>es),s.export(r,"ZERO_FIELD_LOSS",()=>en),s.export(r,"SPIRAL_FIELD_LOSS",()=>ea),s.export(r,"COVER_FIELD_LOSS",()=>eo),s.export(r,"CENTER_FIELD_LOSS",()=>ei),s.export(r,"GALLERY",()=>el),s.export(r,"DEFAULT_PIECE_NAME",()=>eu),s.export(r,"DEFAULT_PIECE_INDEX",()=>ep),// ---------------------------------------------------------------------------
 // Physics step (inside optimizer.minimize — gradients flow through)
 // ---------------------------------------------------------------------------
-s.export(r,"physicsForward",()=>en),s.export(r,"INK_LOOK_DECAY",()=>ei),s.export(r,"inkLookFromRenderer",()=>el),s.export(r,"decayForRenderer",()=>eu),s.export(r,"STROKE_LENGTH_RANGE",()=>ep),/**
+s.export(r,"physicsForward",()=>ec),s.export(r,"INK_LOOK_DECAY",()=>ef),s.export(r,"inkLookFromRenderer",()=>em),s.export(r,"decayForRenderer",()=>eg),s.export(r,"STROKE_LENGTH_RANGE",()=>ex),/**
  * κ for the splat stroke style. ONE resolution order, in priority order:
  *
  *   1. `?stroke=` — an explicit URL is the user's stated intent and wins.
@@ -142,12 +215,12 @@ s.export(r,"physicsForward",()=>en),s.export(r,"INK_LOOK_DECAY",()=>ei),s.export
  * same answer; two copies of this ladder would be two chances to disagree.
  * An unrecognised `?stroke=` is a hard error, exactly like `?adv=` / `?advM=`:
  * a typo must not silently paint dots and look like the feature is broken.
- */s.export(r,"resolveStrokeStyle",()=>ec),/**
+ */s.export(r,"resolveStrokeStyle",()=>ev),/**
  * Stroke length in FRAMES of travel, same ladder: `?strokeLen=` > the piece's
  * {@link ArtPieceConfig.strokeLen} > 3. `floatParam` (Number.isFinite, not
  * `|| 3`) so an explicit `?strokeLen=0` clamps to the documented 0.5 floor
  * instead of silently becoming the default.
- */s.export(r,"resolveStrokeLength",()=>ed),s.export(r,"startLoop",()=>eh);var n=e("@tensorflow/tfjs");e("@tensorflow/tfjs-backend-webgpu");var a=e("./core/field/helmholtz"),o=e("./core/field/arch"),i=e("./core/losses"),l=e("./render/webgpu/points"),u=e("./render/webgpu/splat"),p=e("./render/webgpu/advect"),c=e("./render/webgpu/train"),d=e("./render/webgpu/adversary_train"),h=e("./render/webgpu/pixel_disc_train"),f=e("./render/webgpu/gputime"),m=e("./core/gan/adversary"),g=e("./render/webgpu/surprise_points");// tfjs-backend-webgpu 4.10 calls adapter.requestAdapterInfo(), which current
+ */s.export(r,"resolveStrokeLength",()=>ey),s.export(r,"startLoop",()=>eb);var n=e("@tensorflow/tfjs");e("@tensorflow/tfjs-backend-webgpu");var a=e("./core/field/helmholtz"),o=e("./core/field/arch"),i=e("./core/losses"),l=e("./render/webgpu/points"),u=e("./render/webgpu/splat"),p=e("./render/webgpu/advect"),c=e("./render/webgpu/train"),d=e("./render/webgpu/train_wgsl"),h=e("./render/webgpu/adversary_train"),f=e("./render/webgpu/pixel_disc_train"),m=e("./render/webgpu/gputime"),g=e("./core/gan/adversary"),x=e("./render/webgpu/surprise_points");// tfjs-backend-webgpu 4.10 calls adapter.requestAdapterInfo(), which current
 // Chrome removed in favour of the synchronous `adapter.info` property — without
 // this shim the webgpu backend fails to init ("requestAdapterInfo is not a
 // function"). Safe no-op where WebGPU is absent (GPUAdapter undefined).
@@ -157,22 +230,31 @@ s.export(r,"physicsForward",()=>en),s.export(r,"INK_LOOK_DECAY",()=>ei),s.export
 // add "shader-f16" (advect kernel's f16 fast path, see render/webgpu/
 // advect.ts) and "timestamp-query" (upcoming GPU profiling), each only when
 // the adapter reports it, deduped, preserving every other descriptor field.
-if(e&&!e.prototype.requestAdapterInfo&&(e.prototype.requestAdapterInfo=function(){return Promise.resolve(this.info??{})}),e&&!e.prototype.__nffaRequestDeviceWrapped){e.prototype.__nffaRequestDeviceWrapped=!0;let t=e.prototype.requestDevice;e.prototype.requestDevice=function(e){let r=["shader-f16","timestamp-query"].filter(e=>this.features.has(e)),s=[...new Set([...e?.requiredFeatures??[],...r])];return t.call(this,{...e,requiredFeatures:s})}}}function x(e){return"surprise-raw"===e.tag||"surprise-per-unit"===e.tag}function v(e){switch(e.tag){case"velocity":return null;case"surprise-raw":return"raw-payoff";case"surprise-per-unit":return"per-unit-signal";default:return W(e,"surpriseMetricOf")}}let y={min:0,max:.05},b={k:8,eps:.05,weight:.012,m:1};function k(e,t,r){let s=e.get(t);if(null===s)return r;let n=parseInt(s,10);return Number.isFinite(n)?n:r}function _(e,t,r){let s=e.get(t);if(null===s)return r;let n=parseFloat(s);// Number.isFinite, NOT `|| fallback`: an explicit `?advWeight=0` is a
+if(e&&!e.prototype.requestAdapterInfo&&(e.prototype.requestAdapterInfo=function(){return Promise.resolve(this.info??{})}),e&&!e.prototype.__nffaRequestDeviceWrapped){e.prototype.__nffaRequestDeviceWrapped=!0;let t=e.prototype.requestDevice;e.prototype.requestDevice=function(e){let r=["shader-f16","timestamp-query"].filter(e=>this.features.has(e)),s=[...new Set([...e?.requiredFeatures??[],...r])];return t.call(this,{...e,requiredFeatures:s})}}}let v={tag:"none"};function y(e){return"surprise-raw"===e.tag||"surprise-per-unit"===e.tag}function b(e){switch(e.tag){case"velocity":return null;case"surprise-raw":return"raw-payoff";case"surprise-per-unit":return"per-unit-signal";default:return Z(e,"surpriseMetricOf")}}let k={min:0,max:.05},_={k:8,eps:.05,weight:.012,m:1};function w(e,t,r){let s=e.get(t);if(null===s)return r;let n=parseInt(s,10);return Number.isFinite(n)?n:r}function I(e,t,r){let s=e.get(t);if(null===s)return r;let n=parseFloat(s);// Number.isFinite, NOT `|| fallback`: an explicit `?advWeight=0` is a
 // meaningful request (run the adversary, feed the HUD, but do not steer the
 // field) and must not be silently rewritten to the default.
-return Number.isFinite(n)?n:r}function w(e,t,r){if(!(Number.isFinite(e)&&e>=0))throw Error(`drive must be finite and >= 0, got ${e}`);if(!(Number.isFinite(t)&&t>0))throw Error(`maxVelocity must be finite and > 0, got ${t}`);if(!(Number.isFinite(r)&&r>0&&r<1))throw Error(`friction must be finite and in (0,1), got ${r}`);return e*t*(1-r)/r}function I(e,t,r){if(!(Number.isFinite(e)&&e>=0))throw Error(`forceMagnitude must be finite and >= 0, got ${e}`);if(!(Number.isFinite(t)&&t>0))throw Error(`maxVelocity must be finite and > 0, got ${t}`);if(!(Number.isFinite(r)&&r>0&&r<1))throw Error(`friction must be finite and in (0,1), got ${r}`);return r*e/((1-r)*t)}let j={generator:{min:1e-5,max:.01},discriminator:{min:1e-4,max:.03}};function S(e,t=1024){if(!Number.isFinite(e)||!Number.isFinite(t))throw Error(`adversary batch needs finite sampleRate/cap, got ${e}, ${t}`);return Math.max(1,Math.min(Math.round(e),Math.max(1,Math.floor(t))))}function C(e,t,r=e.maxVelocity){let s=void 0!==e.drive,n=s?Math.max(0,Math.min(1,_(t,"drive",e.drive))):I(e.forceMagnitude,r,e.friction);return{driveEnabled:s,drive:n,forceMagnitude:s?w(n,r,e.friction):e.forceMagnitude,generatorLearningRate:Math.max(j.generator.min,Math.min(j.generator.max,_(t,"gLR",e.learningRate))),discriminatorLearningRate:Math.max(j.discriminator.min,Math.min(j.discriminator.max,_(t,"dLR",.003)))}}/** δ: `?advM=` → encoding. Unknown values are a hard error, not a shrug. */function T(e){if(1===e)return{tag:"point"};if(2===e)return{tag:"pair-rotation"};if(3===e)return{tag:"tri"};if(4===e)return{tag:"quad-labelled"};throw Error(`?advM must be 1 (point), 2 (pair), 3 (tri) or 4 (labelled quad), got ${e}`)}let N={tau:.05,scaleWeight:.5,energyWeight:.1,energyTarget:.35};function E(e){return e.target??m.DEFAULT_ADVERSARY_TARGET}function F(e){return e.loss?e.loss:"pair-rotation-scale-adjusted"===e.encoding.tag?{tag:"soft-angle",tau:N.tau}:m.DEFAULT_ADVERSARY_LOSS}function A(e,t){let r=e??{tag:"off"},s=t.get("adv");if("off"===s)return{tag:"off"};if(null===s&&"off"===r.tag)return r;// Knob defaults come from the piece when it already declares an adversary, so
+return Number.isFinite(n)?n:r}function j(e,t,r){if(!(Number.isFinite(e)&&e>=0))throw Error(`drive must be finite and >= 0, got ${e}`);if(!(Number.isFinite(t)&&t>0))throw Error(`maxVelocity must be finite and > 0, got ${t}`);if(!(Number.isFinite(r)&&r>0&&r<1))throw Error(`friction must be finite and in (0,1), got ${r}`);return e*t*(1-r)/r}function S(e,t,r){if(!(Number.isFinite(e)&&e>=0))throw Error(`forceMagnitude must be finite and >= 0, got ${e}`);if(!(Number.isFinite(t)&&t>0))throw Error(`maxVelocity must be finite and > 0, got ${t}`);if(!(Number.isFinite(r)&&r>0&&r<1))throw Error(`friction must be finite and in (0,1), got ${r}`);return r*e/((1-r)*t)}let C={generator:{min:1e-5,max:.01},discriminator:{min:1e-4,max:.03}},T=16,N=d.MAX_BATCH;function E(e,t){if(!Number.isFinite(e)||!Number.isFinite(t))throw Error(`train batch needs finite requested/cap, got ${e}, ${t}`);let r=Math.max(1,Math.floor(t)),s=Math.max(1,Math.round(e));return s>r?{tag:"clamped",n:r,requested:s,cap:r}:{tag:"ok",n:s}}function F(e,t=1024){if(!Number.isFinite(e)||!Number.isFinite(t))throw Error(`adversary batch needs finite sampleRate/cap, got ${e}, ${t}`);return Math.max(1,Math.min(Math.round(e),Math.max(1,Math.floor(t))))}function A(e,t,r=e.maxVelocity){let s=void 0!==e.drive,n=s?Math.max(0,Math.min(1,I(t,"drive",e.drive))):S(e.forceMagnitude,r,e.friction);return{driveEnabled:s,drive:n,forceMagnitude:s?j(n,r,e.friction):e.forceMagnitude,generatorLearningRate:Math.max(C.generator.min,Math.min(C.generator.max,I(t,"gLR",e.learningRate))),discriminatorLearningRate:Math.max(C.discriminator.min,Math.min(C.discriminator.max,I(t,"dLR",.003)))}}/** δ: `?advM=` → encoding. Unknown values are a hard error, not a shrug. */function D(e){if(1===e)return{tag:"point"};if(2===e)return{tag:"pair-rotation"};if(3===e)return{tag:"tri"};if(4===e)return{tag:"quad-labelled"};throw Error(`?advM must be 1 (point), 2 (pair), 3 (tri) or 4 (labelled quad), got ${e}`)}let $={tau:.05,scaleWeight:.5,energyWeight:.1,energyTarget:.35};function R(e){return e.target??g.DEFAULT_ADVERSARY_TARGET}function P(e){return e.pressure??v}function M(e){return e.loss?e.loss:"pair-rotation-scale-adjusted"===e.encoding.tag?{tag:"soft-angle",tau:$.tau}:g.DEFAULT_ADVERSARY_LOSS}function O(e,t){let r=e??{tag:"off"},s=t.get("adv");if("off"===s)return{tag:"off"};if(null===s&&"off"===r.tag)return r;// Knob defaults come from the piece when it already declares an adversary, so
 // `?adv=wta` on a pair piece keeps the pair encoding unless `?advM` says
 // otherwise.
-let n="on"===r.tag?r:null,a=k(t,"advK",n?.kind.tag==="wta"?n.kind.k:b.k),o=_(t,"advEps",n?.kind.tag==="wta"?n.kind.relaxEps:b.eps),i=k(t,"advM",n?(0,m.encodingDims)(n.encoding).m:b.m),l=Math.max(y.min,Math.min(y.max,_(t,"advWeight",n?n.weight:b.weight))),u=t.has("advM")?T(i):n?.encoding??T(i),p=n??{tag:"on",kind:{tag:"wta",k:a,relaxEps:o},encoding:u,weight:l},c=function(e,t){let r=e.get("advTarget");if(null===r)return t;if("force"===r||"post-velocity"===r)return{tag:r};throw Error(`?advTarget must be force|post-velocity, got "${r}"`)}(t,E(p)),d=function(e,t){let r=e.get("advLoss")??t.tag,s=Math.max(1e-4,_(e,"advTau","tau"in t?t.tau:N.tau)),n=Math.max(0,_(e,"advScaleWeight","scaleWeight"in t?t.scaleWeight:N.scaleWeight)),a=Math.max(0,_(e,"advEnergyWeight","energyWeight"in t?t.energyWeight:N.energyWeight)),o=Math.max(1e-4,_(e,"advEnergyTarget","energyTarget"in t?t.energyTarget:N.energyTarget));switch(r){case"raw-vector":return{tag:r};case"soft-angle":return{tag:r,tau:s};case"angle-relative-scale":case"angle-scale-hold":return{tag:r,tau:s,scaleWeight:n,energyWeight:a,energyTarget:o};default:throw Error(`?advLoss must be raw-vector|soft-angle|angle-relative-scale|angle-scale-hold, got "${r}"`)}}(t,F(p));// One validation dispatcher is shared with both reference and fused shape
+let n="on"===r.tag?r:null,a=w(t,"advK",n?.kind.tag==="wta"?n.kind.k:_.k),o=I(t,"advEps",n?.kind.tag==="wta"?n.kind.relaxEps:_.eps),i=w(t,"advM",n?(0,g.encodingDims)(n.encoding).m:_.m),l=Math.max(k.min,Math.min(k.max,I(t,"advWeight",n?n.weight:_.weight))),u=t.has("advM")?D(i):n?.encoding??D(i),p=n??{tag:"on",kind:{tag:"wta",k:a,relaxEps:o},encoding:u,weight:l},c=function(e,t){let r=e.get("advTarget");if(null===r)return t;if("force"===r||"post-velocity"===r)return{tag:r};throw Error(`?advTarget must be force|post-velocity, got "${r}"`)}(t,R(p)),d=function(e,t){let r=e.get("advLoss")??t.tag,s=Math.max(1e-4,I(e,"advTau","tau"in t?t.tau:$.tau)),n=Math.max(0,I(e,"advScaleWeight","scaleWeight"in t?t.scaleWeight:$.scaleWeight)),a=Math.max(0,I(e,"advEnergyWeight","energyWeight"in t?t.energyWeight:$.energyWeight)),o=Math.max(1e-4,I(e,"advEnergyTarget","energyTarget"in t?t.energyTarget:$.energyTarget));switch(r){case"raw-vector":return{tag:r};case"soft-angle":return{tag:r,tau:s};case"angle-relative-scale":case"angle-scale-hold":return{tag:r,tau:s,scaleWeight:n,energyWeight:a,energyTarget:o};default:throw Error(`?advLoss must be raw-vector|soft-angle|angle-relative-scale|angle-scale-hold, got "${r}"`)}}(t,M(p));// One validation dispatcher is shared with both reference and fused shape
 // construction. Invalid combinations throw here instead of silently
 // changing observer, target, or loss semantics.
-(0,m.objectiveDims)(u,c,d);let h=n?.game,f=h?{game:h}:{};if("single"===s)return{tag:"on",kind:{tag:"single"},encoding:u,target:c,loss:d,weight:l,...f};if("wta"===s)return{tag:"on",kind:{tag:"wta",k:a,relaxEps:o},encoding:u,target:c,loss:d,weight:l,...f};if(null!==s)throw Error(`?adv must be off|single|wta, got "${s}"`);// No `?adv=`: keep the piece's variant, apply the knob overrides to it.
-let g="single"===r.kind.tag?{tag:"single"}:{tag:"wta",k:a,relaxEps:o};return{tag:"on",kind:g,encoding:u,target:c,loss:d,weight:l,...f}}function D(e,t,r){let s=r.get("cmap"),n="viridis"===s||"coolwarm"===s||"inferno"===s?s:e.colormap??"inferno",a=r.get("color");if("velocity"===a)return{tag:"velocity"};let o="surprise-per-unit"===a||"surprise-unit"===a||"1"===r.get("surNorm"),i="surprise"===a||"surprise-raw"===a||null===a&&"surprise"===e.renderer&&!o;return i||o?"off"===t.tag?(console.warn("[adversary] surprise colour ignored: this piece has no adversary, so there is no per-particle residual to colour by."),{tag:"velocity"}):"agree-disagree"===e.mode?(console.warn("[adversary] surprise colour ignored for Agree+Disagree: its required RGB output is A=disagree, B=agree, C=loss-free blend."),{tag:"velocity"}):{tag:o?"surprise-per-unit":"surprise-raw",colormap:n}:{tag:"velocity"}}let $=6*Math.PI;function R(e,t,r){return n.tidy(()=>{let s=.38*Math.min(t,r),a=s/$,o=e.slice([0,0],[-1,1]).sub(t/2),i=e.slice([0,1],[-1,1]).sub(r/2),l=o.square().add(i.square()).add(1e-4).sqrt(),u=n.atan2(i,o),p=n.fill(l.shape,1e8);for(let e=0;e<=4;e++){let t=u.add(2*Math.PI*e),r=t.relu().mul(a);p=n.minimum(p,l.sub(r).square())}return p.mean().asScalar()})}function P(e,t,r){return n.tidy(()=>{let s=n.tensor2d([[t/2,r/2]]);return e.sub(s).square().sum(1).mean().asScalar()})}function M(e){return(t,r,s)=>n.tidy(()=>{let n=R(t,r,s),a=P(t,r,s);return n.add(a.mul(e)).asScalar()})}/**
+(0,g.objectiveDims)(u,c,d);let h=n?.game,f=h?{game:h}:{},m=/**
+ * `?advPolar=λ` / `?advNematic=λ` — the anti-collapse pressure knobs.
+ *
+ * Both zero is the NAMED `none` variant, not a weight-0 `anti-collapse`: the
+ * fused routing decision below reads the tag, and "declared but inert" would
+ * push a piece onto the slow tfjs trainer for nothing. `?advPolarTau` defaults
+ * to the objective's own soft-angle τ so the pressure and the payoff agree on
+ * what "a direction" means; raw-vector objectives have no τ and fall back to
+ * the canonical one.
+ */function(e,t,r){let s="anti-collapse"===t.tag?t:null,n="raw-vector"===r.tag?$.tau:r.tau,a=Math.max(0,I(e,"advPolar",s?s.polar:0)),o=Math.max(0,I(e,"advNematic",s?s.nematic:0));if(0===a&&0===o)return{tag:"none"};let i=I(e,"advPolarTau",s?s.tau:n);if(!(Number.isFinite(i)&&i>0))throw Error(`?advPolarTau must be finite and > 0, got ${i}`);return{tag:"anti-collapse",polar:a,nematic:o,tau:i}}(t,n?P(n):v,d);if("single"===s)return{tag:"on",kind:{tag:"single"},encoding:u,target:c,loss:d,weight:l,pressure:m,...f};if("wta"===s)return{tag:"on",kind:{tag:"wta",k:a,relaxEps:o},encoding:u,target:c,loss:d,weight:l,pressure:m,...f};if(null!==s)throw Error(`?adv must be off|single|wta, got "${s}"`);// No `?adv=`: keep the piece's variant, apply the knob overrides to it.
+let x="single"===r.kind.tag?{tag:"single"}:{tag:"wta",k:a,relaxEps:o};return{tag:"on",kind:x,encoding:u,target:c,loss:d,weight:l,pressure:m,...f}}function B(e,t,r){let s=r.get("cmap"),n="viridis"===s||"coolwarm"===s||"inferno"===s?s:e.colormap??"inferno",a=r.get("color");if("velocity"===a)return{tag:"velocity"};let o="surprise-per-unit"===a||"surprise-unit"===a||"1"===r.get("surNorm"),i="surprise"===a||"surprise-raw"===a||null===a&&"surprise"===e.renderer&&!o;return i||o?"off"===t.tag?(console.warn("[adversary] surprise colour ignored: this piece has no adversary, so there is no per-particle residual to colour by."),{tag:"velocity"}):"agree-disagree"===e.mode?(console.warn("[adversary] surprise colour ignored for Agree+Disagree: its required RGB output is A=disagree, B=agree, C=loss-free blend."),{tag:"velocity"}):{tag:o?"surprise-per-unit":"surprise-raw",colormap:n}:{tag:"velocity"}}let z=6*Math.PI;function L(e,t,r){return n.tidy(()=>{let s=.38*Math.min(t,r),a=s/z,o=e.slice([0,0],[-1,1]).sub(t/2),i=e.slice([0,1],[-1,1]).sub(r/2),l=o.square().add(i.square()).add(1e-4).sqrt(),u=n.atan2(i,o),p=n.fill(l.shape,1e8);for(let e=0;e<=4;e++){let t=u.add(2*Math.PI*e),r=t.relu().mul(a);p=n.minimum(p,l.sub(r).square())}return p.mean().asScalar()})}function G(e,t,r){return n.tidy(()=>{let s=n.tensor2d([[t/2,r/2]]);return e.sub(s).square().sum(1).mean().asScalar()})}function V(e){return(t,r,s)=>n.tidy(()=>{let n=L(t,r,s),a=G(t,r,s);return n.add(a.mul(e)).asScalar()})}/**
  * Arc length of Archimedean `r = b·θ` from 0 to `theta`:
  *   L(θ) = (b/2)·(θ√(1+θ²) + asinh(θ))
- */function O(e,t){let r=Math.sqrt(1+t*t);return .5*e*(t*r+Math.asinh(t))}/**
+ */function U(e,t){let r=Math.sqrt(1+t*t);return .5*e*(t*r+Math.asinh(t))}/**
  * Invert arc length for `r = b·θ` on `[thetaMin, thetaMax]` (binary search).
- */function B(e,t,r,s){let n=O(e,r),a=r,o=s;for(let r=0;r<48;r++){let r=.5*(a+o);O(e,r)-n<t?a=r:o=r}return .5*(a+o)}/**
+ */function W(e,t,r,s){let n=U(e,r),a=r,o=s;for(let r=0;r<48;r++){let r=.5*(a+o);U(e,r)-n<t?a=r:o=r}return .5*(a+o)}/**
  * Composite loss for the Helmholtz field piece: mostly chaos + isotropy, held
  * together by a faint spiral so the mixing has a ghost of structure.
  *
@@ -186,31 +268,35 @@ let g="single"===r.kind.tag?{tag:"single"}:{tag:"wta",k:a,relaxEps:o};return{tag
  *
  * Requires `ctx.field` and `ctx.force` (the field piece always supplies them).
  * Weights are artistic knobs — tune freely.
- */function z(e={W_CHAOS:1,W_ISO:1,W_DIV:.5,W_SPIRAL:2e-5,HH:.01,SPIRAL_TURNS:3}){let{W_CHAOS:t,W_ISO:r,W_DIV:s,W_SPIRAL:a,HH:o}=e;return 0===t&&0===r&&0===s&&0===a?()=>n.scalar(0):(e,l,u,p)=>n.tidy(()=>{let c=p.field,d=p.force,h=e.div(n.tensor2d([[l,u]])),f=h.shape[0],m=n.concat([h,h.add(n.tensor2d([[o,0]])),h.add(n.tensor2d([[0,o]]))],0),g=c.forces(m),x=g.slice([0,0],[f,-1]),v=g.slice([f,0],[f,-1]),y=g.slice([2*f,0],[f,-1]),b=v.sub(x).square().sum(1),k=y.sub(x).square().sum(1),_=b.add(k).add(1e-12).sqrt().div(1.4142*o+1e-9),w=_.add(1e-6).log().mean().neg(),I=v.slice([0,0],[-1,1]).sub(x.slice([0,0],[-1,1])).div(o),j=y.slice([0,1],[-1,1]).sub(x.slice([0,1],[-1,1])).div(o),S=I.add(j).square().mean(),C=(0,i.isotropyLoss)(d),T=R(e,l,u);return w.mul(t).add(C.mul(r)).add(S.mul(s)).add(T.mul(a)).asScalar()})}function L(e,t,r){if(!e)return{tag:"ok"};switch(t.tag){case"unprobed":return{tag:"unresolved"};case"single-head":// k = 1: there is no mixture whose effective K could degrade, and the
+ */function q(e={W_CHAOS:1,W_ISO:1,W_DIV:.5,W_SPIRAL:2e-5,HH:.01,SPIRAL_TURNS:3}){let{W_CHAOS:t,W_ISO:r,W_DIV:s,W_SPIRAL:a,HH:o}=e;return 0===t&&0===r&&0===s&&0===a?()=>n.scalar(0):(e,l,u,p)=>n.tidy(()=>{let c=p.field,d=p.force,h=e.div(n.tensor2d([[l,u]])),f=h.shape[0],m=n.concat([h,h.add(n.tensor2d([[o,0]])),h.add(n.tensor2d([[0,o]]))],0),g=c.forces(m),x=g.slice([0,0],[f,-1]),v=g.slice([f,0],[f,-1]),y=g.slice([2*f,0],[f,-1]),b=v.sub(x).square().sum(1),k=y.sub(x).square().sum(1),_=b.add(k).add(1e-12).sqrt().div(1.4142*o+1e-9),w=_.add(1e-6).log().mean().neg(),I=v.slice([0,0],[-1,1]).sub(x.slice([0,0],[-1,1])).div(o),j=y.slice([0,1],[-1,1]).sub(x.slice([0,1],[-1,1])).div(o),S=I.add(j).square().mean(),C=(0,i.isotropyLoss)(d),T=L(e,l,u);return w.mul(t).add(C.mul(r)).add(S.mul(s)).add(T.mul(a)).asScalar()})}function H(e,t,r){if(!e)return{tag:"ok"};switch(t.tag){case"unprobed":return{tag:"unresolved"};case"single-head":// k = 1: there is no mixture whose effective K could degrade, and the
 // win floor (0.05/k) cannot trip on a lone head that wins everything.
 // Classified deliberately rather than defaulted.
-return{tag:"ok"};case"spread":if("unseeded"===r.tag)return{tag:"unresolved"};return t.meanPair<.2*r.rms?{tag:"pileup",meanPair:t.meanPair,scale:r.rms}:{tag:"separated-unresolved",meanPair:t.meanPair,scale:r.rms};default:return W(t,"classifyHeads")}}function G(e,t){let r=e=>{switch(e.tag){case"ok":return 0;case"separated-unresolved":return 1;case"unresolved":return 2;case"pileup":return 3;default:return W(e,"combineHeadHealth.rank")}};return r(e)>=r(t)?e:t}/** δ: HeadHealth → HUD suffix for the `heads` line. One string per verdict —
- *  red only for the real pathology; the benign state is labelled as such. */function V(e){switch(e.tag){case"ok":return"";case"unresolved":return"  skew (unprobed)";case"separated-unresolved":return`  skew + separated (support unprobed, ${(e.meanPair/e.scale).toFixed(2)}\xb7rms)`;case"pileup":return`  HEAD COLLAPSE (spread ${(e.meanPair/e.scale).toFixed(2)}\xb7rms)`;default:return W(e,"headHealthHud")}}function U(e,t,r,s=.003,n="tfjs"){switch(e.tag){case"off":return{tag:"off"};case"on":{let a={tag:"on",kind:e.kind,k:(0,m.headCount)(e.kind),weight:e.weight,winEma:Array((0,m.headCount)(e.kind)).fill(0),spread:{tag:"unprobed"},lastProbeMs:0};if("fused"===n)// its predictor weights and Adam state; constructing the reference
+return{tag:"ok"};case"spread":if("unseeded"===r.tag)return{tag:"unresolved"};return t.meanPair<.2*r.rms?{tag:"pileup",meanPair:t.meanPair,scale:r.rms}:{tag:"separated-unresolved",meanPair:t.meanPair,scale:r.rms};default:return Z(t,"classifyHeads")}}function K(e,t){let r=e=>{switch(e.tag){case"ok":return 0;case"separated-unresolved":return 1;case"unresolved":return 2;case"pileup":return 3;default:return Z(e,"combineHeadHealth.rank")}};return r(e)>=r(t)?e:t}/** δ: HeadHealth → HUD suffix for the `heads` line. One string per verdict —
+ *  red only for the real pathology; the benign state is labelled as such. */function Y(e){switch(e.tag){case"ok":return"";case"unresolved":return"  skew (unprobed)";case"separated-unresolved":return`  skew + separated (support unprobed, ${(e.meanPair/e.scale).toFixed(2)}\xb7rms)`;case"pileup":return`  HEAD COLLAPSE (spread ${(e.meanPair/e.scale).toFixed(2)}\xb7rms)`;default:return Z(e,"headHealthHud")}}function X(e,t,r,s=.003,n="tfjs"){switch(e.tag){case"off":return{tag:"off"};case"on":{let a={tag:"on",kind:e.kind,k:(0,g.headCount)(e.kind),weight:e.weight,pressure:P(e),winEma:Array((0,g.headCount)(e.kind)).fill(0),spread:{tag:"unprobed"},lastProbeMs:0};if("fused"===n)// its predictor weights and Adam state; constructing the reference
 // models used to retain 23–79 idle tensors depending on K.
-return{...a,implementation:"fused"};return{...a,implementation:"tfjs",adv:new m.Adversary({...(0,m.defaultAdversaryConfig)(e.kind,e.encoding,r),target:E(e),loss:F(e),batchTuples:t,// 3e-3 default (vs the module default 1e-3): the discriminator must track a
+return{...a,implementation:"fused"};return{...a,implementation:"tfjs",adv:new g.Adversary({...(0,g.defaultAdversaryConfig)(e.kind,e.encoding,r),target:R(e),loss:M(e),batchTuples:t,// 3e-3 default (vs the module default 1e-3): the discriminator must track a
 // field that is itself moving every frame. A predictor that lags is
 // not a harder opponent, it is a stale one, and the generator then
 // farms reward for beating last second's guess.
-learningRate:s,seed:20260727})}}default:return W(e,"createAdversary")}}function W(e,t){throw Error(`${t}: unhandled variant ${JSON.stringify(e)}`)}function q(e,t,r,s,a,o,i,l){switch(e.tag){case"off":return n.scalar(0);case"on":if("tfjs"!==e.implementation)throw Error("adversaryGeneratorTerm: fused runtime cannot enter the tfjs oracle path");return n.tidy(()=>{let u=n.tensor2d([[o,i]]),p=t.div(u),c="force"===e.adv.cfg.target.tag?e.adv.sampleTarget({tag:"force",pos:p,force:a}):e.adv.sampleTarget({tag:"post-velocity",pos:p,velocity:r.div(l),nextVelocity:s.div(l)}),d=e.adv.generatorLoss(c).mul(e.weight).asScalar();return(0,m.disposeTupleSample)(c),d});default:return W(e,"adversaryGeneratorTerm")}}function H(e,t,r,s=e.maxVelocity,n={tag:"wrap"},a=e.forceMagnitude){return Math.max(1e-6,s/Math.min(t,r))}function K(e,t,r,s,a,o,i,l){switch(e.tag){case"off":return{tag:"off"};case"on":{if("tfjs"!==e.implementation)throw Error("adversaryTrainStep: fused runtime cannot enter the tfjs oracle path");// NOT wrapped in tf.tidy: tidy's return type is `TensorContainer`, which
+learningRate:s,seed:20260727})}}default:return Z(e,"createAdversary")}}function Z(e,t){throw Error(`${t}: unhandled variant ${JSON.stringify(e)}`)}function J(e,t,r,s,a,o,i,l){switch(e.tag){case"off":return n.scalar(0);case"on":if("tfjs"!==e.implementation)throw Error("adversaryGeneratorTerm: fused runtime cannot enter the tfjs oracle path");return n.tidy(()=>{let u=n.tensor2d([[o,i]]),p=t.div(u),c="force"===e.adv.cfg.target.tag?e.adv.sampleTarget({tag:"force",pos:p,force:a}):e.adv.sampleTarget({tag:"post-velocity",pos:p,velocity:r.div(l),nextVelocity:s.div(l)}),d=e.adv.generatorLoss(c).mul(e.weight).asScalar();// ONE composition site for the game's own counter-pressure. It reads
+// the RAW field output, never the encoded target: on the pair observer
+// the collapse is invisible in y (y → 0 IS the collapse) and only the
+// world-frame directions show it.
+return(0,g.disposeTupleSample)(c),d.add(Q(e.pressure,a)).asScalar()});default:return Z(e,"adversaryGeneratorTerm")}}function Q(e,t){switch(e.tag){case"none":return n.scalar(0);case"anti-collapse":return(0,i.directionOrderLoss)(t,e.tau,e.polar,e.nematic);default:return Z(e,"gamePressureLoss")}}function ee(e,t,r,s=e.maxVelocity,n={tag:"wrap"},a=e.forceMagnitude){return Math.max(1e-6,s/Math.min(t,r))}function et(e,t,r,s,a,o,i,l){switch(e.tag){case"off":return{tag:"off"};case"on":{if("tfjs"!==e.implementation)throw Error("adversaryTrainStep: fused runtime cannot enter the tfjs oracle path");// NOT wrapped in tf.tidy: tidy's return type is `TensorContainer`, which
 // cannot carry a telemetry record. Every intermediate is disposed by hand
 // below instead — verified by the `tensors` counter in the HUD, which must
 // stay flat while an adversary piece runs.
-let u=n.tensor2d([[o,i]]),p=t.div(u),c=null,d=null,h="force"===e.adv.cfg.target.tag?e.adv.sampleTarget({tag:"force",pos:p,force:a}):(c=r.div(l),d=s.div(l),e.adv.sampleTarget({tag:"post-velocity",pos:p,velocity:c,nextVelocity:d})),f=e.adv.trainStep(h),g=e.adv.surprise(h),x=g.mean(),v=x.dataSync()[0];g.dispose(),x.dispose();// ~1 Hz HEAD-SPREAD PROBE — wall-clock gated, NOT per step: it costs one
+let u=n.tensor2d([[o,i]]),p=t.div(u),c=null,d=null,h="force"===e.adv.cfg.target.tag?e.adv.sampleTarget({tag:"force",pos:p,force:a}):(c=r.div(l),d=s.div(l),e.adv.sampleTarget({tag:"post-velocity",pos:p,velocity:c,nextVelocity:d})),f=e.adv.trainStep(h),m=e.adv.surprise(h),x=m.mean(),v=x.dataSync()[0];m.dispose(),x.dispose();// ~1 Hz HEAD-SPREAD PROBE — wall-clock gated, NOT per step: it costs one
 // forward per head plus a dataSync (a pipeline sync on webgpu). This
 // batch's `u` serves as the probe contexts — the spread is a property of
 // the HEADS, so any recent batch of real contexts is a valid probe. Must
 // run before the sample is disposed. The first step probes immediately so
 // `unresolved` lasts one discriminator step, not one second.
-let y=performance.now();("unprobed"===e.spread.tag||y-e.lastProbeMs>=1e3)&&(e.spread=e.adv.headSpread(h.u),e.lastProbeMs=y),(0,m.disposeTupleSample)(h),u.dispose(),p.dispose(),c?.dispose(),d?.dispose();// Recent-window win share — see the `winEma` doc on AdversaryRuntime for
+let y=performance.now();("unprobed"===e.spread.tag||y-e.lastProbeMs>=1e3)&&(e.spread=e.adv.headSpread(h.u),e.lastProbeMs=y),(0,g.disposeTupleSample)(h),u.dispose(),p.dispose(),c?.dispose(),d?.dispose();// Recent-window win share — see the `winEma` doc on AdversaryRuntime for
 // why the adversary's own cumulative counter is the wrong statistic here.
 // First step seeds directly; an EMA crawling up from zero would report a
 // total collapse for its first 50 steps on every run.
-let b=e.winEma.some(e=>e>0);for(let t=0;t<e.winEma.length;t++)e.winEma[t]=b?e.winEma[t]+.02*(f.winCounts[t]-e.winEma[t]):f.winCounts[t];let k=e.winEma.reduce((e,t)=>e+t,0)||1,_=e.winEma.map(e=>e/k),w=e.adv.cfg.kind,I=_.some(t=>t<.05/e.adv.k);return{tag:"on",variant:`${"wta"===w.tag?`wta k=${w.k} ε=${w.relaxEps}`:"single"} \xb7 ${e.adv.cfg.target.tag} \xb7 ${e.adv.cfg.loss.tag}`,k:e.adv.k,surprise:v,predLoss:f.loss,winFractions:_,health:L(I,e.spread,e.adv.rewardScaleState()),weight:e.weight}}default:return W(e,"adversaryTrainStep")}}/**
+let b=e.winEma.some(e=>e>0);for(let t=0;t<e.winEma.length;t++)e.winEma[t]=b?e.winEma[t]+.02*(f.winCounts[t]-e.winEma[t]):f.winCounts[t];let k=e.winEma.reduce((e,t)=>e+t,0)||1,_=e.winEma.map(e=>e/k),w=e.adv.cfg.kind,I=_.some(t=>t<.05/e.adv.k);return{tag:"on",variant:`${"wta"===w.tag?`wta k=${w.k} ε=${w.relaxEps}`:"single"} \xb7 ${e.adv.cfg.target.tag} \xb7 ${e.adv.cfg.loss.tag}`,k:e.adv.k,surprise:v,predLoss:f.loss,winFractions:_,health:H(I,e.spread,e.adv.rewardScaleState()),weight:e.weight}}default:return Z(e,"adversaryTrainStep")}}/**
  * MEAN-SPEED READBACK — an operational check on the dimensionless physical
  * drive bound. The adjusted observer removes the reward's radial signal, while
  * the drive policy is what actually keeps bounded-field particle velocities
@@ -220,10 +306,10 @@ let b=e.winEma.some(e=>e>0);for(let t=0;t<e.winEma.length;t++)e.winEma[t]=b?e.wi
  * 1024-particle prefix (8 KB) copied every `every` frames, mapped async,
  * mean |v| computed on the CPU. The prefix is unbiased for the same reason
  * the surprise prefix is — particle index carries no state structure.
- */class Y{constructor(e,t={}){/** mean |v| in px/frame over the sampled prefix (NaN until first sample) */this.mean=NaN,this.pending=!1,this.pendingBytes=0,this.sample=t.sample??1024,this.every=Math.max(1,t.every??8),this.staging=e.createBuffer({size:8*this.sample,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ})}encodeSample(e,t,r,s){if(this.pending||s%this.every!=0)return!1;let n=8*Math.min(this.sample,r);return 0!==n&&(e.copyBufferToBuffer(t,0,this.staging,0,n),this.pendingBytes=n,!0)}afterSubmit(e){if(!e||this.pending)return;this.pending=!0;let t=this.pendingBytes;this.staging.mapAsync(GPUMapMode.READ,0,t).then(()=>{let e=new Float32Array(this.staging.getMappedRange(0,t).slice(0));this.staging.unmap(),this.pending=!1;let r=0,s=e.length>>1;for(let t=0;t<s;t++)r+=Math.hypot(e[2*t],e[2*t+1]);this.mean=r/Math.max(1,s)}).catch(()=>{this.pending=!1})}destroy(){try{this.staging.destroy()}catch(e){}}}let X={W_CHAOS:1,W_ISO:1,W_DIV:.5,W_SPIRAL:0,W_COVER:0,W_CENTER:0,HH:.01,SPIRAL_TURNS:3},Z={W_CHAOS:0,W_ISO:0,W_DIV:0,W_SPIRAL:0,W_COVER:0,W_CENTER:0,HH:.01,SPIRAL_TURNS:3},J={W_CHAOS:0,W_ISO:0,W_DIV:0,W_SPIRAL:1,W_COVER:0,W_CENTER:2e-5,HH:.01,SPIRAL_TURNS:3},Q={W_CHAOS:0,W_ISO:0,W_DIV:0,W_SPIRAL:0,W_COVER:1,W_CENTER:0,COVER_SAMPLES:256,HH:.01,SPIRAL_TURNS:3},ee={W_CHAOS:0,W_ISO:0,W_DIV:0,W_SPIRAL:0,W_COVER:0,W_CENTER:.001,HH:.01,SPIRAL_TURNS:3},et=[{// Spiral attractor — look (Ghost/Clean/Trails) and arch are dock axes.
-name:"Spiral",particleCount:1e3,friction:.985,forceMagnitude:3,maxVelocity:22,resetRate:.012,drawRate:2,learningRate:.01,backgroundColor:[12,0,34],alphaBlend:.06,renderer:"alpha-fade",fieldArch:o.ARCH.mlpShallow,archEditable:!0,lookEditable:!0,fieldLoss:{...J,W_CENTER:5e-5},computeLoss:M(5e-5)},{name:"Vortex",particleCount:1200,friction:.985,forceMagnitude:3,maxVelocity:20,resetRate:.015,drawRate:1,learningRate:.01,backgroundColor:[12,0,34],alphaBlend:.05,renderer:"alpha-fade",fieldArch:o.ARCH.mlpShallow,archEditable:!0,lookEditable:!0,fieldLoss:ee,computeLoss:(e,t,r)=>n.tidy(()=>P(e,t,r).mul(.001).asScalar())},{// Particle→spiral radial residual (+ tiny center). Arch/look via dock.
-name:"Galaxy",particleCount:1500,friction:.975,forceMagnitude:4,maxVelocity:30,resetRate:.01,drawRate:3,learningRate:.005,backgroundColor:[2,0,12],alphaBlend:.03,renderer:"alpha-fade",fieldArch:o.ARCH.mlp256,archEditable:!0,lookEditable:!0,fieldLoss:J,computeLoss:M(2e-5)},{// Cover-only Chamfer ↑. Arch (Fourier/SIREN/…) and look via dock.
-name:"Spiral Cover",particleCount:1500,friction:.975,forceMagnitude:4,maxVelocity:30,resetRate:.01,drawRate:3,learningRate:.005,backgroundColor:[2,0,12],alphaBlend:.03,renderer:"alpha-fade",fieldArch:o.ARCH.mlp256,archEditable:!0,lookEditable:!0,fieldLoss:Q,computeLoss:/**
+ */class er{constructor(e,t={}){/** mean |v| in px/frame over the sampled prefix (NaN until first sample) */this.mean=NaN,this.pending=!1,this.pendingBytes=0,this.sample=t.sample??1024,this.every=Math.max(1,t.every??8),this.staging=e.createBuffer({size:8*this.sample,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ})}encodeSample(e,t,r,s){if(this.pending||s%this.every!=0)return!1;let n=8*Math.min(this.sample,r);return 0!==n&&(e.copyBufferToBuffer(t,0,this.staging,0,n),this.pendingBytes=n,!0)}afterSubmit(e){if(!e||this.pending)return;this.pending=!0;let t=this.pendingBytes;this.staging.mapAsync(GPUMapMode.READ,0,t).then(()=>{let e=new Float32Array(this.staging.getMappedRange(0,t).slice(0));this.staging.unmap(),this.pending=!1;let r=0,s=e.length>>1;for(let t=0;t<s;t++)r+=Math.hypot(e[2*t],e[2*t+1]);this.mean=r/Math.max(1,s)}).catch(()=>{this.pending=!1})}destroy(){try{this.staging.destroy()}catch(e){}}}let es={W_CHAOS:1,W_ISO:1,W_DIV:.5,W_SPIRAL:0,W_COVER:0,W_CENTER:0,HH:.01,SPIRAL_TURNS:3},en={W_CHAOS:0,W_ISO:0,W_DIV:0,W_SPIRAL:0,W_COVER:0,W_CENTER:0,HH:.01,SPIRAL_TURNS:3},ea={W_CHAOS:0,W_ISO:0,W_DIV:0,W_SPIRAL:1,W_COVER:0,W_CENTER:2e-5,HH:.01,SPIRAL_TURNS:3},eo={W_CHAOS:0,W_ISO:0,W_DIV:0,W_SPIRAL:0,W_COVER:1,W_CENTER:0,COVER_SAMPLES:256,HH:.01,SPIRAL_TURNS:3},ei={W_CHAOS:0,W_ISO:0,W_DIV:0,W_SPIRAL:0,W_COVER:0,W_CENTER:.001,HH:.01,SPIRAL_TURNS:3},el=[{// Spiral attractor — look (Ghost/Clean/Trails) and arch are dock axes.
+name:"Spiral",particleCount:1e3,friction:.985,forceMagnitude:3,maxVelocity:22,resetRate:.012,drawRate:2,learningRate:.01,backgroundColor:[12,0,34],alphaBlend:.06,renderer:"alpha-fade",fieldArch:o.ARCH.mlpShallow,archEditable:!0,lookEditable:!0,fieldLoss:{...ea,W_CENTER:5e-5},computeLoss:V(5e-5)},{name:"Vortex",particleCount:1200,friction:.985,forceMagnitude:3,maxVelocity:20,resetRate:.015,drawRate:1,learningRate:.01,backgroundColor:[12,0,34],alphaBlend:.05,renderer:"alpha-fade",fieldArch:o.ARCH.mlpShallow,archEditable:!0,lookEditable:!0,fieldLoss:ei,computeLoss:(e,t,r)=>n.tidy(()=>G(e,t,r).mul(.001).asScalar())},{// Particle→spiral radial residual (+ tiny center). Arch/look via dock.
+name:"Galaxy",particleCount:1500,friction:.975,forceMagnitude:4,maxVelocity:30,resetRate:.01,drawRate:3,learningRate:.005,backgroundColor:[2,0,12],alphaBlend:.03,renderer:"alpha-fade",fieldArch:o.ARCH.mlp256,archEditable:!0,lookEditable:!0,fieldLoss:ea,computeLoss:V(2e-5)},{// Cover-only Chamfer ↑. Arch (Fourier/SIREN/…) and look via dock.
+name:"Spiral Cover",particleCount:1500,friction:.975,forceMagnitude:4,maxVelocity:30,resetRate:.01,drawRate:3,learningRate:.005,backgroundColor:[2,0,12],alphaBlend:.03,renderer:"alpha-fade",fieldArch:o.ARCH.mlp256,archEditable:!0,lookEditable:!0,fieldLoss:eo,computeLoss:/**
  * Spiral Cover — curve→particles only (not bidirectional).
  *
  * Each sample on the spiral wants a nearby particle. Attractors lie on the
@@ -237,16 +323,16 @@ name:"Spiral Cover",particleCount:1500,friction:.975,forceMagnitude:4,maxVelocit
  * as {@link spiralLoss}). Equal-θ sampling packs near the origin and makes
  * cover collapse into a hub/cross; arc-length sampling keeps arms equally
  * costly when empty.
- */function(e,t,r){let s=e/2,n=t/2,a=.38*Math.min(e,t),o=a/$,i=O(o,$),l=.08*i,u=Math.max(i-l,1e-6),p=B(o,l,0,$),c=new Float32Array(2*r);for(let e=0;e<r;e++){let t=u*((e+.5)/r),a=B(o,t,p,$),i=o*a;c[2*e]=s+i*Math.cos(a),c[2*e+1]=n+i*Math.sin(a)}return c}(s,a,r),[r,2]),l=e.expandDims(1).sub(i.expandDims(0)).square().sum(2);return l.min(0).mean().div(o).asScalar()}).mul(t).asScalar())}({beta:1})},{// Two direct-vector MLP heads share one explicit maximum-sensitivity loss.
+ */function(e,t,r){let s=e/2,n=t/2,a=.38*Math.min(e,t),o=a/z,i=U(o,z),l=.08*i,u=Math.max(i-l,1e-6),p=W(o,l,0,z),c=new Float32Array(2*r);for(let e=0;e<r;e++){let t=u*((e+.5)/r),a=W(o,t,p,z),i=o*a;c[2*e]=s+i*Math.cos(a),c[2*e+1]=n+i*Math.sin(a)}return c}(s,a,r),[r,2]),l=e.expandDims(1).sub(i.expandDims(0)).square().sum(2);return l.min(0).mean().div(o).asScalar()}).mul(t).asScalar())}({beta:1})},{// Two direct-vector MLP heads share one explicit maximum-sensitivity loss.
 // Encoding variants (SIREN / Fourier / HashGrid) are dock presets — same
 // loss. The alpha slider is a neutral output mix, not order/chaos.
 // particleCount is 200k (slider to 1M): advection is a single fused WGSL
 // dispatch (see render/webgpu/advect.ts), so count no longer gates FPS.
-name:"Neural Field \xb7 Max Chaos",particleCount:2e5,friction:.99,forceMagnitude:3.5,maxVelocity:26,resetRate:.01,drawRate:2,learningRate:.01,backgroundColor:[6,2,20],alphaBlend:.05,renderer:"alpha-fade",fieldArch:{...o.ARCH.dualStd,alpha:.7},archEditable:!0,archDock:"dual",lookEditable:!0,fieldLoss:X,computeLoss:z(X)},{// MULTI-SPECIES: 3 particle classes. Head B takes r(pos, onehot(class))
+name:"Neural Field \xb7 Max Chaos",particleCount:2e5,friction:.99,forceMagnitude:3.5,maxVelocity:26,resetRate:.01,drawRate:2,learningRate:.01,backgroundColor:[6,2,20],alphaBlend:.05,renderer:"alpha-fade",fieldArch:{...o.ARCH.dualStd,alpha:.7},archEditable:!0,archDock:"dual",lookEditable:!0,fieldLoss:es,computeLoss:q(es)},{// MULTI-SPECIES: 3 particle classes. Head B takes r(pos, onehot(class))
 // while head A and the isotropy pressure are class-blind. Class is a
 // stable hash of particle index (storage-free); renderer colours by
 // species. FUSED-ONLY (tfjs has no class input — ?train=tfjs ignored).
-name:"Neural Field \xb7 Species",particleCount:2e5,friction:.99,forceMagnitude:3.5,maxVelocity:26,resetRate:.01,drawRate:2,learningRate:.01,backgroundColor:[4,2,16],alphaBlend:.05,renderer:"alpha-fade",fieldArch:{...o.ARCH.dualStd,alpha:.7,classes:3},lookEditable:!0,fieldLoss:X,computeLoss:z(X)},// ══ ADVERSARY PIECES ═══════════════════════════════════════════════════
+name:"Neural Field \xb7 Species",particleCount:2e5,friction:.99,forceMagnitude:3.5,maxVelocity:26,resetRate:.01,drawRate:2,learningRate:.01,backgroundColor:[4,2,16],alphaBlend:.05,renderer:"alpha-fade",fieldArch:{...o.ARCH.dualStd,alpha:.7,classes:3},lookEditable:!0,fieldLoss:es,computeLoss:q(es)},// ══ ADVERSARY PIECES ═══════════════════════════════════════════════════
 // Standalone games default to generator/field Adam LR=1e-3 and predictor
 // LR=3e-3. Both are live (and URL-addressable as ?gLR / ?dLR) because their
 // ratio is a real game-capacity dial, not a cosmetic multiplier.
@@ -261,17 +347,17 @@ name:"Neural Field \xb7 Species",particleCount:2e5,friction:.99,forceMagnitude:3
 // trained predictor can drive its Bayes risk toward approximation error.
 // The live field co-trains and has finite capacity, so no claim is made that
 // the displayed residual must monotonically vanish.
-name:"Adversary \xb7 Single (control)",particleCount:9e4,friction:.97,drive:.55,forceMagnitude:w(.55,22,.97),maxVelocity:22,// Low on purpose so the artwork has long coherent trajectories. The strict
+name:"Adversary \xb7 Single (control)",particleCount:9e4,friction:.97,drive:.55,forceMagnitude:j(.55,22,.97),maxVelocity:22,// Low on purpose so the artwork has long coherent trajectories. The strict
 // adversary observes raw F(x), not the respawn transition.
 resetRate:.003,drawRate:2,learningRate:.001,backgroundColor:[3,2,10],alphaBlend:.05,renderer:"surprise",colormap:"inferno",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualStd,alpha:.7}),adversary:{tag:"on",kind:{tag:"single"},encoding:{tag:"point"},// REWARD UNITS CHANGED 2026-07-27: generatorLoss is now normalized by an
 // EMA of RMS‖y‖ — dimensionless residual per unit field signal.
-weight:.01},fieldLoss:Z,computeLoss:z(Z)},{// Eight guesses instead of one, relaxed (ε = 0.05) so a starved head still
+weight:.01},fieldLoss:en,computeLoss:q(en)},{// Eight guesses instead of one, relaxed (ε = 0.05) so a starved head still
 // receives gradient even when it rarely wins. With a frozen field the point
 // conditional is deterministic, so extra heads add capacity rather than
 // creating multimodality. The co-trained finite-capacity game may retain a
 // nonzero residual; K alone is not evidence of novelty.
 // Coloured by velocity with long ghost trails — the motion is the subject.
-name:"Adversary \xb7 WTA K=8",particleCount:12e4,friction:.97,drive:.65,forceMagnitude:w(.65,26,.97),maxVelocity:26,resetRate:.005,drawRate:2,learningRate:.001,backgroundColor:[8,2,22],alphaBlend:.05,renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualStd,alpha:.62}),adversary:{tag:"on",kind:{tag:"wta",k:8,relaxEps:.05},encoding:{tag:"point"},weight:.012},fieldLoss:Z,computeLoss:z(Z)},{// THE INTERESTING ONE. m = 2 with an SE(2)-canonicalized pair encoding: the
+name:"Adversary \xb7 WTA K=8",particleCount:12e4,friction:.97,drive:.65,forceMagnitude:j(.65,26,.97),maxVelocity:26,resetRate:.005,drawRate:2,learningRate:.001,backgroundColor:[8,2,22],alphaBlend:.05,renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualStd,alpha:.62}),adversary:{tag:"on",kind:{tag:"wta",k:8,relaxEps:.05},encoding:{tag:"point"},weight:.012},fieldLoss:en,computeLoss:q(en)},{// THE INTERESTING ONE. m = 2 with an SE(2)-canonicalized pair encoding: the
 // context is the separation r alone (the complete invariant of two labelled
 // points under translation + rotation) and the target is the relative raw
 // field signal F(x), resolved in the pair's own frame. Absolute position and
@@ -290,10 +376,10 @@ name:"Adversary \xb7 WTA K=8",particleCount:12e4,friction:.97,drive:.65,forceMag
 // answers "which pairs are harder than typical right now" rather than
 // "which are large" — the interesting question once the residual is
 // permanently nonzero.
-name:"Adversary \xb7 Pair WTA K=4",particleCount:7e4,friction:.97,drive:.65,forceMagnitude:w(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.001,backgroundColor:[2,3,9],alphaBlend:.05,renderer:"surprise",colormap:"coolwarm",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualStd,alpha:.55}),adversary:{tag:"on",kind:{tag:"wta",k:4,relaxEps:.05},encoding:{tag:"pair-rotation-scale-adjusted"},// Explicit — do not rely only on the legacy encoding→soft-angle alias.
+name:"Adversary \xb7 Pair WTA K=4",particleCount:7e4,friction:.97,drive:.65,forceMagnitude:j(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.001,backgroundColor:[2,3,9],alphaBlend:.05,renderer:"surprise",colormap:"coolwarm",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualStd,alpha:.55}),adversary:{tag:"on",kind:{tag:"wta",k:4,relaxEps:.05},encoding:{tag:"pair-rotation-scale-adjusted"},// Explicit — do not rely only on the legacy encoding→soft-angle alias.
 // Soft-angle (direction-only) is what made the pair swirls; raw-vector
 // on this observer collapses into amplitude / shear cheats.
-loss:{tag:"soft-angle",tau:N.tau},weight:.015},fieldLoss:Z,computeLoss:z(Z)},{// THREE-BODY CONGRUENCE GAME. m = 3: the context is the triangle's three
+loss:{tag:"soft-angle",tau:$.tau},weight:.015},fieldLoss:en,computeLoss:q(en)},{// THREE-BODY CONGRUENCE GAME. m = 3: the context is the triangle's three
 // side lengths in canonical (descending) order — the COMPLETE congruence
 // invariant of an unordered triple under the full E(2) including
 // reflection — and the target is all three vertices' centered raw field
@@ -312,11 +398,11 @@ loss:{tag:"soft-angle",tau:N.tau},weight:.015},fieldLoss:Z,computeLoss:z(Z)},{//
 // blue-black background than the pair piece keeps the viridis low end
 // legible. 60k particles = 20k triangles per surprise cycle — the tuple
 // count, not the particle count, is what the encode step pays for.
-name:"Adversary \xb7 Tri WTA K=6",particleCount:6e4,friction:.97,drive:.65,forceMagnitude:w(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.001,backgroundColor:[1,3,12],alphaBlend:.05,renderer:"surprise",colormap:"viridis",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualStd,alpha:.55}),adversary:{tag:"on",kind:{tag:"wta",k:6,relaxEps:.05},encoding:{tag:"tri"},weight:.012},fieldLoss:Z,computeLoss:z(Z)},{// FOUR LABELLED POSITIONS PER TUPLE. Member 0 anchors translation and
+name:"Adversary \xb7 Tri WTA K=6",particleCount:6e4,friction:.97,drive:.65,forceMagnitude:j(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.001,backgroundColor:[1,3,12],alphaBlend:.05,renderer:"surprise",colormap:"viridis",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualStd,alpha:.55}),adversary:{tag:"on",kind:{tag:"wta",k:6,relaxEps:.05},encoding:{tag:"tri"},weight:.012},fieldLoss:en,computeLoss:q(en)},{// FOUR LABELLED POSITIONS PER TUPLE. Member 0 anchors translation and
 // member 1 defines the co-rotating frame; members 2 and 3 keep their labels.
 // The observer removes global translation+rotation only. It deliberately
 // does not claim permutation or scale invariance.
-name:"Adversary \xb7 Quad WTA K=6",particleCount:6e4,friction:.97,drive:.65,forceMagnitude:w(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.001,backgroundColor:[3,1,12],alphaBlend:.05,renderer:"surprise",colormap:"inferno",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualStd,alpha:.55}),adversary:{tag:"on",kind:{tag:"wta",k:6,relaxEps:.05},encoding:{tag:"quad-labelled"},weight:.012},fieldLoss:Z,computeLoss:z(Z)},// Four Pixel GAN games on soft density drawings (docs/PIXEL_DISC.md).
+name:"Adversary \xb7 Quad WTA K=6",particleCount:6e4,friction:.97,drive:.65,forceMagnitude:j(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.001,backgroundColor:[3,1,12],alphaBlend:.05,renderer:"surprise",colormap:"inferno",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualStd,alpha:.55}),adversary:{tag:"on",kind:{tag:"wta",k:6,relaxEps:.05},encoding:{tag:"quad-labelled"},weight:.012},fieldLoss:en,computeLoss:q(en)},// Four Pixel GAN games on soft density drawings (docs/PIXEL_DISC.md).
 // Shared trunk: splat → conv3×3 → codebook. Reverse-mode gen through D(pos').
 //
 // ZERO_FIELD_LOSS IS LOAD-BEARING, exactly as on the relational-adversary
@@ -337,13 +423,13 @@ name:"Adversary \xb7 Quad WTA K=6",particleCount:6e4,friction:.97,drive:.65,forc
 // knob for that is pixelDisc.weight, and it is only meaningful once the
 // critic is the sole gradient — Adam rescales by sqrt(v), so a small-but-
 // uncontested extGrad still produces full-size steps.
-{name:"Pixel \xb7 VecField",particleCount:8e4,friction:.97,drive:.65,forceMagnitude:w(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.0015,backgroundColor:[4,6,14],alphaBlend:.05,renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.55}),pixelDisc:{kind:"vec-field",weight:.04,G:16,E:8,K:16,hidden:32,dt:.15},fieldLoss:Z,computeLoss:z(Z)},{name:"Pixel \xb7 NextFrame",particleCount:8e4,friction:.97,drive:.65,forceMagnitude:w(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.0015,backgroundColor:[4,6,14],alphaBlend:.05,renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.55}),pixelDisc:{kind:"next-frame",weight:.04,G:16,E:8,K:16,hidden:32,dt:.15},fieldLoss:Z,computeLoss:z(Z)},{name:"Pixel \xb7 RealFake",particleCount:8e4,friction:.97,drive:.65,forceMagnitude:w(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.0015,backgroundColor:[4,6,14],alphaBlend:.05,renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.55}),pixelDisc:{kind:"real-fake",weight:.03,G:16,E:8,K:16,hidden:32,dt:.15},fieldLoss:Z,computeLoss:z(Z)},{name:"Pixel \xb7 Inpaint",particleCount:8e4,friction:.97,drive:.65,forceMagnitude:w(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.0015,backgroundColor:[4,6,14],alphaBlend:.05,renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.55}),pixelDisc:{kind:"inpaint",weight:.04,G:16,E:8,K:16,hidden:32,dt:.15},fieldLoss:Z,computeLoss:z(Z)},{// GENERAL-SUM PREDICTOR GAME. Head A opposes the predictor, head B
+{name:"Pixel \xb7 VecField",particleCount:8e4,friction:.97,drive:.65,forceMagnitude:j(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.0015,backgroundColor:[4,6,14],alphaBlend:.05,renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.55}),pixelDisc:{kind:"vec-field",weight:.04,G:16,E:8,K:16,hidden:32,dt:.15},fieldLoss:en,computeLoss:q(en)},{name:"Pixel \xb7 NextFrame",particleCount:8e4,friction:.97,drive:.65,forceMagnitude:j(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.0015,backgroundColor:[4,6,14],alphaBlend:.05,renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.55}),pixelDisc:{kind:"next-frame",weight:.04,G:16,E:8,K:16,hidden:32,dt:.15},fieldLoss:en,computeLoss:q(en)},{name:"Pixel \xb7 RealFake",particleCount:8e4,friction:.97,drive:.65,forceMagnitude:j(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.0015,backgroundColor:[4,6,14],alphaBlend:.05,renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.55}),pixelDisc:{kind:"real-fake",weight:.03,G:16,E:8,K:16,hidden:32,dt:.15},fieldLoss:en,computeLoss:q(en)},{name:"Pixel \xb7 Inpaint",particleCount:8e4,friction:.97,drive:.65,forceMagnitude:j(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.0015,backgroundColor:[4,6,14],alphaBlend:.05,renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.55}),pixelDisc:{kind:"inpaint",weight:.04,G:16,E:8,K:16,hidden:32,dt:.15},fieldLoss:en,computeLoss:q(en)},{// GENERAL-SUM PREDICTOR GAME. Head A opposes the predictor, head B
 // cooperates with it, and C=(1-beta)A+beta B is derived only for display.
 // There are no C weights, C optimizer, or direct C loss. Stable particle
 // roles render A/B/C as exact red/green/blue.
-name:"Adversary \xb7 Agree + Disagree RGB",mode:"agree-disagree",palette:"rgb-roles",particleCount:9e4,friction:.97,drive:.6,forceMagnitude:w(.6,22,.97),maxVelocity:22,resetRate:.004,drawRate:2,learningRate:.001,backgroundColor:[1,1,5],alphaBlend:.05,renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.5,fourierOctaves:3,semantic:"agree-disagree"}),fieldLoss:Z,adversary:{tag:"on",game:"agree-disagree",kind:{tag:"wta",k:4,relaxEps:.05},encoding:{tag:"pair-rotation-scale-adjusted"},// Same observer as Pair — keep the swirl recipe (soft-angle), not the
+name:"Adversary \xb7 Agree + Disagree RGB",mode:"agree-disagree",palette:"rgb-roles",particleCount:9e4,friction:.97,drive:.6,forceMagnitude:j(.6,22,.97),maxVelocity:22,resetRate:.004,drawRate:2,learningRate:.001,backgroundColor:[1,1,5],alphaBlend:.05,renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.5,fourierOctaves:3,semantic:"agree-disagree"}),fieldLoss:en,adversary:{tag:"on",game:"agree-disagree",kind:{tag:"wta",k:4,relaxEps:.05},encoding:{tag:"pair-rotation-scale-adjusted"},// Same observer as Pair — keep the swirl recipe (soft-angle), not the
 // encoding-only alias that used to look like RAW if the dock carried it.
-loss:{tag:"soft-angle",tau:N.tau},weight:.012},computeLoss:z(Z)},{// COMPOSITION, not a solo. The explicit maximum-sensitivity objective
+loss:{tag:"soft-angle",tau:$.tau},weight:.012},computeLoss:q(en)},{// COMPOSITION, not a solo. The explicit maximum-sensitivity objective
 // (chaos + isotropy + divergence; spiral weight is exactly zero) is paired
 // with the relational adversary. Chaos maximises LOCAL sensitivity — how
 // fast two neighbours separate — while the adversary maximises RESIDUAL
@@ -351,14 +437,14 @@ loss:{tag:"soft-angle",tau:N.tau},weight:.012},computeLoss:z(Z)},{// COMPOSITION
 // objective and they do not want the same field: chaos is happy with a
 // smooth field that stretches, the adversary is not. The tension is the
 // point, and the weight is the dial between them.
-name:"Adversary \xb7 Chaos Weave",particleCount:9e4,friction:.97,drive:.75,forceMagnitude:w(.75,26,.97),maxVelocity:26,resetRate:.004,drawRate:2,learningRate:.006,backgroundColor:[14,3,12],alphaBlend:.05,// alpha-fade (decay 0.94), not trail-buffer (0.97). At 0.97 and ~1e5
+name:"Adversary \xb7 Chaos Weave",particleCount:9e4,friction:.97,drive:.75,forceMagnitude:j(.75,26,.97),maxVelocity:26,resetRate:.004,drawRate:2,learningRate:.006,backgroundColor:[14,3,12],alphaBlend:.05,// alpha-fade (decay 0.94), not trail-buffer (0.97). At 0.97 and ~1e5
 // particles the Fourier field mixes the cloud to uniform coverage within
 // seconds and the long trails accumulate it into a flat brown wash —
 // checked by screenshot. The shorter trail keeps the filaments legible.
 // The neutral A/B output mix is tuned to 0.45 because that aesthetic blend
 // preserved more legible structure in the screenshot comparison. It is not
 // an order/chaos axis and the two direct-vector heads have no separate roles.
-renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.45}),fieldLoss:X,adversary:{tag:"on",kind:{tag:"wta",k:6,relaxEps:.05},encoding:{tag:"pair-rotation"},weight:.006},computeLoss:z(X)},// ══ APPEND ONLY — NEVER REORDER OR INSERT ABOVE THIS LINE ══════════════
+renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualFourier,alpha:.45}),fieldLoss:es,adversary:{tag:"on",kind:{tag:"wta",k:6,relaxEps:.05},encoding:{tag:"pair-rotation"},weight:.006},computeLoss:q(es)},// ══ APPEND ONLY — NEVER REORDER OR INSERT ABOVE THIS LINE ══════════════
 // A piece's GALLERY INDEX is persisted in two places outside this file:
 // shareable deep links carry it, and the dock's localStorage blob
 // (DOCK_STORAGE_KEY, src/index.tsx) stores `runtime.piece` as an integer.
@@ -373,28 +459,27 @@ renderer:"alpha-fade",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualF
 // filaments; α stays at the Pair piece's 0.55 so the position ENCODING is
 // the only deliberate difference between the two.
 //
-// MEASURED COST OF THE HASHGRID, not of the stroke: the fused adversary
-// kernel refuses hashgrid fields (`fusedAdvOk` in startLoop tests
-// `encoding.kind !== "hashgrid"`), so this piece runs the tfjs autograd
-// adversary and the loop logs that choice. Metal, 70k particles, headless
-// Chrome: ~24 fps / learn ≈ 40 ms here vs 60 fps / ~0.8 ms for the fused
-// raw-MLP Pair piece. Fusing hashgrid backward for the adversary is the
-// one change that would buy it back.
+// THIS PIECE TRAINS FULLY FUSED as of the hashgrid adversary port
+// (D, generator reward AND field in one encodeStep). It used to be the one
+// gallery piece on the tfjs autograd path — the fused adversary refused
+// hashgrid fields, which cost ~40 ms/step here against ~0.8 ms for the
+// fused raw-MLP Pair piece. The port added a per-member dL/dEnc scratch
+// block plus the gather-side grid block in adversary_wgsl's fieldGrad; see
+// agent_notes/2026-08-17_120215_KST_hashgrid_adversary_fusion.md.
 //
 // renderer "alpha-fade", NOT "surprise" — deliberate, and load-bearing.
 // A surprise piece resolves to a surprise colour mode (resolveColorMode)
 // and the surprise renderer then takes the WHOLE render pass (see the
 // render step in `tick`); the splat, and therefore `stroke`, never runs.
 // Curl strokes are the point of this piece, so it colours by velocity with
-// ghost trails. (The RAW/PER-UNIT diagnostic is fused-only anyway — see the
-// cost note above — so a surprise piece here would have declared an
-// instrument it cannot drive.)
-name:"Adversary \xb7 Pair \xb7 HashGrid \xb7 Curl",particleCount:7e4,friction:.97,drive:.65,forceMagnitude:w(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.001,backgroundColor:[2,3,9],alphaBlend:.05,renderer:"alpha-fade",// Curl: each particle draws its curved per-frame trajectory (2nd-order,
+// ghost trails. (The RAW/PER-UNIT surprise diagnostic is fused-only; it now
+// WOULD be available here, but the stroke still wins the render pass.)
+name:"Adversary \xb7 Pair \xb7 HashGrid \xb7 Curl",particleCount:7e4,friction:.97,drive:.65,forceMagnitude:j(.65,24,.97),maxVelocity:24,resetRate:.003,drawRate:2,learningRate:.001,backgroundColor:[2,3,9],alphaBlend:.05,renderer:"alpha-fade",// Curl: each particle draws its curved per-frame trajectory (2nd-order,
 // curlAmp=1) rather than a dot, so at 24 px/frame the cloud reads as ink.
 stroke:"curl",createField:()=>(0,o.createFieldFromArch)({...o.ARCH.dualHashgrid,alpha:.55}),adversary:{tag:"on",kind:{tag:"wta",k:4,relaxEps:.05},encoding:{tag:"pair-rotation-scale-adjusted"},// Explicit — do not rely only on the legacy encoding→soft-angle alias.
 // Soft-angle (direction-only) is what made the pair swirls; raw-vector
 // on this observer collapses into amplitude / shear cheats.
-loss:{tag:"soft-angle",tau:N.tau},weight:.015},fieldLoss:Z,computeLoss:z(Z)}],er="Adversary \xb7 Pair \xb7 HashGrid \xb7 Curl",es=(()=>{let e=et.findIndex(e=>e.name===er);if(e<0)throw Error(`DEFAULT_PIECE_NAME "${er}" is not in GALLERY — rename the constant with the piece, or the app would silently open on a different artwork.`);return e})();function en(e,t,r,s,a,o,i,l=a.maxVelocity,u={tag:"wrap"},p=a.forceMagnitude){let c,d;let h=e.div(n.tensor2d([[o,i]])),f=s?s.forces(h):r.predict(h).sub(.5),m=f.mul(p),g=t.add(m).mul(a.friction).clipByValue(-l,l),x=e.add(g);switch(u.tag){case"wrap":c=x.mod(n.tensor2d([[o,i]])),d=g;break;case"bounce":{let e=n.tensor2d([[o,i]]),t=x.less(0),r=x.greaterEqual(e),s=n.where(t,x.neg(),x);c=n.where(r,e.mul(2).sub(s),s),d=n.where(t.logicalOr(r),g.neg(),g);break}case"reset":{let e=n.tensor2d([[o,i]]),t=x.less(0).logicalOr(x.greaterEqual(e)).any(1).reshape([-1,1]),r=n.randomUniform(x.shape).mul(e);c=n.where(t,r,x),d=n.where(t,n.zerosLike(g),g);break}default:throw Error(`physicsForward: unknown border ${u.tag}`)}return{newPos:c,newVel:d,postUpdateVelocity:g,rawSignal:f,force:m}}// Random reset now lives INSIDE the fused advect kernel (PCG hash per
+loss:{tag:"soft-angle",tau:$.tau},weight:.015},fieldLoss:en,computeLoss:q(en)}],eu="Adversary \xb7 Pair \xb7 HashGrid \xb7 Curl",ep=(()=>{let e=el.findIndex(e=>e.name===eu);if(e<0)throw Error(`DEFAULT_PIECE_NAME "${eu}" is not in GALLERY — rename the constant with the piece, or the app would silently open on a different artwork.`);return e})();function ec(e,t,r,s,a,o,i,l=a.maxVelocity,u={tag:"wrap"},p=a.forceMagnitude){let c,d;let h=e.div(n.tensor2d([[o,i]])),f=s?s.forces(h):r.predict(h).sub(.5),m=f.mul(p),g=t.add(m).mul(a.friction).clipByValue(-l,l),x=e.add(g);switch(u.tag){case"wrap":c=x.mod(n.tensor2d([[o,i]])),d=g;break;case"bounce":{let e=n.tensor2d([[o,i]]),t=x.less(0),r=x.greaterEqual(e),s=n.where(t,x.neg(),x);c=n.where(r,e.mul(2).sub(s),s),d=n.where(t.logicalOr(r),g.neg(),g);break}case"reset":{let e=n.tensor2d([[o,i]]),t=x.less(0).logicalOr(x.greaterEqual(e)).any(1).reshape([-1,1]),r=n.randomUniform(x.shape).mul(e);c=n.where(t,r,x),d=n.where(t,n.zerosLike(g),g);break}default:throw Error(`physicsForward: unknown border ${u.tag}`)}return{newPos:c,newVel:d,postUpdateVelocity:g,rawSignal:f,force:m}}// Random reset now lives INSIDE the fused advect kernel (PCG hash per
 // particle+frame) — see src/render/webgpu/advect_wgsl.ts. The old tfjs
 // randomReset (~10 dispatches/frame) is gone with the rest of the tfjs
 // advect stage.
@@ -408,17 +493,17 @@ loss:{tag:"soft-angle",tau:N.tau},weight:.015},fieldLoss:Z,computeLoss:z(Z)}],er
 // Main simulation loop
 // ---------------------------------------------------------------------------
 /** Full-screen "needs WebGPU" notice. There is NO Canvas2D/WebGL fallback — by
- *  design (we're WebGPU-only). Shown when the browser has no WebGPU. */function ea(){document.documentElement.style.margin="0",document.body.style.margin="0";let e=document.createElement("div");e.style.cssText="position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:#05010f;color:#cbd5ff;text-align:center;font:16px/1.6 ui-monospace,monospace;padding:24px",e.innerHTML='<div style="max-width:560px"><div style="font-size:44px;margin-bottom:12px">⚡</div><div style="font-size:20px;margin-bottom:10px;color:#fff">This needs WebGPU</div><div style="margin-bottom:16px;color:#94a0c8">Neural Force Field Art runs entirely on the GPU (zero-copy tfjs → WebGPU). Your browser doesn\'t have WebGPU enabled.</div><div><a href="https://caniuse.com/webgpu" target="_blank" style="color:#8ab4ff">Go get WebGPU working →</a> <span style="color:#5b6890">(Chrome / Edge / Safari 18+ / Firefox, latest)</span></div></div>',document.body.appendChild(e)}/**
+ *  design (we're WebGPU-only). Shown when the browser has no WebGPU. */function ed(){document.documentElement.style.margin="0",document.body.style.margin="0";let e=document.createElement("div");e.style.cssText="position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:#05010f;color:#cbd5ff;text-align:center;font:16px/1.6 ui-monospace,monospace;padding:24px",e.innerHTML='<div style="max-width:560px"><div style="font-size:44px;margin-bottom:12px">⚡</div><div style="font-size:20px;margin-bottom:10px;color:#fff">This needs WebGPU</div><div style="margin-bottom:16px;color:#94a0c8">Neural Force Field Art runs entirely on the GPU (zero-copy tfjs → WebGPU). Your browser doesn\'t have WebGPU enabled.</div><div><a href="https://caniuse.com/webgpu" target="_blank" style="color:#8ab4ff">Go get WebGPU working →</a> <span style="color:#5b6890">(Chrome / Edge / Safari 18+ / Firefox, latest)</span></div></div>',document.body.appendChild(e)}/**
  * Per-piece trail defaults for the splat renderer, keyed by the piece's
  * declared renderer style (the splat's decay is now the one real trail
  * mechanism behind all three looks): ghost pieces get soft trails,
  * trail-buffer pieces long streaks, clean pieces none. `?decay=F` overrides.
- */let eo={"alpha-fade":.94,"trail-buffer":.97,clean:0,// ZERO, deliberately. The surprise mode is an INSTRUMENT: a faded trail shows
+ */let eh={"alpha-fade":.94,"trail-buffer":.97,clean:0,// ZERO, deliberately. The surprise mode is an INSTRUMENT: a faded trail shows
 // a stale residual, so trails would misreport the adversary's current state.
 // (The surprise renderer clears its attachment every frame anyway; this entry
 // is what keeps the splat path honest if a run switches back to it live.)
-surprise:0},ei={ghost:eo["alpha-fade"],clean:eo.clean,trails:eo["trail-buffer"]};function el(e){switch(e){case"clean":return"clean";case"trail-buffer":return"trails";default:return"ghost"}}function eu(e){return eo[e]}let ep={min:.5,max:16};function ec(e,t){let r=t.get("stroke");if(null===r)return e.stroke??"dot";if("dot"===r||"vel"===r||"curl"===r)return r;throw Error(`?stroke must be dot, vel or curl, got ${r}`)}function ed(e,t){return Math.max(ep.min,Math.min(ep.max,_(t,"strokeLen",e.strokeLen??3)))}function eh(e,t,r,s={}){let i,y=!0,b=et[t],_=b.particleCount,I=256,T=b.resetRate,N=b.maxVelocity,$=new URLSearchParams(location.search),R=C(b,$,N),P=R.driveEnabled,M=R.drive,O=R.forceMagnitude,B=R.generatorLearningRate,z=R.discriminatorLearningRate,W=A(b.adversary,$),H="on"===W.tag&&s.overrides?{...W,encoding:s.overrides.adversaryEncoding??W.encoding,target:s.overrides.adversaryTarget??E(W),loss:s.overrides.adversaryLoss??F(W),kind:"wta"===W.kind.tag?{tag:"wta",k:s.overrides.k??W.kind.k,relaxEps:s.overrides.relaxEps??W.kind.relaxEps}:W.kind}:W;"on"===H.tag&&(0,m.objectiveDims)(H.encoding,E(H),F(H));let X=s.overrides?.border??{tag:"wrap"},Z="wrap"===X.tag?"periodic":"euclidean",J=D(b,H,$),Q=Math.max(1,k($,"advEvery",1)),ee=Math.max(0,Math.min(16,parseInt(new URLSearchParams(location.search).get("window")??"0",10)||0)),er=ee>0?ee:Math.max(1,k($,"trainEvery",1));// WebGPU-only — no Canvas2D/WebGL fallback (by design). Warn + bail if absent.
-if(!(0,l.GpuPointRendererWebGPU).isSupported())return ea(),()=>{};// RETINA: the canvas BACKING store is native resolution (devicePixelRatio,
+surprise:0},ef={ghost:eh["alpha-fade"],clean:eh.clean,trails:eh["trail-buffer"]};function em(e){switch(e){case"clean":return"clean";case"trail-buffer":return"trails";default:return"ghost"}}function eg(e){return eh[e]}let ex={min:.5,max:16};function ev(e,t){let r=t.get("stroke");if(null===r)return e.stroke??"dot";if("dot"===r||"vel"===r||"curl"===r)return r;throw Error(`?stroke must be dot, vel or curl, got ${r}`)}function ey(e,t){return Math.max(ex.min,Math.min(ex.max,I(t,"strokeLen",e.strokeLen??3)))}function eb(e,t,r,s={}){let i,v=!0,k=el[t],_=k.particleCount,I=256,S=0,T=k.resetRate,D=k.maxVelocity,$=new URLSearchParams(location.search),z=A(k,$,D),L=z.driveEnabled,G=z.drive,V=z.forceMagnitude,U=z.generatorLearningRate,W=z.discriminatorLearningRate,q=O(k.adversary,$),Z="on"===q.tag&&s.overrides?{...q,encoding:s.overrides.adversaryEncoding??q.encoding,target:s.overrides.adversaryTarget??R(q),loss:s.overrides.adversaryLoss??M(q),kind:"wta"===q.kind.tag?{tag:"wta",k:s.overrides.k??q.kind.k,relaxEps:s.overrides.relaxEps??q.kind.relaxEps}:q.kind}:q;"on"===Z.tag&&(0,g.objectiveDims)(Z.encoding,R(Z),M(Z));let Q=s.overrides?.border??{tag:"wrap"},ee="wrap"===Q.tag?"periodic":"euclidean",es=B(k,Z,$),en=Math.max(1,w($,"advEvery",1)),ea=Math.max(0,Math.min(16,parseInt(new URLSearchParams(location.search).get("window")??"0",10)||0)),eo=ea>0?ea:Math.max(1,w($,"trainEvery",1));// WebGPU-only — no Canvas2D/WebGL fallback (by design). Warn + bail if absent.
+if(!(0,l.GpuPointRendererWebGPU).isSupported())return ed(),()=>{};// RETINA: the canvas BACKING store is native resolution (devicePixelRatio,
 // capped at 2 — 3x phone DPRs quadruple the accumulator for little gain)
 // while the physics WORLD stays w×h CSS pixels: kernels, trainer and losses
 // are untouched; only the backing store and the splat accumulator scale.
@@ -427,76 +512,79 @@ if(!(0,l.GpuPointRendererWebGPU).isSupported())return ea(),()=>{};// RETINA: the
 // a row-stride mismatch would shear the image). The quad renderer needs no
 // change: its vertex math is pos/resolution-relative (incl. pointSize, which
 // is in world units), and its fwidth AA sharpens automatically at native res.
-let es=Math.min(window.devicePixelRatio||1,2),ei=window.innerWidth,el=window.innerHeight;e.width=Math.ceil(ei*es),e.height=Math.ceil(el*es),// Full-screen, no scroll (canvas is inline by default -> descender gap).
+let ei=Math.min(window.devicePixelRatio||1,2),eu=window.innerWidth,ep=window.innerHeight;e.width=Math.ceil(eu*ei),e.height=Math.ceil(ep*ei),// Full-screen, no scroll (canvas is inline by default -> descender gap).
 // Explicit CSS width/height pin the element to CSS pixels so the native
 // backing maps 1:1 onto device pixels.
-e.style.cssText=`display:block;position:fixed;inset:0;width:${ei}px;height:${el}px`,document.documentElement.style.margin="0",document.body.style.cssText="margin:0;overflow:hidden;background:#000";// ALL tensor/model creation is DEFERRED to the async init below: tfjs throws
+e.style.cssText=`display:block;position:fixed;inset:0;width:${eu}px;height:${ep}px`,document.documentElement.style.margin="0",document.body.style.cssText="margin:0;overflow:hidden;background:#000";// ALL tensor/model creation is DEFERRED to the async init below: tfjs throws
 // if you build tensors/models before the highest-priority backend (webgpu)
 // has finished initializing (needs await tf.ready()). Assigned there.
-let eu=null,eh=null,ef=null,em=null,eg=null,ex=null,ev=null,ey=null,eb=null,ek=null,e_=null,ew=null,eI=[],ej="particles",eS=0,eC=NaN,eT=null,eN=null,eE=null,eF=null,eA=null,eD={tag:"off"},e$=new Map,eR={tag:"off"},eP=new URLSearchParams(location.search).get("render"),eM=parseFloat(new URLSearchParams(location.search).get("exposure")??"1")||1,eO=ec(b,$),eB=ed(b,$),ez=0,eL=document.createElement("div");eL.dataset.testid="fps-hud",eL.setAttribute("aria-label","Performance telemetry"),eL.style.cssText=(s.telemetryHost?"":"position:fixed;top:8px;right:8px;z-index:9999;")+"font:11px/1.45 ui-monospace,monospace;color:#8f8;background:rgba(0,0,0,.72);padding:6px 9px;border:1px solid rgba(130,170,255,.2);border-radius:5px;white-space:pre;pointer-events:none;letter-spacing:.02em",(s.telemetryHost??document.body).appendChild(eL);let eG=(e,t,r=.12)=>0===e?t:e*(1-r)+t*r,eV=0,eU=0,eW=0,eq=performance.now();// Learning is DECOUPLED from motion: we train the field on a small random
+let ef=null,em=null,eg=null,eb=null,ek=null,e_=null,ew=null,eI=null,ej=null,eS=null,eC=null,eT=null,eN=[],eE="particles",eF=0,eA=NaN,eD=null,e$=null,eR=null,eP=null,eM=null,eO={tag:"off"},eB=new Map,ez={tag:"off"},eL=new URLSearchParams(location.search).get("render"),eG=parseFloat(new URLSearchParams(location.search).get("exposure")??"1")||1,eV=ev(k,$),eU=ey(k,$),eW=0,eq=document.createElement("div");eq.dataset.testid="fps-hud",eq.setAttribute("aria-label","Performance telemetry"),eq.style.cssText=(s.telemetryHost?"":"position:fixed;top:8px;right:8px;z-index:9999;")+"font:11px/1.45 ui-monospace,monospace;color:#8f8;background:rgba(0,0,0,.72);padding:6px 9px;border:1px solid rgba(130,170,255,.2);border-radius:5px;white-space:pre;pointer-events:none;letter-spacing:.02em",(s.telemetryHost??document.body).appendChild(eq);let eH=(e,t,r=.12)=>0===e?t:e*(1-r)+t*r,eK=0,eY=0,eX=0,eZ=performance.now();// Learning is DECOUPLED from motion: we train the field on a small random
 // batch each frame (real-time, cheap) while the FUSED WGSL KERNEL advects
 // ALL particles in ONE compute dispatch (MLP forward + integrate + clip +
 // wrap + random reset — was ~40 tfjs dispatches). Weights flow tfjs→kernel
 // as ~10KB of GPU→GPU copies per frame; particle state never touches tfjs,
 // so particle count scales to 1M+ without touching the train cost.
-async function eH(){if(!y||!(ef||eg)||!em||!eE||!eT)return;ez++;// ONE command encoder for the whole frame. On the FUSED path it records
+async function eJ(){// TEMP INSTRUMENTATION — remove before commit.
+if(!v||!(eg||ek)||!eb||!eR||!eD){window.__nffDead={piece:k.name,frame:eW,running:v,hasOptimizer:!!eg,hasTrainer:!!ek,hasAdvect:!!eb,hasWh:!!eR,hasDevice:!!eD},console.warn("[loop] tick bailed without rescheduling",window.__nffDead);return}eW++,window.__nff={frame:eW,piece:k.name,t:performance.now()};// ONE command encoder for the whole frame. On the FUSED path it records
 // trainer pass A+B, the advect pass, and the render, then submits ONCE —
 // versus the old three-submits-per-frame (train, advect, render). The tfjs
 // legacy path can't share the encoder for its learn (optimizer.minimize
 // does its own internal submits), but advect+render still share this one.
-let e=eT.createCommandEncoder(),t=eN?.writes(0,1),r=eN?.writes(2,3),s=eN?.writes(4,5),a=eN?.writes(6,7),o=performance.now(),l=!1,u=!1,p=!1,c=!1,d=!1;// `?trainEvery=N`: amortize training over N frames — applies to BOTH the
+let e=eD.createCommandEncoder(),t=e$?.writes(0,1),r=e$?.writes(2,3),s=e$?.writes(4,5),a=e$?.writes(6,7),o=performance.now(),l=!1,u=!1,p=!1,c=!1,d=!1;// `?trainEvery=N`: amortize training over N frames — applies to BOTH the
 // fused path (imagined-rollout batch) and the tfjs path (SIREN/Fourier,
 // whose autograd + encoding learn stage is heavy — this is how a Fourier
 // piece reaches 60fps: train every 2-3 frames, advect every frame).
-if(ez%er!=0);else if(eg){// FUSED ADVERSARY first (when present): discriminator train + generator
+if(eW%eo!=0);else if(ek){// FUSED ADVERSARY first (when present): discriminator train + generator
 // reward, recorded BEFORE the field passes so (a) the discriminator sees
 // the pre-update field — the correct minimax ordering, same as the tfjs
 // path below — and (b) extGrads are fresh when the field's pass B adds
 // them. ~0.8 ms at B=512 (tools/train_wta_test.ts §6), so no advEvery
 // amortization is needed on this path.
-if(ex&&"on"===eD.tag){// The top-right "train B" control owns BOTH sides' live batch size.
+if(e_&&"on"===eO.tag){// The top-right "train B" control owns BOTH sides' live batch size.
 // Adversary buffers are compiled to 1024 tuples; particle coverage can
 // reduce effective B further inside AdversaryTrainer.
-let t=S(I,1024),r={width:ei,height:el,forceMagnitude:O,friction:b.friction,maxVelocity:N},s=s=>s.encodeStep(e,r,{b:t,alpha:eu.alpha,lr:z,// A and B see the same tuple indices. Their predictor weights,
+let t=F(I,1024),r={width:eu,height:ep,forceMagnitude:V,friction:k.friction,maxVelocity:D},s=s=>s.encodeStep(e,r,{b:t,alpha:ef.alpha,lr:W,// A and B see the same tuple indices. Their predictor weights,
     // Adam state, field lane and named generator role are independent.
-    seed:ez,source:"particles",genSeed:s.genSeed(eD.weight,1,t),applyDisc:!0});// Both complete their alternating D→G sequence while field weights
+    seed:eW,source:"particles",genSeed:s.genSeed(eO.weight,1,t),applyDisc:!0});// Both complete their alternating D→G sequence while field weights
 // remain read-only. The ONE field step below then sums the two fresh
 // external gradients and applies exactly one field Adam update.
-s(ex),ey&&s(ey)}if(ev&&b.pixelDisc){let t=Math.min(I,512);ev.encodeStep(e,{b:t,alpha:eu.alpha,lr:z,genWeight:b.pixelDisc.weight,applyDisc:!0,width:ei,height:el}),p=ev.recordStats(e)}eg.encodeStep(e,{width:ei,height:el,forceMagnitude:O,friction:b.friction,maxVelocity:N},{n:I,alpha:eu.alpha,lr:B,seed:ez,source:ej,mixRandom:eS},t,r),ez%30==0&&eg.readLoss().then(e=>eC=e.loss).catch(()=>{})}else"on"===eD.tag&&ez%Q==0&&n.tidy(()=>{let e=n.randomUniform([I,2],0,1).mul(eE),t="on"===eD.tag&&"tfjs"===eD.implementation&&"post-velocity"===eD.adv.cfg.target.tag?n.randomUniform([I,2],-N,N):n.zeros([I,2]),r=en(e,t,eh,eu,b,ei,el,N,X,O);eR=K(eD,e,t,r.postUpdateVelocity,r.rawSignal,ei,el,N)}),// (1b) GENERATOR. varList is the FIELD's weights only, so the predictor
+s(e_),eI&&s(eI)}if(ew&&k.pixelDisc){let t=Math.min(I,512);ew.encodeStep(e,{b:t,alpha:ef.alpha,lr:W,genWeight:k.pixelDisc.weight,applyDisc:!0,width:eu,height:ep}),p=ew.recordStats(e)}ek.encodeStep(e,{width:eu,height:ep,forceMagnitude:V,friction:k.friction,maxVelocity:D},{n:I,alpha:ef.alpha,lr:U,seed:eW,source:eE,mixRandom:eF},t,r),eW%30==0&&ek.readLoss().then(e=>eA=e.loss).catch(()=>{})}else"on"===eO.tag&&eW%en==0&&n.tidy(()=>{let e=n.randomUniform([I,2],0,1).mul(eR),t="on"===eO.tag&&"tfjs"===eO.implementation&&"post-velocity"===eO.adv.cfg.target.tag?n.randomUniform([I,2],-D,D):n.zeros([I,2]),r=ec(e,t,em,ef,k,eu,ep,D,Q,V);ez=et(eO,e,t,r.postUpdateVelocity,r.rawSignal,eu,ep,D)}),// (1b) GENERATOR. varList is the FIELD's weights only, so the predictor
 //      heads inside the adversarial term are frozen structurally.
-ef.minimize(()=>n.tidy(()=>{let e=n.randomUniform([I,2],0,1).mul(eE),t="on"===eD.tag&&"tfjs"===eD.implementation&&"post-velocity"===eD.adv.cfg.target.tag?n.randomUniform([I,2],-N,N):n.zeros([I,2]),r=en(e,t,eh,eu,b,ei,el,N,X,O),s=b.computeLoss(r.newPos,ei,el,{force:r.force,field:eu}),a=q(eD,e,t,r.postUpdateVelocity,r.rawSignal,ei,el,N);return s.add(a).asScalar()}),!1,i);let h=performance.now()-o,f=eD;if(ex&&"on"===f.tag&&"fused"===f.implementation){l=ex.encodeStatsRead(e),ey&&(u=ey.encodeStatsRead(e)),ek??=new Y(eT),d=ek.encodeSample(e,em.velBuffer,em.count,ez);let t=ex.lastStats,r=ey?.lastStats??null,s=!!t&&t!==e_,n=!!r&&r!==ew,a=(e,t)=>{let r=e.some(e=>e>0);for(let s=0;s<e.length;s++)e[s]=r?e[s]+.02*(t[s]-e[s]):t[s]};// Publish only after every configured branch has produced a real batch.
+eg.minimize(()=>n.tidy(()=>{let e=n.randomUniform([I,2],0,1).mul(eR),t="on"===eO.tag&&"tfjs"===eO.implementation&&"post-velocity"===eO.adv.cfg.target.tag?n.randomUniform([I,2],-D,D):n.zeros([I,2]),r=ec(e,t,em,ef,k,eu,ep,D,Q,V),s=k.computeLoss(r.newPos,eu,ep,{force:r.force,field:ef}),a=J(eO,e,t,r.postUpdateVelocity,r.rawSignal,eu,ep,D);return s.add(a).asScalar()}),!1,i);let h=performance.now()-o,f=eO;if(e_&&"on"===f.tag&&"fused"===f.implementation){l=e_.encodeStatsRead(e),eI&&(u=eI.encodeStatsRead(e)),eS??=new er(eD),d=eS.encodeSample(e,eb.velBuffer,eb.count,eW);let t=e_.lastStats,r=eI?.lastStats??null,s=!!t&&t!==eC,n=!!r&&r!==eT,a=(e,t)=>{let r=e.some(e=>e>0);for(let s=0;s<e.length;s++)e[s]=r?e[s]+.02*(t[s]-e[s]):t[s]};// Publish only after every configured branch has produced a real batch.
 // Until then the previous/initial telemetry remains visible; no branch
 // is silently substituted for the missing one.
-if(s&&(e_=t,a(f.winEma,t.winCounts)),n&&(ew=r,a(eI,r.winCounts)),(s||n)&&t&&(!ey||r)){let e=e=>{let t=e.reduce((e,t)=>e+t,0)||1;return e.map(e=>e/t)},s=e(f.winEma),n=ey?e(eI):null,a=n?s.map((e,t)=>.5*(e+n[t])):s,o=f.kind,i=!!(ey&&r),l=(e,t,r)=>{let s=r.some(e=>e<.05/f.k),n=e.rewardScaleState();return L(s,t.headSpread,"seeded"===n.tag?{tag:"seeded",rms:n.rms}:{tag:"unseeded"})},u=l(ex,t,s),p=i&&n?l(ey,r,n):null,c="on"===H.tag?` \xb7 ${E(H).tag} \xb7 ${F(H).tag}`:"";eR={tag:"on",variant:i?"wta"===o.tag?`agree+disagree k=${o.k} ε=${o.relaxEps}${c}`:`agree+disagree single${c}`:"wta"===o.tag?`wta k=${o.k} ε=${o.relaxEps}${c}`:`single${c}`,k:f.k,// Aggregate summaries preserve the existing UI shape. The branch
+if(s&&(eC=t,a(f.winEma,t.winCounts)),n&&(eT=r,a(eN,r.winCounts)),(s||n)&&t&&(!eI||r)){let e=e=>{let t=e.reduce((e,t)=>e+t,0)||1;return e.map(e=>e/t)},s=e(f.winEma),n=eI?e(eN):null,a=n?s.map((e,t)=>.5*(e+n[t])):s,o=f.kind,i=!!(eI&&r),l=(e,t,r)=>{let s=r.some(e=>e<.05/f.k),n=e.rewardScaleState();return H(s,t.headSpread,"seeded"===n.tag?{tag:"seeded",rms:n.rms}:{tag:"unseeded"})},u=l(e_,t,s),p=i&&n?l(eI,r,n):null,c="on"===Z.tag?` \xb7 ${R(Z).tag} \xb7 ${M(Z).tag}`:"";ez={tag:"on",variant:i?"wta"===o.tag?`agree+disagree k=${o.k} ε=${o.relaxEps}${c}`:`agree+disagree single${c}`:"wta"===o.tag?`wta k=${o.k} ε=${o.relaxEps}${c}`:`single${c}`,k:f.k,// Aggregate summaries preserve the existing UI shape. The branch
 // records below are the authoritative values for this general-sum
 // game; predictor objective is V_A + V_B.
 surprise:i?.5*(t.surprise+r.surprise):t.surprise,predLoss:i?t.discLoss+r.discLoss:t.discLoss,winFractions:a,// A/B games are diagnosed independently. A measured failure in one
 // branch cannot be averaged away by the other.
-health:p?G(u,p):u,weight:f.weight,branches:i?{disagree:{surprise:t.surprise,predLoss:t.discLoss,winFractions:s,health:u},agree:{surprise:r.surprise,predLoss:r.discLoss,winFractions:n,health:p}}:void 0}}}// (2) ADVECT — ONE fused dispatch over ALL particles, recorded into `enc`.
+health:p?K(u,p):u,weight:f.weight,branches:i?{disagree:{surprise:t.surprise,predLoss:t.discLoss,winFractions:s,health:u},agree:{surprise:r.surprise,predLoss:r.discLoss,winFractions:n,health:p}}:void 0}}}// (2) ADVECT — ONE fused dispatch over ALL particles, recorded into `enc`.
 //     Returns the tfjs weight-sync clones (empty on the fused path); they
 //     must be disposed AFTER submit so their source buffers survive the
 //     in-flight copies.
-let m=em.encodeStep(e,ez,eu?eu.alpha:0,s),g=0;// A surprise diagnostic takes the whole render pass: colour comes from one
+let m=eb.encodeStep(e,eW,ef?ef.alpha:0,s),g=0;// A surprise diagnostic takes the whole render pass: colour comes from one
 // plane of the fused per-particle diagnostic buffer, not from velocity.
-if(x(J)&&ex&&eb){let t=v(J),r=ex.surprisePlane(t),s=performance.now(),n=e$.get(J.colormap);n.span=eb.norm.span,n.encodeRender(e,em.posBuffer,r.buffer,em.count,ei,el,a,r.offsetFloats),c=eb.encodeSample(e,r.buffer,em.count,ez,ex.surpriseCoverage().window,r.offsetFloats),g=performance.now()-s}else if(eF){let t=performance.now(),r=null!==eA&&"quads"!==eP&&("splat"===eP||em.count>=0);r?(// AUTO-EXPOSURE: accumulated energy scales with particle density and
+if(y(es)&&e_&&ej){let t=b(es),r=e_.surprisePlane(t),s=performance.now(),n=eB.get(es.colormap);n.span=ej.norm.span,n.encodeRender(e,eb.posBuffer,r.buffer,eb.count,eu,ep,a,r.offsetFloats),c=ej.encodeSample(e,r.buffer,eb.count,eW,e_.surpriseCoverage().window,r.offsetFloats),g=performance.now()-s}else if(eP){let t=performance.now(),r=null!==eM&&"quads"!==eL&&("splat"===eL||eb.count>=0);r?(// AUTO-EXPOSURE: accumulated energy scales with particle density and
 // the trail steady-state 1/(1-decay); normalize so the MEAN displayed
 // energy stays constant across counts (attractor hot-spots still
 // bloom through the tonemap shoulder — that's the aesthetic).
 // The mean is over NATIVE texels — w*h CSS px times dpr² — since each
 // particle's 4096 energy spreads over the dpr-scaled accumulator.
 // `?exposure=F` scales the target.
-eA.exposure=.35*ei*el*es*es*(1-Math.min(eA.decay,.995))/Math.max(1,em.count)*eM,eA.encodeRender(e,em.posBuffer,em.velBuffer,em.count,ei,el,a)):eF.encodeRender(e,em.posBuffer,em.velBuffer,em.count,ei,el,a),g=performance.now()-t}for(let t of(eN&&eN.maybeResolve(e,ez),eT.queue.submit([e.finish()]),m))t.dispose();eN&&eN.afterSubmit(),ex&&ex.afterSubmit(l),ey&&ey.afterSubmit(u),ev&&ev.afterSubmit(p),eb&&eb.afterSubmit(c),ek&&ek.afterSubmit(d);let k=performance.now();if(eV=eG(eV,k-eq),eq=k,eU=eG(eU,h),eW=eG(eW,g),ez%6==0){let e;let t=`${b.name}
+eM.exposure=.35*eu*ep*ei*ei*(1-Math.min(eM.decay,.995))/Math.max(1,eb.count)*eG,eM.encodeRender(e,eb.posBuffer,eb.velBuffer,eb.count,eu,ep,a)):eP.encodeRender(e,eb.posBuffer,eb.velBuffer,eb.count,eu,ep,a),g=performance.now()-t}for(let t of(e$&&e$.maybeResolve(e,eW),eD.queue.submit([e.finish()]),m))t.dispose();e$&&e$.afterSubmit(),e_&&e_.afterSubmit(l),eI&&eI.afterSubmit(u),ew&&ew.afterSubmit(p),ej&&ej.afterSubmit(c),eS&&eS.afterSubmit(d);let x=performance.now();if(eK=eH(eK,x-eZ),eZ=x,eY=eH(eY,h),eX=eH(eX,g),eW%6==0){let e;let t=`${k.name}
 backend ${n.getBackend()}  render=${_} train=${I}
-FPS     ${(1e3/eV).toFixed(1)}  (${eV.toFixed(1)} ms)
-`,r=eN?.timings,s=Number.isFinite(eC)?eC.toFixed(3):"warming";e=r&&eg?`rollout ${r.rollout.toFixed(2)} ms  optim ${r.optim.toFixed(2)} ms  loss ${s}
+FPS     ${(1e3/eK).toFixed(1)}  (${eK.toFixed(1)} ms)
+`,r=e$?.timings,s=Number.isFinite(eA)?eA.toFixed(3):"warming";e=r&&ek?`rollout ${r.rollout.toFixed(2)} ms  optim ${r.optim.toFixed(2)} ms  loss ${s}
 advect  ${r.advect.toFixed(2)} ms  render ${r.render.toFixed(2)} ms  (gpu)
-`:r?`learn   ${eU.toFixed(1)} ms  (cpu\xb7tfjs)
+`:r?// fallback trains on tf.getBackend() — webgpu here, dispatch-bound —
+// not on the CPU. "(cpu·tfjs)" misled a 2026-08-17 investigation.
+`learn   ${eY.toFixed(1)} ms  (tfjs\xb7${n.getBackend()})
 advect  ${r.advect.toFixed(2)} ms  render ${r.render.toFixed(2)} ms  (gpu)
-`:`learn   ${eU.toFixed(1)} ms${// zero-copy renderer forces webgpu (see the IIFE near the bottom),
+`:`learn   ${eY.toFixed(1)} ms${// zero-copy renderer forces webgpu (see the IIFE near the bottom),
 // where tiny-op training is dispatch-bound — worth seeing plainly.
-eg?`  (fused)  loss ${s}`:`  (tfjs\xb7${n.getBackend()})`}
-render  ${eW.toFixed(1)} ms  (cpu-encode)
-`,eL.textContent=t+e+/**
+ek?`  (fused)  loss ${s}`:`  (tfjs\xb7${n.getBackend()})`}
+render  ${eX.toFixed(1)} ms  (cpu-encode)
+`,eq.textContent=t+e+/**
    * Adversary block of the telemetry HUD. Prints the two numbers that can lie
    * about each other (surprise vs predictor loss — they differ once ε > 0), the
    * per-head win shares as a bar so a dead head is visible at a glance, and the
@@ -504,23 +592,23 @@ render  ${eW.toFixed(1)} ms  (cpu-encode)
    * audited instead of trusted (src/draw/robust_norm.ts, SPAN_FLOOR note).
    */function(){// Snapshot into a const: `advTele` is a mutable outer binding, so TypeScript
 // would drop the narrowing inside the .map callback below.
-let e=eR;if("off"===e.tag)return"";// Bar height is the win share RELATIVE TO UNIFORM (1/k), so a healthy
+let e=ez;if("off"===e.tag)return"";// Bar height is the win share RELATIVE TO UNIFORM (1/k), so a healthy
 // mixture reads as a flat row at ▄ whatever k is, and a starved head reads
 // as ▁ next to it. An absolute scale would make every k=8 run look collapsed.
-let t=e.winFractions.map(t=>"▁▂▃▄▅▆▇█"[Math.max(0,Math.min(7,Math.floor(t*e.k*3)))]).join(""),r="on"===H.tag&&"angle-scale-hold"===F(H).tag?"D-joint":"surprise",s=// (post /100 rescale) and toFixed(2) rendered EVERY one of them as
+let t=e.winFractions.map(t=>"▁▂▃▄▅▆▇█"[Math.max(0,Math.min(7,Math.floor(t*e.k*3)))]).join(""),r="on"===Z.tag&&"angle-scale-hold"===M(Z).tag?"D-joint":"surprise",s=// (post /100 rescale) and toFixed(2) rendered EVERY one of them as
 // "0.01" — the HUD could not tell Chaos Weave (0.006) from Pair K=4
 // (0.015). Caught reading the headless HUD capture, 2026-07-28.
-`adv     ${e.variant}  w ${e.weight.toFixed(3)}${ex?"  (fused)":""}
+`adv     ${e.variant}  w ${e.weight.toFixed(3)}${e_?"  (fused)":""}
 ${r.padEnd(8)} ${e.surprise.toExponential(2)}  pred ${e.predLoss.toFixed(4)}
-heads   ${t}${V(e.health)}
+heads   ${t}${Y(e.health)}
 `;// Fused surprise span. The metric name is load-bearing: raw shared payoff
 // and payoff per unit target signal answer different questions.
-if(e.branches&&(s+=`A disagree  sur ${e.branches.disagree.surprise.toExponential(2)} pred ${e.branches.disagree.predLoss.toExponential(2)}${V(e.branches.disagree.health)}
-B agree     sur ${e.branches.agree.surprise.toExponential(2)} pred ${e.branches.agree.predLoss.toExponential(2)}${V(e.branches.agree.health)}
+if(e.branches&&(s+=`A disagree  sur ${e.branches.disagree.surprise.toExponential(2)} pred ${e.branches.disagree.predLoss.toExponential(2)}${Y(e.branches.disagree.health)}
+B agree     sur ${e.branches.agree.surprise.toExponential(2)} pred ${e.branches.agree.predLoss.toExponential(2)}${Y(e.branches.agree.health)}
 C blend     display only (zero direct loss)
-`),ek&&Number.isFinite(ek.mean)&&(s+=`speed   ${ek.mean.toFixed(2)} px/f  (clip ${N.toFixed(1)})
-`),x(J)&&ex&&eb){let e=eb.norm.raw,t=ex.surpriseCoverage().covered,r=ey?.surpriseCoverage().covered??t,n="surprise-raw"===J.tag?"raw":"per-unit";s+=`span(${n}) p2 ${e.lo.toExponential(2)} p50 ${e.mid.toExponential(2)} p98 ${e.hi.toExponential(2)}  covered ${(100*Math.min(t,r)).toFixed(0)}%
-`}return s}()+`tensors ${n.memory().numTensors}`}requestAnimationFrame(eH)}return(async()=>{// WebGPU backend so tfjs tensors live in GPUBuffers we can render from with
+`),eS&&Number.isFinite(eS.mean)&&(s+=`speed   ${eS.mean.toFixed(2)} px/f  (clip ${D.toFixed(1)})
+`),y(es)&&e_&&ej){let e=ej.norm.raw,t=e_.surpriseCoverage().covered,r=eI?.surpriseCoverage().covered??t,n="surprise-raw"===es.tag?"raw":"per-unit";s+=`span(${n}) p2 ${e.lo.toExponential(2)} p50 ${e.mid.toExponential(2)} p98 ${e.hi.toExponential(2)}  covered ${(100*Math.min(t,r)).toFixed(0)}%
+`}return s}()+`tensors ${n.memory().numTensors}`}requestAnimationFrame(eJ)}return(async()=>{// WebGPU backend so tfjs tensors live in GPUBuffers we can render from with
 // zero copy (same GPUDevice). No fallback — warn and bail if it won't init.
 //
 // `?backend=` belonged to the deleted cpu-first initBackend and is REJECTED
@@ -529,34 +617,37 @@ C blend     display only (zero direct loss)
 // nothing it could render from — "supporting" the override would just be a
 // slower way to show the WebGPU warning. The dispatch-cost dial that
 // initBackend's cpu-first ordering used to be is `?handoff=N` below.
-{let e=new URLSearchParams(location.search).get("backend");null!==e&&"webgpu"!==e&&console.warn(`[webgpu] ?backend=${e} ignored — this page is webgpu-only by construction (zero-copy tfjs→render buffers). Use ?handoff=N to move small tfjs ops to the CPU instead.`)}try{await n.setBackend("webgpu"),await n.ready()}catch(e){console.error("[webgpu] backend init failed",e)}if(!y)return;if("webgpu"!==n.getBackend()){ea();return}// The shared GPUDevice tfjs created — everything (advect/train/render/timer)
+{let e=new URLSearchParams(location.search).get("backend");null!==e&&"webgpu"!==e&&console.warn(`[webgpu] ?backend=${e} ignored — this page is webgpu-only by construction (zero-copy tfjs→render buffers). Use ?handoff=N to move small tfjs ops to the CPU instead.`)}try{await n.setBackend("webgpu"),await n.ready()}catch(e){console.error("[webgpu] backend init failed",e)}if(!v)return;if("webgpu"!==n.getBackend()){ed();return}// The shared GPUDevice tfjs created — everything (advect/train/render/timer)
 // records onto it. The optional GPU profiler needs the "timestamp-query"
 // feature (main.ts's requestDevice shim appends it when present); when it's
 // absent GpuTimer.create returns null and the HUD keeps its CPU-encode lines.
-eT=n.backend().device,console.log((eN=(0,f.GpuTimer).create(eT))?"[gputime] timestamp-query active — HUD shows per-pass GPU ms":"[gputime] no timestamp-query feature — HUD uses CPU-encode ms");// `?handoff=N`: override tfjs's small-tensor CPU forwarding threshold
+eD=n.backend().device,console.log((e$=(0,m.GpuTimer).create(eD))?"[gputime] timestamp-query active — HUD shows per-pass GPU ms":"[gputime] no timestamp-query feature — HUD uses CPU-encode ms");// `?handoff=N`: override tfjs's small-tensor CPU forwarding threshold
 // (WEBGPU_CPU_HANDOFF_SIZE_THRESHOLD; 0 = force every op onto the GPU).
 // Only affects the tfjs learn path (legacy pieces / ?train=tfjs) — pair
 // with the HUD's learn line to A/B it on real hardware.
 let t=new URLSearchParams(location.search).get("handoff");null!==t&&(n.env().set("WEBGPU_CPU_HANDOFF_SIZE_THRESHOLD",parseInt(t,10)||0),console.log(`[tfjs] CPU handoff threshold -> ${parseInt(t,10)||0}`));// Architecture resolution: declarative fieldArch (piece default or dock
 // override) wins; createField is for load-bearing game recipes that bake
 // semantics the dock must not overwrite. Legacy createModel is last resort.
-let k=s.overrides?.fieldArch,S=k||(b.fieldArch?b.fieldArch:null);eh=(eu=S?(0,o.createFieldFromArch)(S):b.createField?b.createField():null)||!b.createModel?null:b.createModel(),i=eu?eu.trainableWeights:void 0,eE=n.tensor2d([[ei,el]]),n.keep(eE);// Fused advect kernel: WGSL is GENERATED from the live model's layer dims
+let w=s.overrides?.fieldArch,F=w||(k.fieldArch?k.fieldArch:null);em=(ef=F?(0,o.createFieldFromArch)(F):k.createField?k.createField():null)||!k.createModel?null:k.createModel(),i=ef?ef.trainableWeights:void 0,eR=n.tensor2d([[eu,ep]]),n.keep(eR);// Fused advect kernel: WGSL is GENERATED from the live model's layer dims
 // (see advect_wgsl.ts) — works for both the field and legacy MLP pieces.
 // Owns pos/vel as raw GPUBuffers; construction throws loudly on any
 // unsupported architecture instead of silently falling back.
-let C={width:ei,height:el,forceMagnitude:O,friction:b.friction,maxVelocity:N,resetRate:b.resetRate,border:X};em=eu?(0,p.AdvectKernel).fromField(eu,C,_):(0,p.AdvectKernel).fromModel(eh,C,_);// Field pieces train FUSED by default: the trainer co-owns the advect
+let A={width:eu,height:ep,forceMagnitude:V,friction:k.friction,maxVelocity:D,resetRate:k.resetRate,border:Q};eb=ef?(0,p.AdvectKernel).fromField(ef,A,_):(0,p.AdvectKernel).fromModel(em,A,_);// Field pieces train FUSED by default: the trainer co-owns the advect
 // kernel's weights buffer and Adam-updates it in place — weights never
 // leave the GPU. tfjs remains only as the (idle) blueprint. Legacy MLP
 // pieces keep the tfjs optimizer (their losses aren't in the kernel yet).
-let A="tfjs"===new URLSearchParams(location.search).get("train"),D="on"===H.tag&&"agree-disagree"===H.game,$=eu?eu.classes??0:0,R=eu instanceof a.HelmholtzField&&"agree-disagree"===eu.semantic?3:$,L=b.palette??(eu instanceof a.HelmholtzField&&"agree-disagree"===eu.semantic?"rgb-roles":R>0?"species":"speed");A&&$>0&&(console.warn("[train] ?train=tfjs ignored: class-aware fields are fused-only (tfjs has no class input)"),A=!1),A&&D&&(console.warn("[train] ?train=tfjs ignored for Agree+Disagree: the correct game requires two lane-isolated predictors and two external-gradient buffers, which are implemented only by the fused trainer"),A=!1);// ADVERSARY PIECES NOW TRAIN FUSED when the field supports it (raw or
+let $="tfjs"===new URLSearchParams(location.search).get("train"),O="on"===Z.tag&&"agree-disagree"===Z.game,B=ef?ef.classes??0:0,z=ef instanceof a.HelmholtzField&&"agree-disagree"===ef.semantic?3:B,q=k.palette??(ef instanceof a.HelmholtzField&&"agree-disagree"===ef.semantic?"rgb-roles":z>0?"species":"speed");$&&B>0&&(console.warn("[train] ?train=tfjs ignored: class-aware fields are fused-only (tfjs has no class input)"),$=!1),$&&O&&(console.warn("[train] ?train=tfjs ignored for Agree+Disagree: the correct game requires two lane-isolated predictors and two external-gradient buffers, which are implemented only by the fused trainer"),$=!1);// ADVERSARY PIECES NOW TRAIN FUSED when the field supports it (raw or
 // fourier encoding, classless): AdversaryTrainer records the K-head
 // relaxed-WTA discriminator + the generator reward (extGrads → the field
 // trainer's pass B) into the same frame encoder. Verified vs the AD-IR
 // oracle AND tf.variableGrads at cos = 1.0000000 (tools/train_wta_test.ts);
 // measured 0.7-0.8 ms/step at B=512 vs the tfjs path's 19-32 ms.
-// hashgrid/class-aware fields and ?train=tfjs keep the tfjs autograd path,
-// and the loop says which one it picked out loud.
-let G="on"===H.tag&&$>0,V="on"===H.tag&&!G&&!!eu&&!A&&0===em.layout.classes&&"hashgrid"!==em.layout.encoding.kind,W="agree-disagree"===em.layout.spec.kind;if(D&&!W||W&&"on"===H.tag&&!D)throw Error("[adversary] Agree+Disagree game/field mismatch: the game requires the two-head agree-disagree field semantic, and that field semantic must be trained by the two-lane game");// ALL field types (standard/siren/fourier/hashgrid) now train FUSED: the
+// HASHGRID IS NOW FUSED TOO (the default piece): the adversary scratch
+// carries a per-member dL/dEnc block and fieldGrad carries the gather-side
+// grid block, gated vs live tfjs autograd in tools/train_wta_hashgrid_test.ts.
+// Class-aware fields and ?train=tfjs keep the tfjs autograd path, and the
+// loop says which one it picked out loud.
+let H="on"===Z.tag&&B>0,K="on"===Z.tag?P(Z).tag:"none",Y="on"===Z.tag&&!H&&!!ef&&!$&&"none"===K&&0===eb.layout.classes,J="agree-disagree"===eb.layout.spec.kind;if(O&&!J||J&&"on"===Z.tag&&!O)throw Error("[adversary] Agree+Disagree game/field mismatch: the game requires the two-head agree-disagree field semantic, and that field semantic must be trained by the two-lane game");// ALL field types (standard/siren/fourier/hashgrid) now train FUSED: the
 // trainer codegen handles sin backward (pre-act checkpoint), the fourier
 // encoding jacobian, and the hashgrid interp/scatter — each verified vs a
 // tfjs-autograd fixture on Metal at cos=1.0 (tools/train_types_test.ts).
@@ -564,30 +655,40 @@ let G="on"===H.tag&&$>0,V="on"===H.tag&&!G&&!!eu&&!A&&0===em.layout.classes&&"ha
 // Field pieces with an explicit fieldLoss train FUSED by default
 // (chaos / cover / … compiled into train_wgsl). Aesthetic pieces that
 // omit fieldLoss keep the tfjs computeLoss path.
-if(G?(console.warn("[adversary] disabled for class-conditioned fields: class identity is not yet part of the predictor context, so enabling it would create fake hidden-state surprise."),eD={tag:"off"}):eD=V?U(H,I,Z,z,"fused"):U(H,I,Z,z),"on"===eD.tag&&"tfjs"===eD.implementation&&console.log(`[adversary] ${"on"===H.tag?H.kind.tag:"?"} encoding=${"on"===H.tag?H.encoding.tag:"?"} k=${eD.k} weight=${eD.weight} — tfjs autograd trainer (${A?"?train=tfjs":"field type unsupported by the fused adversary"})`),eu&&void 0!==b.fieldLoss&&!A&&("off"===eD.tag||V)){// `?rollout=K` (1..16, default 1): K-step BPTT rollout — the loss sees
+if(H?(console.warn("[adversary] disabled for class-conditioned fields: class identity is not yet part of the predictor context, so enabling it would create fake hidden-state surprise."),eO={tag:"off"}):eO=Y?X(Z,I,ee,W,"fused"):X(Z,I,ee,W),"on"===eO.tag&&"tfjs"===eO.implementation&&console.log(`[adversary] ${"on"===Z.tag?Z.kind.tag:"?"} encoding=${"on"===Z.tag?Z.encoding.tag:"?"} k=${eO.k} weight=${eO.weight} pressure=${eO.pressure.tag} — tfjs autograd trainer (${$?"?train=tfjs":"none"!==K?"anti-collapse pressure has no fused WGSL path yet":"field type unsupported by the fused adversary"})`),ef&&void 0!==k.fieldLoss&&!$&&("off"===eO.tag||Y)){// `?rollout=K` (1..16, default 1): K-step BPTT rollout — the loss sees
 // how particles FLOW through the field (evolving pos+vel), not just one
 // step. K is compiled into the trainer's WGSL. K=1 ≡ the tfjs loss.
 // `?window=K` overrides this (and trainEvery) — see windowK above.
-let e=ee>0?ee:Math.max(1,Math.min(16,parseInt(new URLSearchParams(location.search).get("rollout")??"1",10)||1));// Fused adversary FIRST: the field trainer's pass B needs its extGrads
+let e=ea>0?ea:Math.max(1,Math.min(16,parseInt(new URLSearchParams(location.search).get("rollout")??"1",10)||1));// Fused adversary FIRST: the field trainer's pass B needs its extGrads
 // buffer at construction (a codegen flag, not a runtime branch).
-if("random"===new URLSearchParams(location.search).get("batch")&&(ej="random"),// `?mix=F` (0..1): coverage floor — fraction of the particle-sourced
+if("random"===new URLSearchParams(location.search).get("batch")&&(eE="random"),// `?mix=F` (0..1): coverage floor — fraction of the particle-sourced
 // batch replaced by fresh uniform random points each step.
-eS=Math.max(0,Math.min(1,parseFloat(new URLSearchParams(location.search).get("mix")??"0")||0)),V&&"on"===eD.tag&&"fused"===eD.implementation&&"on"===H.tag){let e={tag:H.encoding.tag,target:E(H),loss:F(H),k:(0,m.headCount)(H.kind),relaxEps:"wta"===H.kind.tag?H.kind.relaxEps:0,batchCap:1024,fieldWeightsBuffer:em.weightsBuffer,particleCount:em.count,observerGeometry:Z};ex=new d.AdversaryTrainer(eT,em.layout,{...e,// Ordinary pieces retain the historical blended-field game. In
+eF=Math.max(0,Math.min(1,parseFloat(new URLSearchParams(location.search).get("mix")??"0")||0)),Y&&"on"===eO.tag&&"fused"===eO.implementation&&"on"===Z.tag){let e={tag:Z.encoding.tag,target:R(Z),loss:M(Z),k:(0,g.headCount)(Z.kind),relaxEps:"wta"===Z.kind.tag?Z.kind.relaxEps:0,batchCap:1024,fieldWeightsBuffer:eb.weightsBuffer,particleCount:eb.count,observerGeometry:ee};e_=new h.AdversaryTrainer(eD,eb.layout,{...e,// Ordinary pieces retain the historical blended-field game. In
 // Agree+Disagree this is A: direct field head 0, predictor opponent.
-fieldLane:D?0:"blend",generatorRole:"disagree",seed:20260727}),D&&(// B owns a separate predictor, optimizer, scratch and statistics.
+fieldLane:O?0:"blend",generatorRole:"disagree",seed:20260727}),O&&(// B owns a separate predictor, optimizer, scratch and statistics.
 // The only shared object is the READ-ONLY field weights buffer.
-ey=new d.AdversaryTrainer(eT,em.layout,{...e,fieldLane:1,generatorRole:"agree",seed:20260728}),eI=Array((0,m.headCount)(H.kind)).fill(0)),ex.setParticleBuffers(em.posBuffer,em.velBuffer,em.count),ey?.setParticleBuffers(em.posBuffer,em.velBuffer,em.count),eb=new g.GpuSurpriseStats(eT),console.log(D?`[adversary] FUSED Agree+Disagree encoding=${H.encoding.tag} k=${(0,m.headCount)(H.kind)} weight=${eD.weight} — A=lane0/disagree, B=lane1/agree, C=display-only blend; two independent predictors, one summed field update`:`[adversary] FUSED ${H.kind.tag} encoding=${H.encoding.tag} k=${(0,m.headCount)(H.kind)} weight=${eD.weight} — disc train + generator reward in-frame, tfjs idle`)}b.pixelDisc&&eu&&!A&&0===em.layout.classes&&"hashgrid"!==em.layout.encoding.kind&&("helmholtz"===em.layout.spec.kind||"agree-disagree"===em.layout.spec.kind)&&((ev=new h.PixelDiscTrainer(eT,em.layout,{fieldWeightsBuffer:em.weightsBuffer,dims:{kind:b.pixelDisc.kind??"vec-field",G:b.pixelDisc.G,E:b.pixelDisc.E,K:b.pixelDisc.K,hidden:b.pixelDisc.hidden,dt:b.pixelDisc.dt},batchCap:512,seed:20260805})).setParticleBuffers(em.posBuffer,em.velBuffer,em.count),console.log(`[pixel-disc] FUSED kind=${ev.kind} G=${ev.dims.G} E=${ev.dims.E} K=${ev.dims.K} weight=${b.pixelDisc.weight} — soft density critic + reverse-mode gen path (no JVP)`));let t=[];if(ex&&t.push(ex.extGradsBuf),ey?t.push(ey.extGradsBuf):ev&&t.push(ev.extGradsBuf),t.length>2)throw Error(`[train] at most 2 extGrad buffers (got ${t.length}); Agree+Disagree + pixel-disc cannot share the same frame yet`);(eg=new c.FusedTrainer(eT,em.layout,{weightsBuffer:em.weightsBuffer,batchCap:1024,kSteps:e,extGradBuffers:t,loss:b.fieldLoss,border:X})).uploadWeights(em.packCurrentWeights()),eg.setParticleBuffers(em.posBuffer,em.velBuffer,em.count),em.syncFromTfjs=!1,console.log(`[train] fused trainer active (2 dispatches/step, tfjs idle, batch=${ej}, rollout=${e})`)}eg||(ef=n.train.adam(B)),x(J)&&!ex&&(console.warn("[adversary] tfjs is an oracle-only training path; raw/per-unit cloud diagnostics require the fused adversary. Falling back to velocity colour."),J={tag:"velocity"});try{eF=new l.GpuPointRendererWebGPU(e,{pointSize:b.pointSize??2.5,background:b.backgroundColor,maxSpeed:N,classes:R,palette:L});// splat shares the canvas context with the quad renderer (same device/
+eI=new h.AdversaryTrainer(eD,eb.layout,{...e,fieldLane:1,generatorRole:"agree",seed:20260728}),eN=Array((0,g.headCount)(Z.kind)).fill(0)),e_.setParticleBuffers(eb.posBuffer,eb.velBuffer,eb.count),eI?.setParticleBuffers(eb.posBuffer,eb.velBuffer,eb.count),ej=new x.GpuSurpriseStats(eD),console.log(O?`[adversary] FUSED Agree+Disagree encoding=${Z.encoding.tag} k=${(0,g.headCount)(Z.kind)} weight=${eO.weight} — A=lane0/disagree, B=lane1/agree, C=display-only blend; two independent predictors, one summed field update`:`[adversary] FUSED ${Z.kind.tag} encoding=${Z.encoding.tag} k=${(0,g.headCount)(Z.kind)} weight=${eO.weight} — disc train + generator reward in-frame, tfjs idle`)}k.pixelDisc&&ef&&!$&&0===eb.layout.classes&&"hashgrid"!==eb.layout.encoding.kind&&("helmholtz"===eb.layout.spec.kind||"agree-disagree"===eb.layout.spec.kind)&&((ew=new f.PixelDiscTrainer(eD,eb.layout,{fieldWeightsBuffer:eb.weightsBuffer,dims:{kind:k.pixelDisc.kind??"vec-field",G:k.pixelDisc.G,E:k.pixelDisc.E,K:k.pixelDisc.K,hidden:k.pixelDisc.hidden,dt:k.pixelDisc.dt},batchCap:512,seed:20260805})).setParticleBuffers(eb.posBuffer,eb.velBuffer,eb.count),console.log(`[pixel-disc] FUSED kind=${ew.kind} G=${ew.dims.G} E=${ew.dims.E} K=${ew.dims.K} weight=${k.pixelDisc.weight} — soft density critic + reverse-mode gen path (no JVP)`));let t=[];if(e_&&t.push(e_.extGradsBuf),eI?t.push(eI.extGradsBuf):ew&&t.push(ew.extGradsBuf),t.length>2)throw Error(`[train] at most 2 extGrad buffers (got ${t.length}); Agree+Disagree + pixel-disc cannot share the same frame yet`);(ek=new c.FusedTrainer(eD,eb.layout,{// Ask for the architectural ceiling and let FusedTrainer resolve it
+// against this device+layout+K. The old hard-coded 1024 was invisible
+// to the UI, so the "train B" slider (max 4096) could hand the trainer
+// an n it rejects — which throws inside the rAF tick and stops the
+// animation for good.
+batchCap:d.MAX_BATCH,weightsBuffer:eb.weightsBuffer,kSteps:e,extGradBuffers:t,loss:k.fieldLoss,border:Q})).uploadWeights(eb.packCurrentWeights()),ek.setParticleBuffers(eb.posBuffer,eb.velBuffer,eb.count),eb.syncFromTfjs=!1,// Second κ site: a live sampleRate carried across a gallery switch may
+// exceed the NEW trainer's cap (different layout/K ⇒ different scratch
+// cost). Re-canonicalize here so the invariant in record() holds.
+I=E(I,ek.batchCap).n,console.log(`[train] fused trainer active (2 dispatches/step, tfjs idle, batch=${eE}, rollout=${e}, batchCap=${ek.batchCap})`)}ek||(eg=n.train.adam(U)),y(es)&&!e_&&(console.warn("[adversary] tfjs is an oracle-only training path; raw/per-unit cloud diagnostics require the fused adversary. Falling back to velocity colour."),es={tag:"velocity"});try{eP=new l.GpuPointRendererWebGPU(e,{pointSize:k.pointSize??2.5,background:k.backgroundColor,maxSpeed:D,classes:z,palette:q});// splat shares the canvas context with the quad renderer (same device/
 // format); its passes only run on frames where it's picked.
-let t=new URLSearchParams(location.search).get("decay"),r=new URLSearchParams(location.search).get("dot");eA=new u.SplatRenderer(e,{background:b.backgroundColor,maxSpeed:N,classes:R,palette:L,dpr:es,// `?dot=F` — radial splat radius in CSS px (default 1.25)
+let t=new URLSearchParams(location.search).get("decay"),r=new URLSearchParams(location.search).get("dot");eM=new u.SplatRenderer(e,{background:k.backgroundColor,maxSpeed:D,classes:z,palette:q,dpr:ei,// `?dot=F` — radial splat radius in CSS px (default 1.25)
 radius:null!==r&&parseFloat(r)||1.25,// Trails come from the piece's declared renderer style (the splat's
 // decay is the real mechanism behind all of them); `?decay=F` overrides.
-decay:null!==t?Math.max(0,Math.min(.995,parseFloat(t)||0)):eo[b.renderer],// `?stroke=` / `?strokeLen=` — geometric stroke trails (parsed above)
-style:eO,strokeLen:eB})}catch(e){console.error("[webgpu] renderer init failed",e),ea();return}/** Lazily build (and cache) the surprise renderer for a colormap. Cached
+decay:null!==t?Math.max(0,Math.min(.995,parseFloat(t)||0)):eh[k.renderer],// `?stroke=` / `?strokeLen=` — geometric stroke trails (parsed above)
+style:eV,strokeLen:eU})}catch(e){console.error("[webgpu] renderer init failed",e),ed();return}/** Lazily build (and cache) the surprise renderer for a colormap. Cached
      *  rather than rebuilt because construction reconfigures the canvas context,
      *  and destroying one would `unconfigure()` the context the splat and quad
-     *  renderers are still using. Three ramps ⇒ at most three pipelines. */let q=t=>{let r=e$.get(t);if(r)return r;let s=new g.GpuSurpriseRendererWebGPU(e,{colormap:t,background:b.backgroundColor,pointSize:2.5,gain:1.5});return e$.set(t,s),s};x(J)&&q(J.colormap),r&&r({field:eu||null,getParticleCount:()=>_,setParticleCount:e=>{em&&(em.setParticleCount(e),_=em.count,eg&&eg.setParticleBuffers(em.posBuffer,em.velBuffer,em.count),ex&&// buffer identity on the next encodeRender, so no extra plumbing
-ex.setParticleBuffers(em.posBuffer,em.velBuffer,em.count),ey&&ey.setParticleBuffers(em.posBuffer,em.velBuffer,em.count),eb?.reset())},getResetRate:()=>T,setResetRate:e=>{T=Math.max(0,Math.min(.2,e)),em&&em.setResetRate(T)},getSampleRate:()=>I,setSampleRate:e=>{I=Math.max(1,Math.round(e))},getDecay:()=>eA.decay,setDecay:e=>{eA&&(eA.decay=Math.max(0,Math.min(.99,e)))},getMaxVelocity:()=>N,setMaxVelocity:e=>{N=Math.max(.25,Math.min(200,e)),em?.setMaxVelocity(N),P&&(O=w(M,N,b.friction),em?.setForceMagnitude(O)),eF?.setMaxSpeed(N),eA&&(eA.maxSpeed=N)},getDrive:()=>M,setDrive:e=>{P&&(O=w(M=Math.max(0,Math.min(1,e)),N,b.friction),em?.setForceMagnitude(O))},getGeneratorLearningRate:()=>B,setGeneratorLearningRate:e=>{let t=Math.max(j.generator.min,Math.min(j.generator.max,e));t!==B&&(B=t,!eg&&ef&&(ef.dispose(),ef=n.train.adam(B)))},getDiscriminatorLearningRate:()=>z,setDiscriminatorLearningRate:e=>{let t=Math.max(j.discriminator.min,Math.min(j.discriminator.max,e));t!==z&&(z=t,"on"===eD.tag&&"tfjs"===eD.implementation&&eD.adv.setLearningRate(z))},getBlend:()=>eu instanceof a.HelmholtzField?eu.alpha:0,setBlend:e=>{eu instanceof a.HelmholtzField&&// Single-head arches keep α=0 (no second head to blend).
-(eu.alpha=1===eu.headCount?0:Math.max(0,Math.min(1,e)))},getStrokeStyle:()=>eO,setStrokeStyle:e=>{eO=e,eA&&(eA.style=e)},getStrokeLength:()=>eB,setStrokeLength:e=>{eB=Math.max(ep.min,Math.min(ep.max,e)),eA&&(eA.strokeLen=eB)},getAdversaryWeight:()=>"on"===eD.tag?eD.weight:0,setAdversaryWeight:e=>{"on"===eD.tag&&(eD.weight=Math.max(0,Math.min(20,e)))},getAdversaryTelemetry:()=>eR,getColorMode:()=>J,setColorMode:e=>{if(x(e)&&"agree-disagree"===b.mode){console.warn("[adversary] surprise colour is disabled for Agree+Disagree; the RGB channels are its A/B/C output contract.");return}if(x(e)&&!ex){console.warn("[adversary] tfjs is an oracle-only training path; raw/per-unit cloud diagnostics require the fused adversary.");return}let t=v(J),r=v(e);x(e)&&q(e.colormap),t!==r&&eb?.reset(),J=e},getSurpriseSpan:()=>ex&&eb&&x(J)?{...eb.norm.raw,covered:Math.min(ex.surpriseCoverage().covered,ey?.surpriseCoverage().covered??1),collapsed:eb.norm.collapsed}:null}),console.log(`starting: ${b.name} (webgpu)`),eH()})(),()=>{for(let e of(y=!1,eF&&eF.destroy(),eA&&eA.destroy?.(),eN&&eN.destroy(),eL.remove(),ef&&ef.dispose(),eE&&eE.dispose(),eg&&eg.destroy(),ex&&ex.destroy(),ey&&ey.destroy(),ev&&ev.destroy(),eb&&eb.destroy(),ek&&ek.destroy(),em&&em.destroy(),eh&&eh.dispose(),eu&&eu.dispose(),"on"===eD.tag&&"tfjs"===eD.implementation&&eD.adv.dispose(),e$.values()))e.destroy();e$.clear()}}},{"@tensorflow/tfjs":"7XM1o","@tensorflow/tfjs-backend-webgpu":"1Q5wH","./core/field/helmholtz":"d98IR","./core/field/arch":"d110f","./core/losses":"h4R8M","./render/webgpu/points":"331Z0","./render/webgpu/splat":"1QuJT","./render/webgpu/advect":"exLSb","./render/webgpu/train":"fJOAS","./render/webgpu/adversary_train":"5CJQf","./render/webgpu/pixel_disc_train":"30QAM","./render/webgpu/gputime":"881SH","./core/gan/adversary":"4C16z","./render/webgpu/surprise_points":"ah9re","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"7XM1o":[function(e,t,r){/**
+     *  renderers are still using. Three ramps ⇒ at most three pipelines. */let et=t=>{let r=eB.get(t);if(r)return r;let s=new x.GpuSurpriseRendererWebGPU(e,{colormap:t,background:k.backgroundColor,pointSize:2.5,gain:1.5});return eB.set(t,s),s};y(es)&&et(es.colormap),r&&r({field:ef||null,getParticleCount:()=>_,setParticleCount:e=>{eb&&(eb.setParticleCount(e),_=eb.count,ek&&ek.setParticleBuffers(eb.posBuffer,eb.velBuffer,eb.count),e_&&// buffer identity on the next encodeRender, so no extra plumbing
+e_.setParticleBuffers(eb.posBuffer,eb.velBuffer,eb.count),eI&&eI.setParticleBuffers(eb.posBuffer,eb.velBuffer,eb.count),ej?.reset())},getResetRate:()=>T,setResetRate:e=>{T=Math.max(0,Math.min(.2,e)),eb&&eb.setResetRate(T)},getSampleRate:()=>I,getMaxSampleRate:()=>ek?.batchCap??N,setSampleRate:e=>{let t=E(e,ek?.batchCap??N);"clamped"===t.tag&&t.requested!==S&&(// Once per distinct over-cap value — a slider drag would otherwise
+// emit one warning per pointer event.
+S=t.requested,console.warn(`[train] batch ${t.requested} exceeds this trainer's cap ${t.cap} (device/layout limited); training at ${t.n}`)),I=t.n},getDecay:()=>eM.decay,setDecay:e=>{eM&&(eM.decay=Math.max(0,Math.min(.99,e)))},getMaxVelocity:()=>D,setMaxVelocity:e=>{D=Math.max(.25,Math.min(200,e)),eb?.setMaxVelocity(D),L&&(V=j(G,D,k.friction),eb?.setForceMagnitude(V)),eP?.setMaxSpeed(D),eM&&(eM.maxSpeed=D)},getDrive:()=>G,setDrive:e=>{L&&(V=j(G=Math.max(0,Math.min(1,e)),D,k.friction),eb?.setForceMagnitude(V))},getGeneratorLearningRate:()=>U,setGeneratorLearningRate:e=>{let t=Math.max(C.generator.min,Math.min(C.generator.max,e));t!==U&&(U=t,!ek&&eg&&(eg.dispose(),eg=n.train.adam(U)))},getDiscriminatorLearningRate:()=>W,setDiscriminatorLearningRate:e=>{let t=Math.max(C.discriminator.min,Math.min(C.discriminator.max,e));t!==W&&(W=t,"on"===eO.tag&&"tfjs"===eO.implementation&&eO.adv.setLearningRate(W))},getBlend:()=>ef instanceof a.HelmholtzField?ef.alpha:0,setBlend:e=>{ef instanceof a.HelmholtzField&&// Single-head arches keep α=0 (no second head to blend).
+(ef.alpha=1===ef.headCount?0:Math.max(0,Math.min(1,e)))},getStrokeStyle:()=>eV,setStrokeStyle:e=>{eV=e,eM&&(eM.style=e)},getStrokeLength:()=>eU,setStrokeLength:e=>{eU=Math.max(ex.min,Math.min(ex.max,e)),eM&&(eM.strokeLen=eU)},getAdversaryWeight:()=>"on"===eO.tag?eO.weight:0,setAdversaryWeight:e=>{"on"===eO.tag&&(eO.weight=Math.max(0,Math.min(20,e)))},getAdversaryTelemetry:()=>ez,getColorMode:()=>es,setColorMode:e=>{if(y(e)&&"agree-disagree"===k.mode){console.warn("[adversary] surprise colour is disabled for Agree+Disagree; the RGB channels are its A/B/C output contract.");return}if(y(e)&&!e_){console.warn("[adversary] tfjs is an oracle-only training path; raw/per-unit cloud diagnostics require the fused adversary.");return}let t=b(es),r=b(e);y(e)&&et(e.colormap),t!==r&&ej?.reset(),es=e},getSurpriseSpan:()=>e_&&ej&&y(es)?{...ej.norm.raw,covered:Math.min(e_.surpriseCoverage().covered,eI?.surpriseCoverage().covered??1),collapsed:ej.norm.collapsed}:null}),console.log(`starting: ${k.name} (webgpu)`),eJ()})(),()=>{for(let e of(v=!1,eP&&eP.destroy(),eM&&eM.destroy?.(),e$&&e$.destroy(),eq.remove(),eg&&eg.dispose(),eR&&eR.dispose(),ek&&ek.destroy(),e_&&e_.destroy(),eI&&eI.destroy(),ew&&ew.destroy(),ej&&ej.destroy(),eS&&eS.destroy(),eb&&eb.destroy(),em&&em.dispose(),ef&&ef.dispose(),"on"===eO.tag&&"tfjs"===eO.implementation&&eO.adv.dispose(),eB.values()))e.destroy();eB.clear()}}},{"@tensorflow/tfjs":"7XM1o","@tensorflow/tfjs-backend-webgpu":"1Q5wH","./core/field/helmholtz":"d98IR","./core/field/arch":"d110f","./core/losses":"h4R8M","./render/webgpu/points":"331Z0","./render/webgpu/splat":"1QuJT","./render/webgpu/advect":"exLSb","./render/webgpu/train":"fJOAS","./render/webgpu/train_wgsl":"jtmKg","./render/webgpu/adversary_train":"5CJQf","./render/webgpu/pixel_disc_train":"30QAM","./render/webgpu/gputime":"881SH","./core/gan/adversary":"4C16z","./render/webgpu/surprise_points":"ah9re","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"7XM1o":[function(e,t,r){/**
  * @license
  * Copyright 2018 Google LLC. All Rights Reserved.
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -63497,10 +63598,11 @@ let t="fourier"===this.modelType?a(e,this.fourierOctaves):"hashgrid"===this.mode
  * chain into the field weights. Compose them with weighted sums.
  *
  *   isotropyLoss     — scale-invariant force-covariance anisotropy penalty
+ *   directionOrderLoss — polar + nematic DIRECTION order (adversary anti-collapse)
  *   divergencePenalty — finite-difference ∇·F (measure preservation)
  *   chaosLoss        — local finite-time Lyapunov proxy (rewards sensitivity)
  *   spectrumLoss     — best-effort power-law spectral slope shaping (optional)
- */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"isotropyLoss",()=>n.isotropyLoss),s.export(r,"divergencePenalty",()=>a.divergencePenalty),s.export(r,"chaosLoss",()=>o.chaosLoss),s.export(r,"spectrumLoss",()=>i.spectrumLoss);var n=e("./isotropy"),a=e("./divergence"),o=e("./chaos"),i=e("./spectrum")},{"./isotropy":"ajJz7","./divergence":"6faDw","./chaos":"eHaA0","./spectrum":"5wdzO","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],ajJz7:[function(e,t,r){var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),/**
+ */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"isotropyLoss",()=>n.isotropyLoss),s.export(r,"directionOrderLoss",()=>n.directionOrderLoss),s.export(r,"divergencePenalty",()=>a.divergencePenalty),s.export(r,"chaosLoss",()=>o.chaosLoss),s.export(r,"spectrumLoss",()=>i.spectrumLoss);var n=e("./isotropy"),a=e("./divergence"),o=e("./chaos"),i=e("./spectrum")},{"./isotropy":"ajJz7","./divergence":"6faDw","./chaos":"eHaA0","./spectrum":"5wdzO","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],ajJz7:[function(e,t,r){var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),/**
  * Scale-invariant anisotropy penalty on a batch of force vectors.
  *
  * Builds the 2x2 force covariance C = (Fᵀ·F) / N over the particle batch and
@@ -63518,7 +63620,41 @@ let t="fourier"===this.modelType?a(e,this.fourierOctaves):"hashgrid"===this.mode
  *
  * @param force [N, 2] force vectors for the particle batch.
  * @returns Differentiable scalar anisotropy penalty.
- */s.export(r,"isotropyLoss",()=>a);var n=e("@tensorflow/tfjs");function a(e){return n.tidy(()=>{let t=e.shape[0],r=e.transpose().matMul(e).div(n.scalar(t)),s=r.slice([0,0],[1,1]),a=r.slice([0,1],[1,1]),o=r.slice([1,1],[1,1]),i=s.sub(o).square(),l=a.square().mul(4),u=s.add(o).add(1e-6);return i.add(l).div(u.square()).asScalar()})}},{"@tensorflow/tfjs":"7XM1o","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"6faDw":[function(e,t,r){var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),/**
+ */s.export(r,"isotropyLoss",()=>a),/**
+ * DIRECTIONAL ORDER PARAMETERS of a force batch — the anti-collapse pressure
+ * for adversarial pieces.
+ *
+ * {@link isotropyLoss} is an ENERGY statistic: the covariance is weighted by
+ * ‖F‖², so a handful of large forces decide the verdict and a field whose
+ * DIRECTIONS have all aligned at small magnitude scores as isotropic. What the
+ * adversary games collapse into is a direction fact, so it is measured on
+ * directions:
+ *
+ *     u_i = F_i / sqrt(‖F_i‖² + τ²)            soft unit vector, exact at 0
+ *     R₁  = ‖mean_i u_i‖                       POLAR order  — one global flow
+ *     R₂  = ‖mean_i (u_x²−u_y², 2·u_x·u_y)‖    NEMATIC order — ± aligned streaks
+ *
+ * Both are 0 for an isotropic direction field and 1 for a fully ordered one.
+ * The loss is `polarWeight·R₁² + nematicWeight·R₂²`.
+ *
+ * WHY BOTH, MEASURED (tools/collapse_probe.ts, pair preset, 250 steps): with
+ * the polar term alone at λ=0.05 the generator drove R₁ to 0.004 and R₂ to
+ * 0.95 — it simply split the domain into counter-streaming ±F₀ sheets, which
+ * reads on screen as exactly the same laminar streaks. The nematic term is not
+ * a refinement; without it the penalty has a free escape.
+ *
+ * The double-angle vector is deliberately left UNNORMALIZED (it carries |u|²,
+ * which is ≤ 1 and → 0 as ‖F‖ → τ). Dividing by |u|² would restore an exact
+ * unit circle at the cost of a 0/0 at F = 0, and the softened magnitude is the
+ * honest statement that a near-zero force has no reliable direction.
+ *
+ * Batch-coupled: one mean over the batch, then one broadcast on the backward.
+ * That is the same fold shape as the isotropy covariance (see `isotropyFold`,
+ * src/render/webgpu/ad/losses.ts), which is how it becomes fusable.
+ *
+ * @param force [N,2] RAW field output F(x) — not the physically scaled force.
+ * @param tau   Direction softener. Use the objective's own soft-angle τ.
+ */s.export(r,"directionOrderLoss",()=>o);var n=e("@tensorflow/tfjs");function a(e){return n.tidy(()=>{let t=e.shape[0],r=e.transpose().matMul(e).div(n.scalar(t)),s=r.slice([0,0],[1,1]),a=r.slice([0,1],[1,1]),o=r.slice([1,1],[1,1]),i=s.sub(o).square(),l=a.square().mul(4),u=s.add(o).add(1e-6);return i.add(l).div(u.square()).asScalar()})}function o(e,t,r,s){if(!(Number.isFinite(t)&&t>0))throw Error(`directionOrderLoss: tau must be finite and > 0, got ${t}`);return n.tidy(()=>{let n=e.square().sum(1).add(t*t).sqrt().reshape([-1,1]),a=e.div(n),o=a.slice([0,0],[-1,1]).reshape([-1]),i=a.slice([0,1],[-1,1]).reshape([-1]),l=o.mean().square().add(i.mean().square()),u=o.square().sub(i.square()),p=o.mul(i).mul(2),c=u.mean().square().add(p.mean().square());return l.mul(r).add(c.mul(s)).asScalar()})}},{"@tensorflow/tfjs":"7XM1o","@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],"6faDw":[function(e,t,r){var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),/**
  * Finite-difference divergence penalty — drives measure preservation.
  *
  * Estimates ∇·F = ∂Fx/∂x + ∂Fy/∂y at each sample position via central
@@ -64530,8 +64666,19 @@ ${w}
  * born on the GPU and never leave. tfjs's only remaining roles are (a) the
  * blueprint the FieldLayout/initial weights come from and (b) the autograd
  * oracle in tools/train_test.ts.
- */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"FusedTrainer",()=>a);var n=e("./train_wgsl");class a{constructor(e,t,r={}){this.uniAData=new ArrayBuffer(64),this.uniBData=new ArrayBuffer(32),this.partPos=null,this.partVel=null,this.partCount=0,/** Adam step counter (t ≥ 1 on the first applied update, tfjs convention). */this.adamStep=0,this.device=e,this.layout=t,this.batchCap=Math.min(r.batchCap??n.MAX_BATCH,n.MAX_BATCH),this.kSteps=r.kSteps??1;let s=r.extGradBuffers??(r.extGradBuffer?[r.extGradBuffer]:[]);if(s.length>2)throw Error(`train: at most 2 external gradient buffers, got ${s.length}`);let a={type:"read-only-storage"},o={type:"storage"};this.bglA=e.createBindGroupLayout({entries:[{binding:0,visibility:4,buffer:{type:"uniform"}},{binding:1,visibility:4,buffer:a},{binding:2,visibility:4,buffer:o},{binding:3,visibility:4,buffer:o},{binding:4,visibility:4,buffer:o},{binding:5,visibility:4,buffer:a},{binding:6,visibility:4,buffer:a},{binding:7,visibility:4,buffer:o}]});let i=e.createPipelineLayout({bindGroupLayouts:[this.bglA]}),l=e.createShaderModule({code:(0,n.trainPassAShader)(t,{kSteps:this.kSteps,loss:r.loss,border:r.border})}),u=t=>e.createComputePipeline({layout:i,compute:{module:l,entryPoint:t}});this.pipeFwd=u("fwd"),this.pipeFinalize=u("finalize"),this.pipeBwd=u("bwd"),this.pipeB=e.createComputePipeline({layout:"auto",compute:{module:e.createShaderModule({code:(0,n.trainPassBShader)(t,{kSteps:this.kSteps,extGradCount:s.length,loss:r.loss,border:r.border})}),entryPoint:"main"}});let p=t=>e.createBuffer({size:t,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST|GPUBufferUsage.COPY_SRC});this.weightsShared=!!r.weightsBuffer,this.weightsBuf=r.weightsBuffer??p(4*t.totalFloats),this.batchBuf=p(8*this.batchCap),this.scratchBuf=p((0,n.scratchBytes)(t,this.batchCap,this.kSteps)),this.lossBuf=p(32),this.gradsBuf=p(4*t.totalFloats),this.adamM=p(4*t.totalFloats),this.adamV=p(4*t.totalFloats),// one vec4 partial per fwd workgroup; ceil(batchCap / TRAIN_WG) of them.
-this.partialsBuf=p(16*Math.ceil(this.batchCap/n.TRAIN_WG)),this.uniA=e.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}),this.uniB=e.createBuffer({size:32,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}),this.partDummy=e.createBuffer({size:8,usage:GPUBufferUsage.STORAGE}),this.bindA=this.makeBindA(),this.bindB=e.createBindGroup({layout:this.pipeB.getBindGroupLayout(0),entries:[{binding:0,resource:{buffer:this.uniB}},{binding:1,resource:{buffer:this.weightsBuf}},{binding:2,resource:{buffer:this.scratchBuf}},{binding:3,resource:{buffer:this.gradsBuf}},{binding:4,resource:{buffer:this.adamM}},{binding:5,resource:{buffer:this.adamV}},...s.map((e,t)=>({binding:6+t,resource:{buffer:e}}))]})}makeBindA(){// ONE bind group shared by fwd/finalize/bwd via the explicit bglA layout.
+ */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"FusedTrainer",()=>a);var n=e("./train_wgsl");class a{constructor(e,t,r={}){this.uniAData=new ArrayBuffer(64),this.uniBData=new ArrayBuffer(32),this.partPos=null,this.partVel=null,this.partCount=0,/** Adam step counter (t ≥ 1 on the first applied update, tfjs convention). */this.adamStep=0,this.device=e,this.layout=t,this.kSteps=r.kSteps??1;// Resolve the batch cap ONCE, here, against the two things that really
+// bound it: the architectural MAX_BATCH and what this device will hold for
+// this layout at this K. Over-asking is CLAMPED with a warning, never fatal
+// — a too-large scratch buffer would otherwise surface as an opaque WebGPU
+// OOM/validation error at createBuffer, mid-startup.
+//
+// BOTH limits gate the scratch buffer and neither is guaranteed to be the
+// smaller: createBuffer validates against maxBufferSize (256 MiB default)
+// while BINDING it as storage validates against maxStorageBufferBindingSize
+// (128 MiB default). Take the min.
+// (Spec guarantees device.limits; the ?? covers minimal test shims.)
+let s=Math.min(e.limits?.maxStorageBufferBindingSize??134217728,e.limits?.maxBufferSize??268435456),a=(0,n.maxBatchForScratch)(t,this.kSteps,s),o=(0,n.maxBatchForLoss)(r.loss),i=Math.max(1,Math.floor(r.batchCap??n.MAX_BATCH));if(this.batchCap=Math.min(i,a,o),i>this.batchCap){let e=o<a?`this objective's backward is superlinear in the batch (compute cap ${o})`:`scratch ${((0,n.scratchBytes)(t,i,this.kSteps)/1048576).toFixed(1)} MiB > device limit ${(s/1048576).toFixed(0)} MiB`;console.warn(`[train] batchCap ${i} exceeds what this device/layout/loss supports — ${e}; clamped to ${this.batchCap}`)}let l=r.extGradBuffers??(r.extGradBuffer?[r.extGradBuffer]:[]);if(l.length>2)throw Error(`train: at most 2 external gradient buffers, got ${l.length}`);let u={type:"read-only-storage"},p={type:"storage"};this.bglA=e.createBindGroupLayout({entries:[{binding:0,visibility:4,buffer:{type:"uniform"}},{binding:1,visibility:4,buffer:u},{binding:2,visibility:4,buffer:p},{binding:3,visibility:4,buffer:p},{binding:4,visibility:4,buffer:p},{binding:5,visibility:4,buffer:u},{binding:6,visibility:4,buffer:u},{binding:7,visibility:4,buffer:p}]});let c=e.createPipelineLayout({bindGroupLayouts:[this.bglA]}),d=e.createShaderModule({code:(0,n.trainPassAShader)(t,{kSteps:this.kSteps,loss:r.loss,border:r.border})}),h=t=>e.createComputePipeline({layout:c,compute:{module:d,entryPoint:t}});this.pipeFwd=h("fwd"),this.pipeFinalize=h("finalize"),this.pipeBwd=h("bwd"),this.pipeB=e.createComputePipeline({layout:"auto",compute:{module:e.createShaderModule({code:(0,n.trainPassBShader)(t,{kSteps:this.kSteps,extGradCount:l.length,loss:r.loss,border:r.border})}),entryPoint:"main"}});let f=t=>e.createBuffer({size:t,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST|GPUBufferUsage.COPY_SRC});this.weightsShared=!!r.weightsBuffer,this.weightsBuf=r.weightsBuffer??f(4*t.totalFloats),this.batchBuf=f(8*this.batchCap),this.scratchBuf=f((0,n.scratchBytes)(t,this.batchCap,this.kSteps)),this.lossBuf=f(32),this.gradsBuf=f(4*t.totalFloats),this.adamM=f(4*t.totalFloats),this.adamV=f(4*t.totalFloats),// one vec4 partial per fwd workgroup; ceil(batchCap / TRAIN_WG) of them.
+this.partialsBuf=f(16*Math.ceil(this.batchCap/n.TRAIN_WG)),this.uniA=e.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}),this.uniB=e.createBuffer({size:32,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST}),this.partDummy=e.createBuffer({size:8,usage:GPUBufferUsage.STORAGE}),this.bindA=this.makeBindA(),this.bindB=e.createBindGroup({layout:this.pipeB.getBindGroupLayout(0),entries:[{binding:0,resource:{buffer:this.uniB}},{binding:1,resource:{buffer:this.weightsBuf}},{binding:2,resource:{buffer:this.scratchBuf}},{binding:3,resource:{buffer:this.gradsBuf}},{binding:4,resource:{buffer:this.adamM}},{binding:5,resource:{buffer:this.adamV}},...l.map((e,t)=>({binding:6+t,resource:{buffer:e}}))]})}makeBindA(){// ONE bind group shared by fwd/finalize/bwd via the explicit bglA layout.
 // bindings 5/6 must always be bound; a dedicated dummy stands in until real
 // particle buffers are provided (must NOT alias batchBuf — usage conflict).
 return this.device.createBindGroup({layout:this.bglA,entries:[{binding:0,resource:{buffer:this.uniA}},{binding:1,resource:{buffer:this.weightsBuf}},{binding:2,resource:{buffer:this.batchBuf}},{binding:3,resource:{buffer:this.scratchBuf}},{binding:4,resource:{buffer:this.lossBuf}},{binding:5,resource:{buffer:this.partPos??this.partDummy}},{binding:6,resource:{buffer:this.partVel??this.partDummy}},{binding:7,resource:{buffer:this.partialsBuf}}]})}/**
@@ -64545,7 +64692,13 @@ return this.device.createBindGroup({layout:this.bglA,entries:[{binding:0,resourc
    * NOT submitted — so a whole frame (train + advect + render) collapses to one
    * queue.submit. Uniform writeBuffers stay on the queue (ordered before the
    * caller's submit). `tsA`/`tsB` optionally timestamp passes A and B.
-   */encodeStep(e,t,r,s,n){this.record(e,t,r,s,n)}record(e,t,r,s,a){if(r.n>this.batchCap)throw Error(`train: n=${r.n} > batchCap ${this.batchCap}`);let o=r.apply??!0;o&&this.adamStep++;let i=new Float32Array(this.uniAData),l=new Uint32Array(this.uniAData);i[0]=t.width,i[1]=t.height,i[2]=t.forceMagnitude,i[3]=t.friction,i[4]=t.maxVelocity,i[5]=r.alpha,i[6]=.01;let u=r.source??"random";if("particles"===u&&!this.partPos)throw Error("train: source 'particles' needs setParticleBuffers first");l[7]=this.partCount,l[8]=r.n,l[9]=(r.seed??0)>>>0,l[10]="uploaded"===u?0:"random"===u?1:2,l[11]=this.kSteps,l[12]=Math.round(Math.max(0,Math.min(1,r.mixRandom??0))*r.n);let p=Math.ceil(r.n/n.TRAIN_WG);// fwd/bwd workgroups this step
+   */encodeStep(e,t,r,s,n){this.record(e,t,r,s,n)}record(e,t,r,s,a){// INVARIANT, not a user-facing path. Callers canonicalize against the
+// published `batchCap` before they get here (main.ts setSampleRate). This
+// throw runs inside the rAF tick, and `tick` re-arms itself on its LAST
+// line — so anything thrown here permanently stops the frame loop. Keep it
+// unreachable from any live control; it exists to catch a wiring bug, not
+// to police the UI.
+if(r.n>this.batchCap)throw Error(`train: n=${r.n} > batchCap ${this.batchCap} — clamp against FusedTrainer.batchCap before calling encodeStep`);let o=r.apply??!0;o&&this.adamStep++;let i=new Float32Array(this.uniAData),l=new Uint32Array(this.uniAData);i[0]=t.width,i[1]=t.height,i[2]=t.forceMagnitude,i[3]=t.friction,i[4]=t.maxVelocity,i[5]=r.alpha,i[6]=.01;let u=r.source??"random";if("particles"===u&&!this.partPos)throw Error("train: source 'particles' needs setParticleBuffers first");l[7]=this.partCount,l[8]=r.n,l[9]=(r.seed??0)>>>0,l[10]="uploaded"===u?0:"random"===u?1:2,l[11]=this.kSteps,l[12]=Math.round(Math.max(0,Math.min(1,r.mixRandom??0))*r.n);let p=Math.ceil(r.n/n.TRAIN_WG);// fwd/bwd workgroups this step
 l[13]=p,this.device.queue.writeBuffer(this.uniA,0,this.uniAData);let c=new Float32Array(this.uniBData),d=new Uint32Array(this.uniBData);c[0]=r.lr,c[1]=.9,c[2]=.999,c[3]=1e-7,d[4]=Math.max(1,this.adamStep),d[5]=o?1:0,d[6]=r.n,this.device.queue.writeBuffer(this.uniB,0,this.uniBData);// PASS A = three dispatches sharing this.bindA: fwd (wgA workgroups —
 // full GPU) → finalize (1 workgroup, combines partials) → bwd (wgA). The
 // dispatch boundaries insert the barriers fwd→finalize→bwd need (bwd reads
@@ -64606,11 +64759,21 @@ async read(e,t){let r=this.device.createBuffer({size:4*t,usage:GPUBufferUsage.MA
  * generated shader has exactly ONE path (no runtime branching on type).
  * Gradient semantics verified vs tfjs-autograd fixtures per type
  * (tools/grad_reference.ts MODEL=…, tools/train_types_test.ts).
- */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"TRAIN_WG",()=>a),s.export(r,"MAX_BATCH",()=>o),s.export(r,"MAX_ROLLOUT",()=>i),s.export(r,"LOSS",()=>l),s.export(r,"trainScratchLayout",()=>u),/** Bytes for the scratch buffer at a given batch capacity. */s.export(r,"scratchBytes",()=>p),s.export(r,"COMMON",()=>c),/**
+ */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"TRAIN_WG",()=>a),s.export(r,"MAX_BATCH",()=>o),s.export(r,"MAX_ROLLOUT",()=>i),s.export(r,"COVER_MAX_BATCH",()=>l),/**
+ * Batch ceiling implied by the OBJECTIVE's shader cost, independent of memory.
+ * Linear losses get the full ceiling; the cover scan gets {@link COVER_MAX_BATCH}.
+ */s.export(r,"maxBatchForLoss",()=>u),s.export(r,"LOSS",()=>p),s.export(r,"trainScratchLayout",()=>c),/** Bytes for the scratch buffer at a given batch capacity. */s.export(r,"scratchBytes",()=>d),/**
+ * Largest batch whose scratch buffer fits in `maxBytes` — the honest,
+ * layout- and device-dependent ceiling behind {@link MAX_BATCH}.
+ *
+ * Callers pass `device.limits.maxStorageBufferBindingSize`. Returns at least 1
+ * so a pathological layout produces a runnable (if useless) trainer rather
+ * than a zero-sized buffer.
+ */s.export(r,"maxBatchForScratch",()=>h),s.export(r,"COMMON",()=>f),/**
  * `encodeSite(u, encBase)` — computes the encoded input γ(u) once per site and
  * stores it to scratch (both heads + pass B read it). Only emitted for
  * encoded (non-raw) layouts; one generated handler per encoding kind.
- */s.export(r,"emitEncode",()=>f),/**
+ */s.export(r,"emitEncode",()=>x),/**
  * Forward evaluator for head `h` that STORES every post-activation (and, for
  * sin layers, the pre-activation) to scratch at `base` (the (sample,site,head)
  * block start) and returns the 2-vector output.
@@ -64618,7 +64781,7 @@ async read(e,t){let r=this.device.createBuffer({size:4*t,usage:GPUBufferUsage.MA
  * Raw layouts keep the original `(p, base, cls)` signature; encoded layouts
  * read the per-site γ(u) that `encodeSite` stored (`(encBase, base)` — classes
  * are raw-only, enforced by layoutField).
- */s.export(r,"emitFwdStore",()=>m),/**
+ */s.export(r,"emitFwdStore",()=>v),/**
  * Backward for head `h`: takes dL/d(head output) (blend factor already
  * applied), reads stored activations, writes per-layer δ's to scratch, and
  * returns dL/d(input) — the probe/position chains need it.
@@ -64628,11 +64791,18 @@ async read(e,t){let r=this.device.createBuffer({size:4*t,usage:GPUBufferUsage.MA
  *   fourier  — full dEnc = W0ᵀ·δ0, then du = J_γᵀ·dEnc where J_γ REUSES the
  *              stored sin/cos features as their own derivatives (d sin(ωx)/dx
  *              = ω·cos(ωx) = ω·enc[o+2] — zero new transcendentals, plan §5)
- *   hashgrid — dEnc stored to scratch (pass B's grid scatter reads it; head 0
- *              seeds, head 1 accumulates), du via the bilinear-interp jacobian
- *              (grid-value differences × (gs−1), clip-masked like tfjs
- *              clipByValue: zero gradient outside [0,1])
- */s.export(r,"emitBwdStore",()=>g),/**
+ *   hashgrid — dEnc stored to scratch (pass B's grid scatter reads it), du via
+ *              the bilinear-interp jacobian (grid-value differences × (gs−1),
+ *              clip-masked like tfjs clipByValue: zero gradient outside [0,1])
+ *
+ * `dEncMode` names which emitted head SEEDS the shared per-site dL/dEnc block
+ * ("seed" = `=`) and which ACCUMULATE into it ("accumulate" = `+=`). It is a
+ * property of the SHADER BEING EMITTED, not of the head index: the adversary
+ * emits a single field head when `fieldLane` selects one (adversary_wgsl.ts),
+ * and that head must seed even when it is head 1. Callers that emit every head
+ * pass "seed" for the first. Ignored by raw/fourier (no dEnc block), so their
+ * generated text is unchanged.
+ */s.export(r,"emitBwdStore",()=>y),/**
  * Pass A bindings:
  *   0 uniform UA { res, forceMag, friction, maxVel, alpha, hh, _pad, n, seed, genRandom, kSteps }
  *     (kSteps in the uniform is informational — K is compiled in)
@@ -64640,7 +64810,7 @@ async read(e,t){let r=this.device.createBuffer({size:4*t,usage:GPUBufferUsage.MA
  *   2 storage read_write  batch    array<vec2f>  (tp; written when genRandom=1)
  *   3 storage read_write  scratch  (per-sample activation/delta blocks)
  *   4 storage read_write  lossOut  array<f32,8>: [0]=total loss [1..3]=C00,C11,C01
- */s.export(r,"trainPassAShader",()=>v),s.export(r,"TRAIN_WG_B",()=>y),/**
+ */s.export(r,"trainPassAShader",()=>k),s.export(r,"TRAIN_WG_B",()=>_),/**
  * Pass B bindings:
  *   0 uniform UB { lr, beta1, beta2, eps, t, apply, n, pad }
  *   1 storage read_write weights
@@ -64650,10 +64820,10 @@ async read(e,t){let r=this.device.createBuffer({size:4*t,usage:GPUBufferUsage.MA
  *   5 storage read_write adamV
  * Thread = packed weight float. dW[i][j] = Σ_{sample,site} a_in[i]·δ[j],
  * sites = K physics evals + 3 probes.
- */s.export(r,"trainPassBShader",()=>b);var n=e("./advect_wgsl");let a=256,o=4096,i=16,l={W_CHAOS:1,W_ISO:1,W_DIV:.5,W_SPIRAL:2e-5,W_COVER:0,W_CENTER:0,COVER_SAMPLES:256,HH:.01,SPIRAL_TURNS:3};function u(e,t=1){if(!Number.isInteger(t)||t<1||t>i)throw Error(`train: kSteps ${t} outside [1, ${i}]`);let r=e.spec.heads,s=[],a=[],o=[],l=[];for(let e of r){let t=e.layers.map(e=>e.outSize),r=t.reduce((e,t)=>e+t,0),n=0,i=[];for(let e of t)i.push(n),n+=e;let u=r,p=[];for(let e of t)p.push(u),u+=e;// sin layers (SIREN) checkpoint their PRE-activation after the δ block —
+ */s.export(r,"trainPassBShader",()=>w);var n=e("./advect_wgsl");let a=256,o=16384,i=16,l=1024;function u(e){return(e?.W_COVER??0)!==0?l:o}let p={W_CHAOS:1,W_ISO:1,W_DIV:.5,W_SPIRAL:2e-5,W_COVER:0,W_CENTER:0,COVER_SAMPLES:256,HH:.01,SPIRAL_TURNS:3};function c(e,t=1){if(!Number.isInteger(t)||t<1||t>i)throw Error(`train: kSteps ${t} outside [1, ${i}]`);let r=e.spec.heads,s=[],a=[],o=[],l=[];for(let e of r){let t=e.layers.map(e=>e.outSize),r=t.reduce((e,t)=>e+t,0),n=0,i=[];for(let e of t)i.push(n),n+=e;let u=r,p=[];for(let e of t)p.push(u),u+=e;// sin layers (SIREN) checkpoint their PRE-activation after the δ block —
 // sin'(s)=cos(s) is not recoverable from the stored post-act sin(s).
 // Non-sin heads add zero floats, so standard layouts are bit-identical.
-let c=2*r,d=[];for(let t of e.layers)"sin"===t.activation?(d.push(c),c+=t.outSize):d.push(-1);s.push(i),a.push(p),o.push(d),l.push(c)}let u=t+3,p=l.reduce((e,t)=>e+t,0),c=2*(t+1),d=c+2*t,h=d+2*t,f=h+1,m=e.encoding,g=(0,n.encodingDim)(m),x="raw"===m.kind?0:g,v="hashgrid"===m.kind?g:0,y=f+2*u,b=y+u*x,k=b+u*v;return{kSteps:t,sites:u,headerSize:f,posOff:0,velPreOff:c,fsOff:d,clsOff:h,headBlk:l,siteBlk:p,siteInOff:f,encDim:g,encStore:x,encOff:y,dEncStore:v,dEncOff:b,headSiteOff:k,sampleStride:k+u*p,aOff:s,dOff:a,pOff:o}}function p(e,t,r=1){return u(e,r).sampleStride*t*4}let c=/* wgsl */`
+let c=2*r,d=[];for(let t of e.layers)"sin"===t.activation?(d.push(c),c+=t.outSize):d.push(-1);s.push(i),a.push(p),o.push(d),l.push(c)}let u=t+3,p=l.reduce((e,t)=>e+t,0),c=2*(t+1),d=c+2*t,h=d+2*t,f=h+1,m=e.encoding,g=(0,n.encodingDim)(m),x="raw"===m.kind?0:g,v="hashgrid"===m.kind?g:0,y=f+2*u,b=y+u*x,k=b+u*v;return{kSteps:t,sites:u,headerSize:f,posOff:0,velPreOff:c,fsOff:d,clsOff:h,headBlk:l,siteBlk:p,siteInOff:f,encDim:g,encStore:x,encOff:y,dEncStore:v,dEncOff:b,headSiteOff:k,sampleStride:k+u*p,aOff:s,dOff:a,pOff:o}}function d(e,t,r=1){return c(e,r).sampleStride*t*4}function h(e,t,r){let s=4*c(e,t).sampleStride;return Math.max(1,Math.min(o,Math.floor(r/s)))}let f=/* wgsl */`
 // Clamp the pre-activation so exp(x) cannot overflow f32 and the linear
 // branch cannot grow without bound. |x|≳80 is already pathological for this
 // net; without the floor, Inf\xb70 in a later matmul becomes NaN and poisons
@@ -64678,9 +64848,9 @@ fn pcg(v : u32) -> u32 {
 }
 fn rand01(x : u32) -> f32 { return f32(x) * 2.3283064365386963e-10; }
 `;/** φ' for layer l of head h: post-act trick where possible, cos(stored
- *  pre-act) for sin (1 SFU op — recompute beats the extra store, plan §5.2). */function d(e,t,r,s,n,a){return"sin"!==r?/** derivative from the POST-activation — sin is NOT here on purpose: sin'
+ *  pre-act) for sin (1 SFU op — recompute beats the extra store, plan §5.2). */function m(e,t,r,s,n,a){return"sin"!==r?/** derivative from the POST-activation — sin is NOT here on purpose: sin'
  *  needs the pre-activation (see layerDeriv), which the layout checkpoints. */function(e,t){switch(e){case"selu":return`seluD(${t})`;case"tanh":return`tanhD(${t})`;case"sigmoid":return`sigmoidD(${t})`;case"sin":throw Error("train: sin derivative needs the pre-activation (layerDeriv)");default:return"1.0"}}(r,n):`cos(scratch[base + ${s.pOff[e][t]}u + ${a}])`}/** fourier ωk literals — MUST match advect_wgsl's looped emitter + helmholtz.ts
- *  fourierEncode (ωk = 2^k·2π, feature order [sin ωx, sin ωy, cos ωx, cos ωy]). */let h=e=>(2*Math.pow(2,e)*Math.PI).toFixed(8);function f(e){if("fourier"===e.kind){let t=["fn encodeSite(uIn : vec2f, encBase : u32) {"];t.push("  scratch[encBase] = uIn.x;"),t.push("  scratch[encBase + 1u] = uIn.y;");for(let r=0;r<e.octaves;r++){let e=h(r),s=2+4*r;t.push(`  scratch[encBase + ${s}u] = sin(${e} * uIn.x);`),t.push(`  scratch[encBase + ${s+1}u] = sin(${e} * uIn.y);`),t.push(`  scratch[encBase + ${s+2}u] = cos(${e} * uIn.x);`),t.push(`  scratch[encBase + ${s+3}u] = cos(${e} * uIn.y);`)}return t.push("}"),t.join("\n")}if("hashgrid"===e.kind){// bilinear interp of the learned grid at weights offset 0 — same indexing
+ *  fourierEncode (ωk = 2^k·2π, feature order [sin ωx, sin ωy, cos ωx, cos ωy]). */let g=e=>(2*Math.pow(2,e)*Math.PI).toFixed(8);function x(e){if("fourier"===e.kind){let t=["fn encodeSite(uIn : vec2f, encBase : u32) {"];t.push("  scratch[encBase] = uIn.x;"),t.push("  scratch[encBase + 1u] = uIn.y;");for(let r=0;r<e.octaves;r++){let e=g(r),s=2+4*r;t.push(`  scratch[encBase + ${s}u] = sin(${e} * uIn.x);`),t.push(`  scratch[encBase + ${s+1}u] = sin(${e} * uIn.y);`),t.push(`  scratch[encBase + ${s+2}u] = cos(${e} * uIn.x);`),t.push(`  scratch[encBase + ${s+3}u] = cos(${e} * uIn.y);`)}return t.push("}"),t.join("\n")}if("hashgrid"===e.kind){// bilinear interp of the learned grid at weights offset 0 — same indexing
 // as advect_wgsl's looped emitter and helmholtz.ts gridInterp.
 let{gridSize:t,features:r}=e;return`fn encodeSite(uIn : vec2f, encBase : u32) {
   let gxf = clamp(uIn.x, 0.0, 1.0) * ${(t-1).toFixed(1)};
@@ -64698,13 +64868,13 @@ let{gridSize:t,features:r}=e;return`fn encodeSite(uIn : vec2f, encBase : u32) {
     scratch[encBase + fi] = w00 * weights[b00 + fi] + w10 * weights[b10 + fi]
                           + w01 * weights[b01 + fi] + w11 * weights[b11 + fi];
   }
-}`}throw Error("train: emitEncode called for raw encoding")}function m(e,t,r,s,n){// inputs beyond the encoded dims are one-hot class channels (raw only)
-let a=t.layers[0].inSize-r.encDim,o=[];return"raw"===n.kind?(o.push(`fn fwd_head_${e}(p : vec2f, base : u32, cls : u32) -> vec2f {`),0===a&&o.push("  let _cls = cls; // classless head"),o.push(`  var cur : array<f32, ${s}>;`),o.push(`  var nxt : array<f32, ${s}>;`),o.push("  cur[0] = p.x; cur[1] = p.y;"),a>0&&(o.push(`  for (var k = 0u; k < ${a}u; k = k + 1u) {`),o.push("    cur[2u + k] = select(0.0, 1.0, k == cls);"),o.push("  }"))):(o.push(`fn fwd_head_${e}(encBase : u32, base : u32) -> vec2f {`),o.push(`  var cur : array<f32, ${s}>;`),o.push(`  var nxt : array<f32, ${s}>;`),o.push(`  for (var i = 0u; i < ${r.encDim}u; i = i + 1u) { cur[i] = scratch[encBase + i]; }`)),t.layers.forEach((t,s)=>{o.push(`  // layer ${s}: ${t.inSize} -> ${t.outSize} (${t.activation})`),o.push(`  for (var j = 0u; j < ${t.outSize}u; j = j + 1u) {`),o.push(`    var s = weights[${t.biasOffset}u + j];`),o.push(`    for (var i = 0u; i < ${t.inSize}u; i = i + 1u) {`),o.push(`      s = s + cur[i] * weights[${t.weightOffset}u + i * ${t.outSize}u + j];`),o.push("    }"),"sin"===t.activation&&o.push(`    scratch[base + ${r.pOff[e][s]}u + j] = s; // sin checkpoint (bwd needs cos(s))`),o.push(`    let a = ${function(e,t){switch(e){case"selu":return`selu(${t})`;case"tanh":return`tanh(${t})`;case"sigmoid":return`sigmoid_(${t})`;case"sin":return`sin(${t})`;default:return t}}(t.activation,"s")};`),o.push(`    scratch[base + ${r.aOff[e][s]}u + j] = a;`),o.push("    nxt[j] = a;"),o.push("  }"),o.push(`  for (var j = 0u; j < ${t.outSize}u; j = j + 1u) { cur[j] = nxt[j]; }`)}),o.push("  return vec2f(cur[0], cur[1]);"),o.push("}"),o.join("\n")}function g(e,t,r,s,n){let a=t.layers.length,o=[],i="raw"===n.kind?`fn bwd_head_${e}(dOut : vec2f, base : u32) -> vec2f {`:"fourier"===n.kind?`fn bwd_head_${e}(dOut : vec2f, base : u32, encBase : u32) -> vec2f {`:`fn bwd_head_${e}(dOut : vec2f, base : u32, uIn : vec2f, dEncBase : u32) -> vec2f {`;o.push(i),o.push(`  var dcur : array<f32, ${s}>;`),o.push(`  var dprev : array<f32, ${s}>;`);{let s=t.layers[a-1];o.push(`  // output layer ${a-1} (${s.activation})`),o.push("  {"),o.push(`    let a0 = scratch[base + ${r.aOff[e][a-1]}u];`),o.push(`    let a1 = scratch[base + ${r.aOff[e][a-1]}u + 1u];`),o.push(`    dcur[0] = dOut.x * ${d(e,a-1,s.activation,r,"a0","0u")};`),o.push(`    dcur[1] = dOut.y * ${d(e,a-1,s.activation,r,"a1","1u")};`),o.push(`    scratch[base + ${r.dOff[e][a-1]}u] = dcur[0];`),o.push(`    scratch[base + ${r.dOff[e][a-1]}u + 1u] = dcur[1];`),o.push("  }")}for(let s=a-2;s>=0;s--){let n=t.layers[s+1],a=t.layers[s];o.push(`  // layer ${s} (${a.activation}): δ via W of layer ${s+1}`),o.push(`  for (var i = 0u; i < ${a.outSize}u; i = i + 1u) {`),o.push("    var s = 0.0;"),o.push(`    for (var j = 0u; j < ${n.outSize}u; j = j + 1u) {`),o.push(`      s = s + weights[${n.weightOffset}u + i * ${n.outSize}u + j] * dcur[j];`),o.push("    }"),o.push(`    let a = scratch[base + ${r.aOff[e][s]}u + i];`),o.push(`    dprev[i] = s * ${d(e,s,a.activation,r,"a","i")};`),o.push(`    scratch[base + ${r.dOff[e][s]}u + i] = dprev[i];`),o.push("  }"),o.push(`  for (var i = 0u; i < ${a.outSize}u; i = i + 1u) { dcur[i] = dprev[i]; }`)}let l=t.layers[0];if("raw"===n.kind)return o.push("  var du = vec2f(0.0, 0.0);"),o.push(`  for (var j = 0u; j < ${l.outSize}u; j = j + 1u) {`),o.push(`    du.x = du.x + weights[${l.weightOffset}u + j] * dcur[j];`),o.push(`    du.y = du.y + weights[${l.weightOffset+l.outSize}u + j] * dcur[j];`),o.push("  }"),o.push("  return du;"),o.push("}"),o.join("\n");if(// encoded: full dL/dEnc = W0ᵀ·δ0 over all encDim input channels
-o.push(`  var dEnc : array<f32, ${r.encDim}>;`),o.push(`  for (var i = 0u; i < ${r.encDim}u; i = i + 1u) {`),o.push("    var s = 0.0;"),o.push(`    for (var j = 0u; j < ${l.outSize}u; j = j + 1u) {`),o.push(`      s = s + weights[${l.weightOffset}u + i * ${l.outSize}u + j] * dcur[j];`),o.push("    }"),o.push("    dEnc[i] = s;"),o.push("  }"),"fourier"===n.kind){o.push("  var du = vec2f(dEnc[0], dEnc[1]);");for(let e=0;e<n.octaves;e++){let t=h(e),r=2+4*e;o.push(`  du.x = du.x + ${t} * (scratch[encBase + ${r+2}u] * dEnc[${r}] - scratch[encBase + ${r}u] * dEnc[${r+2}]);`),o.push(`  du.y = du.y + ${t} * (scratch[encBase + ${r+3}u] * dEnc[${r+1}] - scratch[encBase + ${r+1}u] * dEnc[${r+3}]);`)}return o.push("  return du;"),o.push("}"),o.join("\n")}// hashgrid
-let{gridSize:u,features:p}=n,c=0===e?"scratch[dEncBase + i] = dEnc[i];":"scratch[dEncBase + i] = scratch[dEncBase + i] + dEnc[i];";return o.push("  // pass B's grid scatter reads dEnc; head 0 seeds, head 1 accumulates"),o.push(`  for (var i = 0u; i < ${p}u; i = i + 1u) { ${c} }`),o.push("  // du through the bilinear interp (corner geometry recomputed from uIn)"),o.push(`  let gxf = clamp(uIn.x, 0.0, 1.0) * ${(u-1).toFixed(1)};`),o.push(`  let gyf = clamp(uIn.y, 0.0, 1.0) * ${(u-1).toFixed(1)};`),o.push("  let ix = u32(floor(gxf)); let iy = u32(floor(gyf));"),o.push("  let fx = gxf - floor(gxf); let fy = gyf - floor(gyf);"),o.push(`  let ix1 = min(ix + 1u, ${u-1}u); let iy1 = min(iy + 1u, ${u-1}u);`),o.push(`  let b00 = (iy * ${u}u + ix) * ${p}u;`),o.push(`  let b10 = (iy * ${u}u + ix1) * ${p}u;`),o.push(`  let b01 = (iy1 * ${u}u + ix) * ${p}u;`),o.push(`  let b11 = (iy1 * ${u}u + ix1) * ${p}u;`),o.push("  var gx = 0.0; var gy = 0.0;"),o.push(`  for (var fi = 0u; fi < ${p}u; fi = fi + 1u) {`),o.push("    let g00 = weights[b00 + fi]; let g10 = weights[b10 + fi];"),o.push("    let g01 = weights[b01 + fi]; let g11 = weights[b11 + fi];"),o.push("    gx = gx + dEnc[fi] * ((1.0 - fy) * (g10 - g00) + fy * (g11 - g01));"),o.push("    gy = gy + dEnc[fi] * ((1.0 - fx) * (g01 - g00) + fx * (g11 - g10));"),o.push("  }"),o.push("  // clip mask: tfjs clipByValue has zero grad outside [0,1] (probes can exceed 1)"),o.push("  let mx = select(0.0, 1.0, uIn.x >= 0.0 && uIn.x <= 1.0);"),o.push("  let my = select(0.0, 1.0, uIn.y >= 0.0 && uIn.y <= 1.0);"),o.push(`  return vec2f(gx * ${(u-1).toFixed(1)} * mx, gy * ${(u-1).toFixed(1)} * my);`),o.push("}"),o.join("\n")}/** A disabled objective must be absent from generated arithmetic, not merely
+}`}throw Error("train: emitEncode called for raw encoding")}function v(e,t,r,s,n){// inputs beyond the encoded dims are one-hot class channels (raw only)
+let a=t.layers[0].inSize-r.encDim,o=[];return"raw"===n.kind?(o.push(`fn fwd_head_${e}(p : vec2f, base : u32, cls : u32) -> vec2f {`),0===a&&o.push("  let _cls = cls; // classless head"),o.push(`  var cur : array<f32, ${s}>;`),o.push(`  var nxt : array<f32, ${s}>;`),o.push("  cur[0] = p.x; cur[1] = p.y;"),a>0&&(o.push(`  for (var k = 0u; k < ${a}u; k = k + 1u) {`),o.push("    cur[2u + k] = select(0.0, 1.0, k == cls);"),o.push("  }"))):(o.push(`fn fwd_head_${e}(encBase : u32, base : u32) -> vec2f {`),o.push(`  var cur : array<f32, ${s}>;`),o.push(`  var nxt : array<f32, ${s}>;`),o.push(`  for (var i = 0u; i < ${r.encDim}u; i = i + 1u) { cur[i] = scratch[encBase + i]; }`)),t.layers.forEach((t,s)=>{o.push(`  // layer ${s}: ${t.inSize} -> ${t.outSize} (${t.activation})`),o.push(`  for (var j = 0u; j < ${t.outSize}u; j = j + 1u) {`),o.push(`    var s = weights[${t.biasOffset}u + j];`),o.push(`    for (var i = 0u; i < ${t.inSize}u; i = i + 1u) {`),o.push(`      s = s + cur[i] * weights[${t.weightOffset}u + i * ${t.outSize}u + j];`),o.push("    }"),"sin"===t.activation&&o.push(`    scratch[base + ${r.pOff[e][s]}u + j] = s; // sin checkpoint (bwd needs cos(s))`),o.push(`    let a = ${function(e,t){switch(e){case"selu":return`selu(${t})`;case"tanh":return`tanh(${t})`;case"sigmoid":return`sigmoid_(${t})`;case"sin":return`sin(${t})`;default:return t}}(t.activation,"s")};`),o.push(`    scratch[base + ${r.aOff[e][s]}u + j] = a;`),o.push("    nxt[j] = a;"),o.push("  }"),o.push(`  for (var j = 0u; j < ${t.outSize}u; j = j + 1u) { cur[j] = nxt[j]; }`)}),o.push("  return vec2f(cur[0], cur[1]);"),o.push("}"),o.join("\n")}function y(e,t,r,s,n,a){let o=t.layers.length,i=[],l="raw"===n.kind?`fn bwd_head_${e}(dOut : vec2f, base : u32) -> vec2f {`:"fourier"===n.kind?`fn bwd_head_${e}(dOut : vec2f, base : u32, encBase : u32) -> vec2f {`:`fn bwd_head_${e}(dOut : vec2f, base : u32, uIn : vec2f, dEncBase : u32) -> vec2f {`;i.push(l),i.push(`  var dcur : array<f32, ${s}>;`),i.push(`  var dprev : array<f32, ${s}>;`);{let s=t.layers[o-1];i.push(`  // output layer ${o-1} (${s.activation})`),i.push("  {"),i.push(`    let a0 = scratch[base + ${r.aOff[e][o-1]}u];`),i.push(`    let a1 = scratch[base + ${r.aOff[e][o-1]}u + 1u];`),i.push(`    dcur[0] = dOut.x * ${m(e,o-1,s.activation,r,"a0","0u")};`),i.push(`    dcur[1] = dOut.y * ${m(e,o-1,s.activation,r,"a1","1u")};`),i.push(`    scratch[base + ${r.dOff[e][o-1]}u] = dcur[0];`),i.push(`    scratch[base + ${r.dOff[e][o-1]}u + 1u] = dcur[1];`),i.push("  }")}for(let s=o-2;s>=0;s--){let n=t.layers[s+1],a=t.layers[s];i.push(`  // layer ${s} (${a.activation}): δ via W of layer ${s+1}`),i.push(`  for (var i = 0u; i < ${a.outSize}u; i = i + 1u) {`),i.push("    var s = 0.0;"),i.push(`    for (var j = 0u; j < ${n.outSize}u; j = j + 1u) {`),i.push(`      s = s + weights[${n.weightOffset}u + i * ${n.outSize}u + j] * dcur[j];`),i.push("    }"),i.push(`    let a = scratch[base + ${r.aOff[e][s]}u + i];`),i.push(`    dprev[i] = s * ${m(e,s,a.activation,r,"a","i")};`),i.push(`    scratch[base + ${r.dOff[e][s]}u + i] = dprev[i];`),i.push("  }"),i.push(`  for (var i = 0u; i < ${a.outSize}u; i = i + 1u) { dcur[i] = dprev[i]; }`)}let u=t.layers[0];if("raw"===n.kind)return i.push("  var du = vec2f(0.0, 0.0);"),i.push(`  for (var j = 0u; j < ${u.outSize}u; j = j + 1u) {`),i.push(`    du.x = du.x + weights[${u.weightOffset}u + j] * dcur[j];`),i.push(`    du.y = du.y + weights[${u.weightOffset+u.outSize}u + j] * dcur[j];`),i.push("  }"),i.push("  return du;"),i.push("}"),i.join("\n");if(// encoded: full dL/dEnc = W0ᵀ·δ0 over all encDim input channels
+i.push(`  var dEnc : array<f32, ${r.encDim}>;`),i.push(`  for (var i = 0u; i < ${r.encDim}u; i = i + 1u) {`),i.push("    var s = 0.0;"),i.push(`    for (var j = 0u; j < ${u.outSize}u; j = j + 1u) {`),i.push(`      s = s + weights[${u.weightOffset}u + i * ${u.outSize}u + j] * dcur[j];`),i.push("    }"),i.push("    dEnc[i] = s;"),i.push("  }"),"fourier"===n.kind){i.push("  var du = vec2f(dEnc[0], dEnc[1]);");for(let e=0;e<n.octaves;e++){let t=g(e),r=2+4*e;i.push(`  du.x = du.x + ${t} * (scratch[encBase + ${r+2}u] * dEnc[${r}] - scratch[encBase + ${r}u] * dEnc[${r+2}]);`),i.push(`  du.y = du.y + ${t} * (scratch[encBase + ${r+3}u] * dEnc[${r+1}] - scratch[encBase + ${r+1}u] * dEnc[${r+3}]);`)}return i.push("  return du;"),i.push("}"),i.join("\n")}// hashgrid
+let{gridSize:p,features:c}=n,d="seed"===a?"scratch[dEncBase + i] = dEnc[i];":"scratch[dEncBase + i] = scratch[dEncBase + i] + dEnc[i];";return i.push(`  // pass B's grid scatter reads dEnc; this head ${a}s the block`),i.push(`  for (var i = 0u; i < ${c}u; i = i + 1u) { ${d} }`),i.push("  // du through the bilinear interp (corner geometry recomputed from uIn)"),i.push(`  let gxf = clamp(uIn.x, 0.0, 1.0) * ${(p-1).toFixed(1)};`),i.push(`  let gyf = clamp(uIn.y, 0.0, 1.0) * ${(p-1).toFixed(1)};`),i.push("  let ix = u32(floor(gxf)); let iy = u32(floor(gyf));"),i.push("  let fx = gxf - floor(gxf); let fy = gyf - floor(gyf);"),i.push(`  let ix1 = min(ix + 1u, ${p-1}u); let iy1 = min(iy + 1u, ${p-1}u);`),i.push(`  let b00 = (iy * ${p}u + ix) * ${c}u;`),i.push(`  let b10 = (iy * ${p}u + ix1) * ${c}u;`),i.push(`  let b01 = (iy1 * ${p}u + ix) * ${c}u;`),i.push(`  let b11 = (iy1 * ${p}u + ix1) * ${c}u;`),i.push("  var gx = 0.0; var gy = 0.0;"),i.push(`  for (var fi = 0u; fi < ${c}u; fi = fi + 1u) {`),i.push("    let g00 = weights[b00 + fi]; let g10 = weights[b10 + fi];"),i.push("    let g01 = weights[b01 + fi]; let g11 = weights[b11 + fi];"),i.push("    gx = gx + dEnc[fi] * ((1.0 - fy) * (g10 - g00) + fy * (g11 - g01));"),i.push("    gy = gy + dEnc[fi] * ((1.0 - fx) * (g01 - g00) + fx * (g11 - g10));"),i.push("  }"),i.push("  // clip mask: tfjs clipByValue has zero grad outside [0,1] (probes can exceed 1)"),i.push("  let mx = select(0.0, 1.0, uIn.x >= 0.0 && uIn.x <= 1.0);"),i.push("  let my = select(0.0, 1.0, uIn.y >= 0.0 && uIn.y <= 1.0);"),i.push(`  return vec2f(gx * ${(p-1).toFixed(1)} * mx, gy * ${(p-1).toFixed(1)} * my);`),i.push("}"),i.join("\n")}/** A disabled objective must be absent from generated arithmetic, not merely
  * multiplied by zero. IEEE-754 makes `0 * NaN` and `0 * Infinity` NaN; a
  * saturated field can legitimately make an unused finite-difference term hit
- * one of those intermediate values. */function x(e){return 0===e.W_CHAOS&&0===e.W_ISO&&0===e.W_DIV&&0===e.W_SPIRAL&&(e.W_COVER??0)===0&&(e.W_CENTER??0)===0}function v(e,t={}){if("helmholtz"!==e.spec.kind&&"agree-disagree"!==e.spec.kind&&"vector"!==e.spec.kind)throw Error("train: v1 trains helmholtz / agree-disagree / vector fields");let r=t.kSteps??1,s=t.border??{tag:"wrap"},o=t.loss??l;if(x(o))return/* wgsl */`
+ * one of those intermediate values. */function b(e){return 0===e.W_CHAOS&&0===e.W_ISO&&0===e.W_DIV&&0===e.W_SPIRAL&&(e.W_COVER??0)===0&&(e.W_CENTER??0)===0}function k(e,t={}){if("helmholtz"!==e.spec.kind&&"agree-disagree"!==e.spec.kind&&"vector"!==e.spec.kind)throw Error("train: v1 trains helmholtz / agree-disagree / vector fields");let r=t.kSteps??1,s=t.border??{tag:"wrap"},o=t.loss??p;if(b(o))return/* wgsl */`
 @group(0) @binding(4) var<storage, read_write> lossOut : array<f32>;
 
 @compute @workgroup_size(${a})
@@ -64717,13 +64887,13 @@ fn finalize(@builtin(local_invocation_index) tid : u32) {
 
 @compute @workgroup_size(${a})
 fn bwd(@builtin(global_invocation_id) _gid : vec3u) {}
-`;let i=(0,n.borderJacobianExpr)(s,"q","res"),p=u(e,r),d=e.spec.heads,h=2===d.length,v=e.encoding,y=Math.max(2,p.encDim,...d.flatMap(e=>e.layers.map(e=>Math.max(e.outSize,e.inSize)))),b=p.sampleStride,k=(e,t)=>`sBase + ${p.headSiteOff}u + (${e}) * ${p.siteBlk}u + ${0===t?0:p.headBlk[0]}u`,_=e=>p.aOff[e][d[e].layers.length-1],w=n.CLASS_SALT,I=Math.max(1,e.classes),j=(e,t)=>`vec2f(scratch[${k(e,t)} + ${_(t)}u], scratch[${k(e,t)} + ${_(t)+1}u])`,S=e=>h?`(1.0 - u.alpha) * ${j(e,0)} + u.alpha * ${j(e,1)}`:j(e,0),C=e=>`sBase + ${p.encOff}u + (${e}) * ${p.encDim}u`,T=e=>`sBase + ${p.dEncOff}u + (${e}) * ${p.encDim}u`,N=e=>`vec2f(scratch[sBase + ${p.siteInOff}u + (${e}) * 2u], scratch[sBase + ${p.siteInOff}u + (${e}) * 2u + 1u])`,E=(e,t)=>"raw"===v.kind?"":`encodeSite(${e}, ${C(t)});
-    `,F=(e,t,r)=>"raw"===v.kind?`fwd_head_${e}(${t}, ${k(r,e)}, cls)`:`fwd_head_${e}(${C(r)}, ${k(r,e)})`,A=(e,t,r)=>"raw"===v.kind?`bwd_head_${e}(${t}, ${k(r,e)})`:"fourier"===v.kind?`bwd_head_${e}(${t}, ${k(r,e)}, ${C(r)})`:`bwd_head_${e}(${t}, ${k(r,e)}, ${N(r)}, ${T(r)})`,D=(e,t)=>h?`(1.0 - u.alpha) * ${F(0,e,t)} + u.alpha * ${F(1,e,t)}`:`${F(0,e,t)}`,$=(e,t)=>h?`${A(0,`${e} * (1.0 - u.alpha)`,t)} + ${A(1,`${e} * u.alpha`,t)}`:`${A(0,e,t)}`,R=0!==o.W_CHAOS,P=0!==o.W_ISO,M=0!==o.W_DIV,O=0!==o.W_SPIRAL,B=o.W_COVER??0,z=0!==B,L=Math.max(1,Math.min(256,o.COVER_SAMPLES??256)),G=o.W_CENTER??0,V=0!==G,U=R||M,W=[R?`${o.W_CHAOS} * chaos_i`:"",M?`${o.W_DIV} * div_i`:"",O?`${o.W_SPIRAL} * best`:"",V?`${G} * ((np.x - cx) * (np.x - cx) + (np.y - cy) * (np.y - cy))`:""].filter(Boolean).join(" + ")||"0.0",q=z?/**
+`;let i=(0,n.borderJacobianExpr)(s,"q","res"),l=c(e,r),u=e.spec.heads,d=2===u.length,h=e.encoding,m=Math.max(2,l.encDim,...u.flatMap(e=>e.layers.map(e=>Math.max(e.outSize,e.inSize)))),g=l.sampleStride,k=(e,t)=>`sBase + ${l.headSiteOff}u + (${e}) * ${l.siteBlk}u + ${0===t?0:l.headBlk[0]}u`,_=e=>l.aOff[e][u[e].layers.length-1],w=n.CLASS_SALT,I=Math.max(1,e.classes),j=(e,t)=>`vec2f(scratch[${k(e,t)} + ${_(t)}u], scratch[${k(e,t)} + ${_(t)+1}u])`,S=e=>d?`(1.0 - u.alpha) * ${j(e,0)} + u.alpha * ${j(e,1)}`:j(e,0),C=e=>`sBase + ${l.encOff}u + (${e}) * ${l.encDim}u`,T=e=>`sBase + ${l.dEncOff}u + (${e}) * ${l.encDim}u`,N=e=>`vec2f(scratch[sBase + ${l.siteInOff}u + (${e}) * 2u], scratch[sBase + ${l.siteInOff}u + (${e}) * 2u + 1u])`,E=(e,t)=>"raw"===h.kind?"":`encodeSite(${e}, ${C(t)});
+    `,F=(e,t,r)=>"raw"===h.kind?`fwd_head_${e}(${t}, ${k(r,e)}, cls)`:`fwd_head_${e}(${C(r)}, ${k(r,e)})`,A=(e,t,r)=>"raw"===h.kind?`bwd_head_${e}(${t}, ${k(r,e)})`:"fourier"===h.kind?`bwd_head_${e}(${t}, ${k(r,e)}, ${C(r)})`:`bwd_head_${e}(${t}, ${k(r,e)}, ${N(r)}, ${T(r)})`,D=(e,t)=>d?`(1.0 - u.alpha) * ${F(0,e,t)} + u.alpha * ${F(1,e,t)}`:`${F(0,e,t)}`,$=(e,t)=>d?`${A(0,`${e} * (1.0 - u.alpha)`,t)} + ${A(1,`${e} * u.alpha`,t)}`:`${A(0,e,t)}`,R=0!==o.W_CHAOS,P=0!==o.W_ISO,M=0!==o.W_DIV,O=0!==o.W_SPIRAL,B=o.W_COVER??0,z=0!==B,L=Math.max(1,Math.min(256,o.COVER_SAMPLES??256)),G=o.W_CENTER??0,V=0!==G,U=R||M,W=[R?`${o.W_CHAOS} * chaos_i`:"",M?`${o.W_DIV} * div_i`:"",O?`${o.W_SPIRAL} * best`:"",V?`${G} * ((np.x - cx) * (np.x - cx) + (np.y - cy) * (np.y - cy))`:""].filter(Boolean).join(" + ")||"0.0",q=z?/**
  * Unit-space Archimedean cover samples: s_pixel = center + maxR * offset[m].
  * Same arc-length / skip contract as main.ts spiralCoverLoss.
  */function(e,t,r=.08){let s=2*t*Math.PI,n=e=>{let t=Math.sqrt(1+e*e);return .5*(e*t+Math.asinh(e))},a=(e,t,r)=>{let s=t,a=r;for(let r=0;r<48;r++){let r=.5*(s+a);n(r)-n(t)<e?s=r:a=r}return .5*(s+a)},o=n(s),i=Math.min(Math.max(r,0),.45)*o,l=Math.max(o-i,1e-6),u=a(i,0,s),p=[];for(let t=0;t<e;t++){let r=a(l*((t+.5)/e),u,s),n=r/s,o=n*Math.cos(r),i=n*Math.sin(r);p.push(`vec2f(${o.toExponential(8)}, ${i.toExponential(8)})`)}return`const spiralCoverOff : array<vec2f, ${e}> = array<vec2f, ${e}>(
   ${p.join(",\n  ")}
-);`}(L,o.SPIRAL_TURNS):"",H=e=>`vec2f(scratch[(${e}) * ${b}u + ${p.posOff+2*r}u], scratch[(${e}) * ${b}u + ${p.posOff+2*r+1}u])`;return/* wgsl */`
+);`}(L,o.SPIRAL_TURNS):"",H=e=>`vec2f(scratch[(${e}) * ${g}u + ${l.posOff+2*r}u], scratch[(${e}) * ${g}u + ${l.posOff+2*r+1}u])`;return/* wgsl */`
 struct UA {
   res : vec2f,
   forceMag : f32,
@@ -64759,14 +64929,14 @@ struct UA {
 // whole batch on ONE core.
 @group(0) @binding(7) var<storage, read_write> partials : array<vec4f>;
 
-${c}
+${f}
 
 ${q}
 
-${"raw"===v.kind?"":f(v)+"\n"}
-${d.map((e,t)=>m(t,e,p,y,v)).join("\n\n")}
+${"raw"===h.kind?"":x(h)+"\n"}
+${u.map((e,t)=>v(t,e,l,m,h)).join("\n\n")}
 
-${d.map((e,t)=>g(t,e,p,y,v)).join("\n\n")}
+${u.map((e,t)=>y(t,e,l,m,h,0===t?"seed":"accumulate")).join("\n\n")}
 
 // per-workgroup reduction scratch: vec4(Σ Fs.x\xb2, Σ Fs.y\xb2, Σ Fs.xy, Σ loss)
 // — the Fs sums run over ALL K steps' forces (isotropy batch = N\xb7K).
@@ -64819,29 +64989,29 @@ fn fwd(@builtin(global_invocation_id) gid : vec3u,
       // uploaded batch (verification fixtures)
       tp = batch[s];
     }
-    let sBase = s * ${b}u;
+    let sBase = s * ${g}u;
 
     var p = tp;
     var v = v0;
-    scratch[sBase + ${p.posOff}u] = p.x;
-    scratch[sBase + ${p.posOff}u + 1u] = p.y;
-    scratch[sBase + ${p.clsOff}u] = f32(cls);
+    scratch[sBase + ${l.posOff}u] = p.x;
+    scratch[sBase + ${l.posOff}u + 1u] = p.y;
+    scratch[sBase + ${l.clsOff}u] = f32(cls);
     for (var k = 0u; k < ${r}u; k = k + 1u) {
       let uk = p / res;
-      scratch[sBase + ${p.siteInOff}u + k * 2u] = uk.x;
-      scratch[sBase + ${p.siteInOff}u + k * 2u + 1u] = uk.y;
+      scratch[sBase + ${l.siteInOff}u + k * 2u] = uk.x;
+      scratch[sBase + ${l.siteInOff}u + k * 2u + 1u] = uk.y;
       ${E("uk","k")}let F = ${D("uk","k")};
       let Fs = F * u.forceMag;
-      scratch[sBase + ${p.fsOff}u + k * 2u] = Fs.x;
-      scratch[sBase + ${p.fsOff}u + k * 2u + 1u] = Fs.y;
+      scratch[sBase + ${l.fsOff}u + k * 2u] = Fs.x;
+      scratch[sBase + ${l.fsOff}u + k * 2u + 1u] = Fs.y;
       let velPre = (v + Fs) * u.friction;
-      scratch[sBase + ${p.velPreOff}u + k * 2u] = velPre.x;
-      scratch[sBase + ${p.velPreOff}u + k * 2u + 1u] = velPre.y;
+      scratch[sBase + ${l.velPreOff}u + k * 2u] = velPre.x;
+      scratch[sBase + ${l.velPreOff}u + k * 2u + 1u] = velPre.y;
       v = clamp(velPre, vec2f(-u.maxVel), vec2f(u.maxVel));
       p = p + v;
       ${(0,n.emitBorder)(s,"p","v","res","(s * 2654435761u + k) ^ (u.seed * 1103515245u)")}
-      scratch[sBase + ${p.posOff}u + (k + 1u) * 2u] = p.x;
-      scratch[sBase + ${p.posOff}u + (k + 1u) * 2u + 1u] = p.y;
+      scratch[sBase + ${l.posOff}u + (k + 1u) * 2u] = p.x;
+      scratch[sBase + ${l.posOff}u + (k + 1u) * 2u + 1u] = p.y;
       ${P?"acc = acc + vec4f(Fs.x * Fs.x, Fs.y * Fs.y, Fs.x * Fs.y, 0.0);":""}
     }
     let np = p;
@@ -64852,12 +65022,12 @@ fn fwd(@builtin(global_invocation_id) gid : vec3u,
     let p0 = pn;
     let px = pn + vec2f(u.hh, 0.0);
     let py = pn + vec2f(0.0, u.hh);
-    scratch[sBase + ${p.siteInOff}u + ${2*r}u] = p0.x;
-    scratch[sBase + ${p.siteInOff}u + ${2*r+1}u] = p0.y;
-    scratch[sBase + ${p.siteInOff}u + ${2*r+2}u] = px.x;
-    scratch[sBase + ${p.siteInOff}u + ${2*r+3}u] = px.y;
-    scratch[sBase + ${p.siteInOff}u + ${2*r+4}u] = py.x;
-    scratch[sBase + ${p.siteInOff}u + ${2*r+5}u] = py.y;
+    scratch[sBase + ${l.siteInOff}u + ${2*r}u] = p0.x;
+    scratch[sBase + ${l.siteInOff}u + ${2*r+1}u] = p0.y;
+    scratch[sBase + ${l.siteInOff}u + ${2*r+2}u] = px.x;
+    scratch[sBase + ${l.siteInOff}u + ${2*r+3}u] = px.y;
+    scratch[sBase + ${l.siteInOff}u + ${2*r+4}u] = py.x;
+    scratch[sBase + ${l.siteInOff}u + ${2*r+5}u] = py.y;
     ${E("p0",`${r}u`)}${E("px",`${r+1}u`)}${E("py",`${r+2}u`)}let f0 = ${D("p0",`${r}u`)};
     let fx = ${D("px",`${r+1}u`)};
     let fy = ${D("py",`${r+2}u`)};
@@ -64978,8 +65148,8 @@ fn bwd(@builtin(global_invocation_id) gid : vec3u) {
   if (s >= n) { return; }
   let dC = vec3f(lossOut[4], lossOut[5], lossOut[6]);
   {
-    let sBase = s * ${b}u;
-    let np = vec2f(scratch[sBase + ${p.posOff+2*r}u], scratch[sBase + ${p.posOff+2*r+1}u]);
+    let sBase = s * ${g}u;
+    let np = vec2f(scratch[sBase + ${l.posOff+2*r}u], scratch[sBase + ${l.posOff+2*r+1}u]);
 
     var dfx = vec2f(0.0);
     var dfy = vec2f(0.0);
@@ -65073,12 +65243,12 @@ fn bwd(@builtin(global_invocation_id) gid : vec3u) {
     //   pos_{k+1} = pos_k + vel_{k+1}  (mod ≡ identity)
     for (var kk = 0u; kk < ${r}u; kk = kk + 1u) {
       let k = ${r-1}u - kk;
-      let velPre = vec2f(scratch[sBase + ${p.velPreOff}u + k * 2u],
-                         scratch[sBase + ${p.velPreOff}u + k * 2u + 1u]);
-      let posK = vec2f(scratch[sBase + ${p.posOff}u + k * 2u],
-                       scratch[sBase + ${p.posOff}u + k * 2u + 1u]);
-      let Fs = vec2f(scratch[sBase + ${p.fsOff}u + k * 2u],
-                     scratch[sBase + ${p.fsOff}u + k * 2u + 1u]);
+      let velPre = vec2f(scratch[sBase + ${l.velPreOff}u + k * 2u],
+                         scratch[sBase + ${l.velPreOff}u + k * 2u + 1u]);
+      let posK = vec2f(scratch[sBase + ${l.posOff}u + k * 2u],
+                       scratch[sBase + ${l.posOff}u + k * 2u + 1u]);
+      let Fs = vec2f(scratch[sBase + ${l.fsOff}u + k * 2u],
+                     scratch[sBase + ${l.fsOff}u + k * 2u + 1u]);
       let mask = vec2f(
         select(0.0, 1.0, abs(velPre.x) <= u.maxVel),
         select(0.0, 1.0, abs(velPre.y) <= u.maxVel)
@@ -65102,15 +65272,15 @@ fn bwd(@builtin(global_invocation_id) gid : vec3u) {
     }
   }
 }
-`}let y=64;function b(e,t={}){if("helmholtz"!==e.spec.kind&&"agree-disagree"!==e.spec.kind&&"vector"!==e.spec.kind)throw Error("train: v1 trains helmholtz / agree-disagree / vector fields");let r=t.kSteps??1,s=t.extGradCount??(t.extGrad?1:0);if(!Number.isInteger(s)||s<0||s>2)throw Error(`train: extGradCount ${s} outside [0,2]`);let n=t.loss??l,a=!x(n),o=u(e,r),i=e.spec.heads,p=e.encoding,c=o.sampleStride,d=[];// With an external-gradient-only game, pass A is a no-op and its scratch is
+`}let _=64;function w(e,t={}){if("helmholtz"!==e.spec.kind&&"agree-disagree"!==e.spec.kind&&"vector"!==e.spec.kind)throw Error("train: v1 trains helmholtz / agree-disagree / vector fields");let r=t.kSteps??1,s=t.extGradCount??(t.extGrad?1:0);if(!Number.isInteger(s)||s<0||s>2)throw Error(`train: extGradCount ${s} outside [0,2]`);let n=t.loss??p,a=!b(n),o=c(e,r),i=e.spec.heads,l=e.encoding,u=o.sampleStride,d=[];// With an external-gradient-only game, pass A is a no-op and its scratch is
 // intentionally undefined. Do not scan it here: internal g is literal zero
 // and only the fresh extGrad buffers participate in Adam.
-if(a)for(let t of e.segments){if("grid"===t.role){let{gridSize:e,features:r}=p;d.push(`
+if(a)for(let t of e.segments){if("grid"===t.role){let{gridSize:e,features:r}=l;d.push(`
   if (t >= ${t.floatOffset}u && t < ${t.floatOffset+t.floatLength}u) {
     let cell = (t - ${t.floatOffset}u) / ${r}u;
     let f = (t - ${t.floatOffset}u) % ${r}u;
     for (var s = 0u; s < ub.n; s = s + 1u) {
-      let sBase = s * ${c}u;
+      let sBase = s * ${u}u;
       for (var site = 0u; site < ${o.sites}u; site = site + 1u) {
         let ux = scratch[sBase + ${o.siteInOff}u + site * 2u];
         let uy = scratch[sBase + ${o.siteInOff}u + site * 2u + 1u];
@@ -65127,14 +65297,14 @@ if(a)for(let t of e.segments){if("grid"===t.role){let{gridSize:e,features:r}=p;d
         g = g + wsum * scratch[sBase + ${o.dEncOff}u + site * ${o.encDim}u + f];
       }
     }
-  }`);continue}let e=t.head,r=t.layer,s=i[e].layers[r],n=0===r?i[e].layers[0].inSize-o.encDim:0,a=t.floatOffset,l=t.floatOffset+t.floatLength,u=0===e?0:o.headBlk[0],h=`sBase + ${o.headSiteOff}u + site * ${o.siteBlk}u + ${u}u`,f=0===r?"raw"===p.kind?`scratch[sBase + ${o.siteInOff}u + site * 2u + i]`:`scratch[sBase + ${o.encOff}u + site * ${o.encDim}u + i]`:`scratch[${h} + ${o.aOff[e][r-1]}u + i]`;"kernel"===t.role&&n>0?// 2+k are the one-hot — only the sample's class row accumulates δ.
+  }`);continue}let e=t.head,r=t.layer,s=i[e].layers[r],n=0===r?i[e].layers[0].inSize-o.encDim:0,a=t.floatOffset,p=t.floatOffset+t.floatLength,c=0===e?0:o.headBlk[0],h=`sBase + ${o.headSiteOff}u + site * ${o.siteBlk}u + ${c}u`,f=0===r?"raw"===l.kind?`scratch[sBase + ${o.siteInOff}u + site * 2u + i]`:`scratch[sBase + ${o.encOff}u + site * ${o.encDim}u + i]`:`scratch[${h} + ${o.aOff[e][r-1]}u + i]`;"kernel"===t.role&&n>0?// 2+k are the one-hot — only the sample's class row accumulates δ.
 d.push(`
-  if (t >= ${a}u && t < ${l}u) {
+  if (t >= ${a}u && t < ${p}u) {
     let local = t - ${a}u;
     let i = local / ${s.outSize}u;
     let j = local % ${s.outSize}u;
     for (var s = 0u; s < ub.n; s = s + 1u) {
-      let sBase = s * ${c}u;
+      let sBase = s * ${u}u;
       let cls = u32(scratch[sBase + ${o.clsOff}u]);
       for (var site = 0u; site < ${o.sites}u; site = site + 1u) {
         var aIn = 0.0;
@@ -65147,21 +65317,21 @@ d.push(`
       }
     }
   }`):"kernel"===t.role?d.push(`
-  if (t >= ${a}u && t < ${l}u) {
+  if (t >= ${a}u && t < ${p}u) {
     let local = t - ${a}u;
     let i = local / ${s.outSize}u;
     let j = local % ${s.outSize}u;
     for (var s = 0u; s < ub.n; s = s + 1u) {
-      let sBase = s * ${c}u;
+      let sBase = s * ${u}u;
       for (var site = 0u; site < ${o.sites}u; site = site + 1u) {
         g = g + ${f} * scratch[${h} + ${o.dOff[e][r]}u + j];
       }
     }
   }`):d.push(`
-  if (t >= ${a}u && t < ${l}u) {
+  if (t >= ${a}u && t < ${p}u) {
     let j = t - ${a}u;
     for (var s = 0u; s < ub.n; s = s + 1u) {
-      let sBase = s * ${c}u;
+      let sBase = s * ${u}u;
       for (var site = 0u; site < ${o.sites}u; site = site + 1u) {
         g = g + scratch[${h} + ${o.dOff[e][r]}u + j];
       }
@@ -65186,7 +65356,7 @@ struct UB {
 ${s>0?"// external game gradients, structurally separate from field loss\n@group(0) @binding(6) var<storage, read> extGrad0 : array<f32>;":""}
 ${s>1?"@group(0) @binding(7) var<storage, read> extGrad1 : array<f32>;":""}
 
-@compute @workgroup_size(${y})
+@compute @workgroup_size(${_})
 fn main(@builtin(global_invocation_id) gid : vec3u) {
   let t = gid.x;
   if (t >= ${e.totalFloats}u) { return; }
@@ -65340,8 +65510,14 @@ async read(e,t,r=0){let s=this.device.createBuffer({size:4*t,usage:GPUBufferUsag
  * oracle, tfjs, and finite differences in tools/{ad_,train_}wta_test.ts.
  *
  * SCOPE (loud throws, no silent fallback):
- *   - field must be helmholtz, classes == 0, encoding raw | fourier.
- *     hashgrid needs the dEnc scatter blocks ported into fieldGrad — not done.
+ *   - field must be helmholtz / agree-disagree, classes == 0. Every encoding
+ *     (raw | fourier | hashgrid) is supported: hashgrid stores per-member
+ *     dL/dEnc in its own scratch block and fieldGrad carries the gather-side
+ *     grid block transliterated from train_wgsl's field pass B. Class-aware
+ *     fields remain unsupported — an orthogonal gap (layer-0 one-hot channels
+ *     have no encoded-input counterpart).
+ *     NOTE the PIXEL critic (pixel_disc_wgsl.ts) still refuses hashgrid; this
+ *     port covers the RELATIONAL adversary only.
  *   - adversary head activations: selu/tanh/sigmoid/linear (no sin — its
  *     backward needs a pre-act checkpoint the adversary layout doesn't carry).
  */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");s.defineInteropFlag(r),s.export(r,"ADV_WG",()=>a),s.export(r,"ADV_WG_B",()=>o),s.export(r,"ADV_MAX_BATCH",()=>i),s.export(r,"ADV_IDX_MIX",()=>l),s.export(r,"ADV_SOFT_EPS2",()=>u),s.export(r,"ADV_DIRECTION_ACTIVE_FLOOR",()=>p),s.export(r,"ADV_TRI_TIE_EPS",()=>c),s.export(r,"ADV_QUAD_ANCHOR_ACTIVE_FLOOR",()=>d),s.export(r,"ADV_STATS_BASE",()=>h),/** δ: tuple tag → (m, du, dy) — mirrors adversary.ts encodingDims. */s.export(r,"tupleDims",()=>m),s.export(r,"adjustedTuple",()=>g),/** Joint observer/target/loss shape. Relative scale is local to a tuple, so it
@@ -65370,7 +65546,7 @@ s.export(r,"validateAdversaryFusion",()=>I),/**
  */s.export(r,"adversaryPassBShader",()=>N);var n=e("./train_wgsl");let a=128,o=64,i=4096,l=2447445653,u=1e-12,p=.001,c=1e-5,d=1e-5,h=32,f=e=>{if(!Number.isFinite(e))throw Error(`adversary: non-finite literal ${e}`);return Number.isInteger(e)?e.toFixed(1):String(e)};function m(e){switch(e){case"point":return{m:1,du:2,dy:2};case"pair":case"pair-rotation":case"pair-rotation-scale-raw":case"pair-rotation-scale-adjusted":return{m:2,du:1,dy:2};case"tri":return{m:3,du:3,dy:6};case"quad-labelled":return{m:4,du:6,dy:8}}}function g(e){return"pair-rotation-scale-adjusted"===e}let x={tag:"force"},v={tag:"raw-vector"};function y(e){let t=e??x;if("force"!==t.tag&&"post-velocity"!==t.tag)throw Error(`adversary: unsupported target ${String(t.tag)}`);return t}function b(e,t){// This narrow seam keeps existing constructors/tests bit-compatible. It is
 // not used by the new objective system: every new UI/config path supplies an
 // explicit loss.
-if(void 0===t&&g(e))return{tag:"legacy-adjusted"};let r=t??v;switch(r.tag){case"raw-vector":return r;case"soft-angle":if(!(Number.isFinite(r.tau)&&r.tau>0))throw Error(`adversary: soft-angle tau must be finite and > 0, got ${r.tau}`);return r;case"angle-relative-scale":case"angle-scale-hold":{let e=r.scaleWeight;if(!(Number.isFinite(r.tau)&&r.tau>0))throw Error(`adversary: ${r.tag} tau must be finite and > 0, got ${r.tau}`);if(!(Number.isFinite(e)&&e>=0))throw Error(`adversary: ${r.tag} scaleWeight must be finite and >= 0, got ${e}`);if(!(Number.isFinite(r.energyWeight)&&r.energyWeight>=0))throw Error(`adversary: ${r.tag} energyWeight must be finite and >= 0, got ${r.energyWeight}`);if(!(Number.isFinite(r.energyTarget)&&r.energyTarget>0))throw Error(`adversary: ${r.tag} energyTarget must be finite and > 0, got ${r.energyTarget}`);return r}}}function k(e,t=x,r=v){let s=m(e);if("post-velocity"===t.tag&&"point"!==e)throw Error(`adversary: post-velocity target is point-only; relational ${e} hides incoming velocity and component clipping is not rotation-equivariant`);let n="angle-relative-scale"===r.tag||"angle-scale-hold"===r.tag;if(n&&"point"===e)throw Error(`adversary: ${r.tag} needs a relational tuple; point has no local scale contrast`);let a=n?"tri"===e?3:"quad-labelled"===e?4:1:0,o="post-velocity"===t.tag?4:s.du;return{m:s.m,du:o,vectorDy:s.dy,scaleDy:a,outDy:s.dy+a}}function _(e,t,r,s=x,a){let o=b(r,a),i="legacy-adjusted"===o.tag?{...m(r),vectorDy:2,scaleDy:0,outDy:2}:k(r,y(s),o),{m:l,du:u,vectorDy:p,scaleDy:c,outDy:d}=i;if(t.du!==u||t.dy!==d)throw Error(`adversary: layout io (${t.du}→${t.dy}) does not match encoding '${r}' objective (${u}→${d})`);let h=(0,n.trainScratchLayout)(e,1),f=t.heads[0].layers.map(e=>e.outSize),g=f.reduce((e,t)=>e+t,0),v=[],_=[];{let e=0;for(let t of f)v.push(e),e+=t;let t=g;for(let e of f)_.push(t),t+=e}let w=2*g,I=0+l,j=I+1,S=j+1,C=S+u,T=C+d,N=T+2*l,E=N+l*h.encStore,F=E+l*h.siteBlk,A=F+t.k*w;return{tag:r,m:l,k:t.k,du:u,dy:d,vectorDy:p,scaleDy:c,idxOff:0,surOff:I,winOff:j,uOff:S,yOff:C,siteInOff:T,encOff:N,fieldSiteOff:E,advOff:F,stride:A,fieldSiteBlk:h.siteBlk,fieldSl:h,advBlk:w,advAOff:v,advDOff:_}}function w(e,t,r,s,n=x,a){return _(e,t,r,n,a).stride*s*4}function I(e,t){if("helmholtz"!==e.spec.kind&&"agree-disagree"!==e.spec.kind)throw Error(`adversary: fused adversary needs a two-head neural field (got ${e.spec.kind})`);if(e.classes>0)throw Error("adversary: class-aware fields are not supported by the fused adversary yet");if("hashgrid"===e.encoding.kind)throw Error("adversary: hashgrid fields are not supported by the fused adversary yet (fieldGrad lacks the grid-scatter blocks)");for(let e of t.heads)for(let t of e.layers)if("sin"===t.activation)throw Error("adversary: sin activations need a pre-act checkpoint the adversary scratch does not carry — use selu/tanh/sigmoid/linear")}// ---------------------------------------------------------------------------
+if(void 0===t&&g(e))return{tag:"legacy-adjusted"};let r=t??v;switch(r.tag){case"raw-vector":return r;case"soft-angle":if(!(Number.isFinite(r.tau)&&r.tau>0))throw Error(`adversary: soft-angle tau must be finite and > 0, got ${r.tau}`);return r;case"angle-relative-scale":case"angle-scale-hold":{let e=r.scaleWeight;if(!(Number.isFinite(r.tau)&&r.tau>0))throw Error(`adversary: ${r.tag} tau must be finite and > 0, got ${r.tau}`);if(!(Number.isFinite(e)&&e>=0))throw Error(`adversary: ${r.tag} scaleWeight must be finite and >= 0, got ${e}`);if(!(Number.isFinite(r.energyWeight)&&r.energyWeight>=0))throw Error(`adversary: ${r.tag} energyWeight must be finite and >= 0, got ${r.energyWeight}`);if(!(Number.isFinite(r.energyTarget)&&r.energyTarget>0))throw Error(`adversary: ${r.tag} energyTarget must be finite and > 0, got ${r.energyTarget}`);return r}}}function k(e,t=x,r=v){let s=m(e);if("post-velocity"===t.tag&&"point"!==e)throw Error(`adversary: post-velocity target is point-only; relational ${e} hides incoming velocity and component clipping is not rotation-equivariant`);let n="angle-relative-scale"===r.tag||"angle-scale-hold"===r.tag;if(n&&"point"===e)throw Error(`adversary: ${r.tag} needs a relational tuple; point has no local scale contrast`);let a=n?"tri"===e?3:"quad-labelled"===e?4:1:0,o="post-velocity"===t.tag?4:s.du;return{m:s.m,du:o,vectorDy:s.dy,scaleDy:a,outDy:s.dy+a}}function _(e,t,r,s=x,a){let o=b(r,a),i="legacy-adjusted"===o.tag?{...m(r),vectorDy:2,scaleDy:0,outDy:2}:k(r,y(s),o),{m:l,du:u,vectorDy:p,scaleDy:c,outDy:d}=i;if(t.du!==u||t.dy!==d)throw Error(`adversary: layout io (${t.du}→${t.dy}) does not match encoding '${r}' objective (${u}→${d})`);let h=(0,n.trainScratchLayout)(e,1),f=t.heads[0].layers.map(e=>e.outSize),g=f.reduce((e,t)=>e+t,0),v=[],_=[];{let e=0;for(let t of f)v.push(e),e+=t;let t=g;for(let e of f)_.push(t),t+=e}let w=2*g,I=0+l,j=I+1,S=j+1,C=S+u,T=C+d,N=T+2*l,E=N+l*h.encStore,F=E+l*h.dEncStore,A=F+l*h.siteBlk,D=A+t.k*w;return{tag:r,m:l,k:t.k,du:u,dy:d,vectorDy:p,scaleDy:c,idxOff:0,surOff:I,winOff:j,uOff:S,yOff:C,siteInOff:T,encOff:N,dEncOff:E,fieldSiteOff:F,advOff:A,stride:D,fieldSiteBlk:h.siteBlk,fieldSl:h,advBlk:w,advAOff:v,advDOff:_}}function w(e,t,r,s,n=x,a){return _(e,t,r,n,a).stride*s*4}function I(e,t){if("helmholtz"!==e.spec.kind&&"agree-disagree"!==e.spec.kind)throw Error(`adversary: fused adversary needs a two-head neural field (got ${e.spec.kind})`);if(e.classes>0)throw Error("adversary: class-aware fields are not supported by the fused adversary yet");for(let e of t.heads)for(let t of e.layers)if("sin"===t.activation)throw Error("adversary: sin activations need a pre-act checkpoint the adversary scratch does not carry — use selu/tanh/sigmoid/linear")}// ---------------------------------------------------------------------------
 // Adversary-head codegen (n-dim output — the field emitters hardcode vec2f)
 // ---------------------------------------------------------------------------
 /** φ' from the POST-activation (sin rejected at validate time). */function j(e,t){switch(e){case"selu":return`seluD(${t})`;case"tanh":return`tanhD(${t})`;case"sigmoid":return`sigmoidD(${t})`;default:return"1.0"}}function S(e){let t=e??"blend";if("blend"!==t&&0!==t&&1!==t)throw Error(`adversary: invalid fieldLane ${String(t)}`);return t}function C(e){if("periodic"!==e&&"euclidean"!==e)throw Error(`adversary: observerGeometry must be explicitly periodic or euclidean, got ${String(e)}`);return e}function T(e,t,r){I(e,t);let{tag:s,relaxEps:o}=r,i=y(r.target),l=b(s,r.loss),m=S(r.fieldLane),g=C(r.observerGeometry),x=t.k<=1?1:(t.k-1)/t.k;if(!(o>=0&&o<x))throw Error(`adversary: relaxEps ${o} outside [0, ${x}) for k=${t.k}`);let v=_(e,t,s,i,r.loss),{m:k,k:w,du:T,dy:N,vectorDy:E,scaleDy:F}=v,A=e.spec.heads,D=e.encoding,$=v.fieldSl,R=Math.max(2,$.encDim,...A.flatMap(e=>e.layers.map(e=>Math.max(e.outSize,e.inSize)))),P=Math.max(T,N,...t.heads[0].layers.map(e=>Math.max(e.outSize,e.inSize))),M=v.stride,O=7+w,B=w>=2?o/(w-1):0,z=w>=2?1-o:1,L="legacy-adjusted"!==l.tag,G="legacy-adjusted"===l.tag,V=L&&"raw-vector"!==l.tag,U="angle-relative-scale"===l.tag||"angle-scale-hold"===l.tag,W=U?l.scaleWeight:0,q=U?l.energyWeight:0,H=U?l.energyTarget:1,K=V?l.tau:1,Y=// ---------------------------------------------------------------------------
@@ -65656,7 +65832,7 @@ ${e}`,bwd:`
     dSig[0] = trDRel[0] - trDSum;
     dSig[1] = trDRel[1] - trDSum;
     dSig[2] = trDRel[2] - trDSum;
-${t}`}}throw Error(`adversary: unhandled tuple encoding ${String(e)}`)}(s,0,i,l,E,0),X=(e,t)=>`sBase + ${v.fieldSiteOff}u + (${e}) * ${v.fieldSiteBlk}u + ${0===t?0:$.headBlk[0]}u`,Z=e=>`sBase + ${v.encOff}u + (${e}) * ${$.encDim}u`,J=(e,t,r)=>"raw"===D.kind?`fwd_head_${e}(${t}, ${X(r,e)}, 0u)`:`fwd_head_${e}(${Z(r)}, ${X(r,e)})`,Q=(e,t,r)=>"raw"===D.kind?`bwd_head_${e}(${t}, ${X(r,e)})`:`bwd_head_${e}(${t}, ${X(r,e)}, ${Z(r)})`,ee=e=>`sBase + ${v.advOff}u + (${e}) * ${v.advBlk}u`,et=v.advAOff[t.heads[0].layers.length-1],er=v.advDOff[t.heads[0].layers.length-1],es="post-velocity"===i.tag?`
+${t}`}}throw Error(`adversary: unhandled tuple encoding ${String(e)}`)}(s,0,i,l,E,0),X=(e,t)=>`sBase + ${v.fieldSiteOff}u + (${e}) * ${v.fieldSiteBlk}u + ${0===t?0:$.headBlk[0]}u`,Z=e=>`sBase + ${v.encOff}u + (${e}) * ${$.encDim}u`,J=e=>`sBase + ${v.dEncOff}u + (${e}) * ${$.encDim}u`,Q=(e,t,r)=>"raw"===D.kind?`fwd_head_${e}(${t}, ${X(r,e)}, 0u)`:`fwd_head_${e}(${Z(r)}, ${X(r,e)})`,ee=(e,t,r)=>"raw"===D.kind?`bwd_head_${e}(${t}, ${X(r,e)})`:"fourier"===D.kind?`bwd_head_${e}(${t}, ${X(r,e)}, ${Z(r)})`:`bwd_head_${e}(${t}, ${X(r,e)}, pn[${r}], ${J(r)})`,et="blend"===m?0:m,er=e=>`sBase + ${v.advOff}u + (${e}) * ${v.advBlk}u`,es=v.advAOff[t.heads[0].layers.length-1],en=v.advDOff[t.heads[0].layers.length-1],ea="post-velocity"===i.tag?`
       let safeMaxVel = max(u.maxVel, 1e-12);
       vn[t] = mvel[t] / safeMaxVel;
       let preV = (mvel[t] + u.forceMag * F) * u.friction;
@@ -65669,27 +65845,27 @@ ${t}`}}throw Error(`adversary: unhandled tuple encoding ${String(e)}`)}(s,0,i,l,
       );`:`
       vn[t] = vec2f(0.0);
       sig[t] = F;
-      sigJac[t] = vec2f(1.0);`,en="post-velocity"===i.tag?`
+      sigJac[t] = vec2f(1.0);`,eo="post-velocity"===i.tag?`
     for (var t = 0u; t < ${k}u; t = t + 1u) {
       dSig[t] = dSig[t] * sigJac[t];
-    }`:"",ea=Array.from({length:w},(e,t)=>`    adv_fwd_${t}(sBase + ${v.uOff}u, ${ee(`${t}u`)});`).join("\n"),eo=E/2,ei=e=>`
+    }`:"",ei=Array.from({length:w},(e,t)=>`    adv_fwd_${t}(sBase + ${v.uOff}u, ${er(`${t}u`)});`).join("\n"),el=E/2,eu=e=>`
     {
-      let ab = ${ee(`${e}u`)};
+      let ab = ${er(`${e}u`)};
       var angleResid = 0.0;
-      for (var v = 0u; v < ${eo}u; v = v + 1u) {
+      for (var v = 0u; v < ${el}u; v = v + 1u) {
         let o = 2u * v;
         let p = vec2f(
-          scratch[ab + ${et}u + o],
-          scratch[ab + ${et}u + o + 1u]
+          scratch[ab + ${es}u + o],
+          scratch[ab + ${es}u + o + 1u]
         );
         angleResid = angleResid +
           softSphereChord(p, vec2f(yvec[o], yvec[o + 1u])) /
-          ${f(eo)};
+          ${f(el)};
       }
       ${U?`
       var scaleSS = 0.0;
       for (var q = 0u; q < ${F}u; q = q + 1u) {
-        let e = scratch[ab + ${et+E}u + q] -
+        let e = scratch[ab + ${es+E}u + q] -
           yvec[${E}u + q];
         scaleSS = scaleSS + e * e / ${f(F)};
       }
@@ -65698,12 +65874,12 @@ ${t}`}}throw Error(`adversary: unhandled tuple encoding ${String(e)}`)}(s,0,i,l,
         0.0, angleResid + ${f(W)} * scaleResid, targetActive
       );`:`
       resid[${e}] = select(0.0, angleResid, targetActive);`}
-    }`,el=e=>`
+    }`,ep=e=>`
     {
-      let ab = ${ee(`${e}u`)};
+      let ab = ${er(`${e}u`)};
       let pred = vec2f(
-        scratch[ab + ${et}u],
-        scratch[ab + ${et}u + 1u]
+        scratch[ab + ${es}u],
+        scratch[ab + ${es}u + 1u]
       );
       let pden = sqrt(dot(pred, pred) + ${u});
       let phat = pred / pden;
@@ -65713,39 +65889,39 @@ ${t}`}}throw Error(`adversary: unhandled tuple encoding ${String(e)}`)}(s,0,i,l,
         sqrt(dot(d, d) + ${u}) - 1e-6,
         targetActive
       );
-    }`,eu=e=>`
+    }`,ec=e=>`
     {
       var ss = ${u};
-      let ab = ${ee(`${e}u`)};
+      let ab = ${er(`${e}u`)};
       for (var o = 0u; o < ${N}u; o = o + 1u) {
-        let d = scratch[ab + ${et}u + o] - yvec[o];
+        let d = scratch[ab + ${es}u + o] - yvec[o];
         ss = ss + d * d;
       }
       let r = select(0.0, sqrt(ss), targetActive);
       // Non-finite residuals must not enter WTA/Adam — one NaN zeroes the batch.
       resid[${e}] = select(0.0, r, isFiniteF(r));
-    }`,ep=Array.from({length:w},(e,t)=>V?ei(t):G?el(t):eu(t)).join(""),ec=e=>`
+    }`,ed=Array.from({length:w},(e,t)=>V?eu(t):G?ep(t):ec(t)).join(""),eh=e=>`
     {
-      let ab = ${ee(`${e}u`)};
+      let ab = ${er(`${e}u`)};
       let wj = ${1===w?"1.0":`select(${f(B)}, ${f(z)}, win == ${e}u)`};
-      for (var v = 0u; v < ${eo}u; v = v + 1u) {
+      for (var v = 0u; v < ${el}u; v = v + 1u) {
         let o = 2u * v;
         let p = vec2f(
-          scratch[ab + ${et}u + o],
-          scratch[ab + ${et}u + o + 1u]
+          scratch[ab + ${es}u + o],
+          scratch[ab + ${es}u + o + 1u]
         );
         var dp = vec2f(0.0);
         if (targetActive) {
-          dp = u.discSeed * wj / ${f(eo)} *
+          dp = u.discSeed * wj / ${f(el)} *
             softSphereGradP(p, vec2f(yvec[o], yvec[o + 1u]));
         }
-        scratch[ab + ${er}u + o] = dp.x;
-        scratch[ab + ${er}u + o + 1u] = dp.y;
+        scratch[ab + ${en}u + o] = dp.x;
+        scratch[ab + ${en}u + o + 1u] = dp.y;
       }
       ${U?`
       var scaleSS = 0.0;
       for (var q = 0u; q < ${F}u; q = q + 1u) {
-        let e = scratch[ab + ${et+E}u + q] -
+        let e = scratch[ab + ${es+E}u + q] -
           yvec[${E}u + q];
         scaleSS = scaleSS + e * e / ${f(F)};
       }
@@ -65754,20 +65930,20 @@ ${t}`}}throw Error(`adversary: unhandled tuple encoding ${String(e)}`)}(s,0,i,l,
         var dp = 0.0;
         if (targetActive) {
           dp = u.discSeed * wj * ${f(W)} *
-            (scratch[ab + ${et+E}u + q] -
+            (scratch[ab + ${es+E}u + q] -
              yvec[${E}u + q]) /
             (${f(F)} * scaleDen);
         }
-        scratch[ab + ${er+E}u + q] = dp;
+        scratch[ab + ${en+E}u + q] = dp;
       }`:""}
       adv_bwd_${e}(ab);
-    }`,ed=e=>`
+    }`,ef=e=>`
     {
-      let ab = ${ee(`${e}u`)};
+      let ab = ${er(`${e}u`)};
       let wj = ${1===w?"1.0":`select(${f(B)}, ${f(z)}, win == ${e}u)`};
       let pred = vec2f(
-        scratch[ab + ${et}u],
-        scratch[ab + ${et}u + 1u]
+        scratch[ab + ${es}u],
+        scratch[ab + ${es}u + 1u]
       );
       let pden = sqrt(dot(pred, pred) + ${u});
       let phat = pred / pden;
@@ -65777,33 +65953,33 @@ ${t}`}}throw Error(`adversary: unhandled tuple encoding ${String(e)}`)}(s,0,i,l,
           (phat - vec2f(yvec[0], yvec[1])) / (resid[${e}] + 1e-6);
       }
       let dp = dr / pden - pred * (dot(pred, dr) / (pden * pden * pden));
-      scratch[ab + ${er}u] = dp.x;
-      scratch[ab + ${er}u + 1u] = dp.y;
+      scratch[ab + ${en}u] = dp.x;
+      scratch[ab + ${en}u + 1u] = dp.y;
       adv_bwd_${e}(ab);
-    }`,eh=e=>`
+    }`,em=e=>`
     {
-      let ab = ${ee(`${e}u`)};
+      let ab = ${er(`${e}u`)};
       let wj = ${1===w?"1.0":`select(${f(B)}, ${f(z)}, win == ${e}u)`};
       for (var o = 0u; o < ${N}u; o = o + 1u) {
-        let pred = scratch[ab + ${et}u + o];
+        let pred = scratch[ab + ${es}u + o];
         var dp = 0.0;
         if (targetActive) {
           dp = u.discSeed * wj * (pred - yvec[o]) / resid[${e}];
         }
-        scratch[ab + ${er}u + o] = dp;
+        scratch[ab + ${en}u + o] = dp;
       }
       adv_bwd_${e}(ab);
-    }`,ef=Array.from({length:w},(e,t)=>V?ec(t):G?ed(t):eh(t)).join(""),em=1===w?"":Array.from({length:w},(e,t)=>Array.from({length:w-t-1},(e,r)=>{let s=t+r+1;return G?`
+    }`,eg=Array.from({length:w},(e,t)=>V?eh(t):G?ef(t):em(t)).join(""),ex=1===w?"":Array.from({length:w},(e,t)=>Array.from({length:w-t-1},(e,r)=>{let s=t+r+1;return G?`
     {
-      let ha = ${ee(`${t}u`)};
-      let hb = ${ee(`${s}u`)};
+      let ha = ${er(`${t}u`)};
+      let hb = ${er(`${s}u`)};
       let pa = vec2f(
-        scratch[ha + ${et}u],
-        scratch[ha + ${et}u + 1u]
+        scratch[ha + ${es}u],
+        scratch[ha + ${es}u + 1u]
       );
       let pb = vec2f(
-        scratch[hb + ${et}u],
-        scratch[hb + ${et}u + 1u]
+        scratch[hb + ${es}u],
+        scratch[hb + ${es}u + 1u]
       );
       let ua = pa / sqrt(dot(pa, pa) + ${u});
       let ub = pb / sqrt(dot(pb, pb) + ${u});
@@ -65812,26 +65988,26 @@ ${t}`}}throw Error(`adversary: unhandled tuple encoding ${String(e)}`)}(s,0,i,l,
       statHeadMin = min(statHeadMin, hd);
     }`:V?`
     {
-      let ha = ${ee(`${t}u`)};
-      let hb = ${ee(`${s}u`)};
+      let ha = ${er(`${t}u`)};
+      let hb = ${er(`${s}u`)};
       var hd = 0.0;
-      for (var v = 0u; v < ${eo}u; v = v + 1u) {
+      for (var v = 0u; v < ${el}u; v = v + 1u) {
         let o = 2u * v;
         let pa = vec2f(
-          scratch[ha + ${et}u + o],
-          scratch[ha + ${et}u + o + 1u]
+          scratch[ha + ${es}u + o],
+          scratch[ha + ${es}u + o + 1u]
         );
         let pb = vec2f(
-          scratch[hb + ${et}u + o],
-          scratch[hb + ${et}u + o + 1u]
+          scratch[hb + ${es}u + o],
+          scratch[hb + ${es}u + o + 1u]
         );
-        hd = hd + softSphereChord(pa, pb) / ${f(eo)};
+        hd = hd + softSphereChord(pa, pb) / ${f(el)};
       }
       ${U?`
       var hss = 0.0;
       for (var q = 0u; q < ${F}u; q = q + 1u) {
-        let d = scratch[ha + ${et+E}u + q] -
-          scratch[hb + ${et+E}u + q];
+        let d = scratch[ha + ${es+E}u + q] -
+          scratch[hb + ${es+E}u + q];
         hss = hss + d * d / ${f(F)};
       }
       hd = hd + ${f(W)} * sqrt(hss + ${u});`:""}
@@ -65839,42 +66015,42 @@ ${t}`}}throw Error(`adversary: unhandled tuple encoding ${String(e)}`)}(s,0,i,l,
       statHeadMin = min(statHeadMin, hd);
     }`:`
     {
-      let ha = ${ee(`${t}u`)};
-      let hb = ${ee(`${s}u`)};
+      let ha = ${er(`${t}u`)};
+      let hb = ${er(`${s}u`)};
       var hd2 = 0.0;
       for (var o = 0u; o < ${N}u; o = o + 1u) {
-        let d = scratch[ha + ${et}u + o] -
-          scratch[hb + ${et}u + o];
+        let d = scratch[ha + ${es}u + o] -
+          scratch[hb + ${es}u + o];
         hd2 = hd2 + d * d;
       }
       let hd = sqrt(hd2);
       statHeadMean = statHeadMean + hd;
       statHeadMin = min(statHeadMin, hd);
-    }`}).join("")).join(""),eg=V?`
+    }`}).join("")).join(""),ev=V?`
       if (targetActive) {
-        for (var v = 0u; v < ${eo}u; v = v + 1u) {
+        for (var v = 0u; v < ${el}u; v = v + 1u) {
           let o = 2u * v;
           let p = vec2f(
-            scratch[ab + ${et}u + o],
-            scratch[ab + ${et}u + o + 1u]
+            scratch[ab + ${es}u + o],
+            scratch[ab + ${es}u + o + 1u]
           );
           let gy = softSphereGradY(p, vec2f(yvec[o], yvec[o + 1u]));
           // u.genSeed > 0 is disagree: minimize -payoff. A negative seed is
           // the agreeing lane: minimize +payoff.
-          let dg = -u.genSeed * wj / ${f(eo)} * gy;
+          let dg = -u.genSeed * wj / ${f(el)} * gy;
           dLdy[o] = dLdy[o] + dg.x;
           dLdy[o + 1u] = dLdy[o + 1u] + dg.y;
         }
         ${U?`
         var scaleSS = 0.0;
         for (var q = 0u; q < ${F}u; q = q + 1u) {
-          let e = scratch[ab + ${et+E}u + q] -
+          let e = scratch[ab + ${es+E}u + q] -
             yvec[${E}u + q];
           scaleSS = scaleSS + e * e / ${f(F)};
         }
         let scaleDen = sqrt(scaleSS + ${u});
         for (var q = 0u; q < ${F}u; q = q + 1u) {
-          let p = scratch[ab + ${et+E}u + q];
+          let p = scratch[ab + ${es+E}u + q];
           let y = yvec[${E}u + q];
           ${"angle-scale-hold"===l.tag?`// Scale is cooperative for BOTH field roles in scale-hold.
           dLdy[${E}u + q] = dLdy[${E}u + q] +
@@ -65885,8 +66061,8 @@ ${t}`}}throw Error(`adversary: unhandled tuple encoding ${String(e)}`)}(s,0,i,l,
         }`:""}
       }`:G?`
       let pred = vec2f(
-        scratch[ab + ${et}u],
-        scratch[ab + ${et}u + 1u]
+        scratch[ab + ${es}u],
+        scratch[ab + ${es}u + 1u]
       );
       let pden = sqrt(dot(pred, pred) + ${u});
       let phat = pred / pden;
@@ -65898,7 +66074,7 @@ ${t}`}}throw Error(`adversary: unhandled tuple encoding ${String(e)}`)}(s,0,i,l,
       }`:`
       if (targetActive) {
         for (var o = 0u; o < ${N}u; o = o + 1u) {
-          let pred = scratch[ab + ${et}u + o];
+          let pred = scratch[ab + ${es}u + o];
           dLdy[o] = dLdy[o] + u.genSeed * wj *
             (pred - yvec[o]) / resid[j];
         }
@@ -65973,7 +66149,7 @@ fn softSphereGradY(a : vec2f, b : vec2f) -> vec2f {
 ${"raw"===D.kind?"":(0,n.emitEncode)(D)+"\n"}
 ${A.map((e,t)=>(0,n.emitFwdStore)(t,e,$,R,D)).join("\n\n")}
 
-${A.map((e,t)=>(0,n.emitBwdStore)(t,e,$,R,D)).join("\n\n")}
+${A.map((e,t)=>(0,n.emitBwdStore)(t,e,$,R,D,t===et?"seed":"accumulate")).join("\n\n")}
 
 ${t.heads.map((e,t)=>(function(e,t,r,s){let n=[];return n.push(`fn adv_fwd_${e}(uBase : u32, base : u32) {`),n.push(`  var cur : array<f32, ${s}>;`),n.push(`  var nxt : array<f32, ${s}>;`),n.push(`  for (var i = 0u; i < ${r.du}u; i = i + 1u) { cur[i] = scratch[uBase + i]; }`),t.layers.forEach((e,t)=>{n.push(`  // layer ${t}: ${e.inSize} -> ${e.outSize} (${e.activation})`),n.push(`  for (var o = 0u; o < ${e.outSize}u; o = o + 1u) {`),n.push(`    var s = advW[${e.biasOffset}u + o];`),n.push(`    for (var i = 0u; i < ${e.inSize}u; i = i + 1u) {`),n.push(`      s = s + cur[i] * advW[${e.weightOffset}u + i * ${e.outSize}u + o];`),n.push("    }");let s="selu"===e.activation?"selu(s)":"tanh"===e.activation?"tanh(s)":"sigmoid"===e.activation?"sigmoid_(s)":"s";n.push(`    let a = ${s};`),n.push(`    scratch[base + ${r.advAOff[t]}u + o] = a;`),n.push("    nxt[o] = a;"),n.push("  }"),n.push(`  for (var o = 0u; o < ${e.outSize}u; o = o + 1u) { cur[o] = nxt[o]; }`)}),n.push("}"),n.join("\n")})(t,e,v,P)).join("\n\n")}
 
@@ -66044,8 +66220,8 @@ fn advFwd(@builtin(global_invocation_id) gid : vec3u,
       scratch[sBase + ${v.siteInOff}u + t * 2u] = uk.x;
       scratch[sBase + ${v.siteInOff}u + t * 2u + 1u] = uk.y;
       ${"raw"===D.kind?"":`encodeSite(uk, ${Z("t")});
-      `}let F = ${"blend"===m?`(1.0 - u.alpha) * ${J(0,"uk","t")} + u.alpha * ${J(1,"uk","t")}`:J(m,"uk","t")};
-${es}
+      `}let F = ${"blend"===m?`(1.0 - u.alpha) * ${Q(0,"uk","t")} + u.alpha * ${Q(1,"uk","t")}`:Q(m,"uk","t")};
+${ea}
       // A nonfinite field signal (SELU Inf\xb70 before the clamp landed, or a
       // future encoding) must not enter κ or the WTA residual.
       if (!isFiniteF(sig[t].x) || !isFiniteF(sig[t].y)) {
@@ -66070,13 +66246,13 @@ ${Y.fwd}
     }
 
     // ---- K adversary heads: forward, residuals, winner -------------------
-${ea}
+${ei}
     // Head geometry is a property of the predictors at this context, not of
     // target validity. It therefore includes directionless/ambiguous targets.
     ${w>1?"statHeadMin = 1e30;":""}
-${em}
+${ex}
     ${w>1?`statHeadMean = statHeadMean / ${f(w*(w-1)/2)};`:""}
-    var resid : array<f32, ${w}>;${ep}
+    var resid : array<f32, ${w}>;${ed}
     var win = 0u;
     var best = resid[0];
     for (var j = 1u; j < ${w}u; j = j + 1u) {
@@ -66116,7 +66292,7 @@ ${em}
 
     // ---- DISCRIMINATOR backward (δ's for advOpt; weights are tape
     //      constants — see relaxedWtaSum semantics, verified in B1) ---------
-${ef}
+${eg}
 
     // ---- GENERATOR backward. Winner weights are tape constants. Raw,
     // soft-angle and relative-scale reverse the discriminator score;
@@ -66124,9 +66300,9 @@ ${ef}
     var dLdy : array<f32, ${N}>;
     for (var o = 0u; o < ${N}u; o = o + 1u) { dLdy[o] = 0.0; }
     for (var j = 0u; j < ${w}u; j = j + 1u) {
-      let ab = ${ee("j")};
+      let ab = ${er("j")};
       let wj = ${1===w?"1.0":`select(${f(B)}, ${f(z)}, j == win)`};
-${eg}
+${ev}
     }
     ${U?`
     // Finalized by the pre-D forward. The first forward also executes this
@@ -66141,10 +66317,10 @@ ${eg}
     let energyAnchorSeed = 0.0;`}
     var dSig : array<vec2f, ${k}>;
 ${Y.bwd}
-${en}
+${eo}
     for (var t = 0u; t < ${k}u; t = t + 1u) {
-      ${"blend"===m?`let _du0 = ${Q(0,"dSig[t] * (1.0 - u.alpha)","t")};
-      let _du1 = ${Q(1,"dSig[t] * u.alpha","t")};`:`let _duLane = ${Q(m,"dSig[t]","t")};`}
+      ${"blend"===m?`let _du0 = ${ee(0,"dSig[t] * (1.0 - u.alpha)","t")};
+      let _du1 = ${ee(1,"dSig[t] * u.alpha","t")};`:`let _duLane = ${ee(m,"dSig[t]","t")};`}
     }
 
     statW = weighted;
@@ -66300,8 +66476,41 @@ fn advFinalize() {
       g = g + scratch[${l} + ${s.advDOff[n]}u + o];
     }
   }`)}// --- field weight blocks (thread = FIELD weight float → extGrads) --------
-let d=[];for(let t of e.segments){// grid segments are rejected by validateAdversaryFusion
-let e=t.head;// Direct lanes are structurally isolated. No block means g remains exact
+let d=[];for(let t of e.segments){if("grid"===t.role){// hashgrid feature table (field weights offset 0): thread = one grid
+// float (cell, feature). Transliterated from train_wgsl's field pass B
+// (same gather-side formulation: each grid float scans the (tuple,
+// member) sites and claims the bilinear corners that land on its cell,
+// so there is exactly ONE writer per grid float and no atomics). At the
+// clamp border ix1==ix makes TWO corners match — both add, matching tfjs
+// summing coincident scatters.
+//
+// NOTE the ordering: this branch is deliberately ABOVE the fieldLane
+// skip below. The grid table is shared by both field heads, and lane
+// isolation has already happened upstream — only the active lane's
+// bwd_head wrote dEnc.
+if("hashgrid"!==l.kind)throw Error(`adversary: grid segment on a ${l.kind} encoding — layout is inconsistent`);let{gridSize:e,features:r}=l;d.push(`
+  if (t >= ${t.floatOffset}u && t < ${t.floatOffset+t.floatLength}u) {
+    let cell = (t - ${t.floatOffset}u) / ${r}u;
+    let f = (t - ${t.floatOffset}u) % ${r}u;
+    for (var s = 0u; s < ub.b; s = s + 1u) {
+      let sBase = s * ${p}u;
+      for (var site = 0u; site < ${n}u; site = site + 1u) {
+        let ux = scratch[sBase + ${s.siteInOff}u + site * 2u];
+        let uy = scratch[sBase + ${s.siteInOff}u + site * 2u + 1u];
+        let gxf = clamp(ux, 0.0, 1.0) * ${(e-1).toFixed(1)};
+        let gyf = clamp(uy, 0.0, 1.0) * ${(e-1).toFixed(1)};
+        let ix = u32(floor(gxf)); let iy = u32(floor(gyf));
+        let fx = gxf - floor(gxf); let fy = gyf - floor(gyf);
+        let ix1 = min(ix + 1u, ${e-1}u); let iy1 = min(iy + 1u, ${e-1}u);
+        var wsum = 0.0;
+        if (iy * ${e}u + ix == cell) { wsum = wsum + (1.0 - fx) * (1.0 - fy); }
+        if (iy * ${e}u + ix1 == cell) { wsum = wsum + fx * (1.0 - fy); }
+        if (iy1 * ${e}u + ix == cell) { wsum = wsum + (1.0 - fx) * fy; }
+        if (iy1 * ${e}u + ix1 == cell) { wsum = wsum + fx * fy; }
+        g = g + wsum * scratch[sBase + ${s.dEncOff}u + site * ${a.encDim}u + f];
+      }
+    }
+  }`);continue}let e=t.head;// Direct lanes are structurally isolated. No block means g remains exact
 // zero for every packed weight owned by the inactive field head.
 if("blend"!==u&&e!==u)continue;let r=t.layer,o=i[e].layers[r],c=t.floatOffset,h=t.floatOffset+t.floatLength,f=0===e?0:a.headBlk[0],m=`sBase + ${s.fieldSiteOff}u + site * ${s.fieldSiteBlk}u + ${f}u`,g=0===r?"raw"===l.kind?`scratch[sBase + ${s.siteInOff}u + site * 2u + i]`:`scratch[sBase + ${s.encOff}u + site * ${a.encDim}u + i]`:`scratch[${m} + ${a.aOff[e][r-1]}u + i]`;"kernel"===t.role?d.push(`
   if (t >= ${c}u && t < ${h}u) {
@@ -66579,7 +66788,7 @@ return(t*s+r.encStore+r.siteBlk)*4}function x(e){let t=0,r=t;t+=9*e.E;let s=t;t+
     }
   }
 `}function _(e,t){d(e);let r=t.dims,s=Math.min(t.batchCap,i),u=t.fieldLane??"blend",c=(0,n.trainScratchLayout)(e,1),h=e.spec.heads,f=e.encoding,g=m(e),_=r.G*r.G,w=(0,a.pixelDiscWeightCount)(r),I=Math.max(2,c.encDim,...h.flatMap(e=>e.layers.map(e=>Math.max(e.outSize,e.inSize)))),j=8+c.encStore,S=s*g,C=`${S+8}u`,T=e=>`${S+8+c.encStore}u + ${0===e?0:c.headBlk[0]}u`,N=e=>`pBase + ${j}u + ${0===e?0:c.headBlk[0]}u`,E=()=>"pBase + 8u",F=e=>"raw"===f.kind?`fwd_head_${e}(uk, ${N(e)}, 0u)`:`fwd_head_${e}(${E()}, ${N(e)})`,A=e=>"raw"===f.kind?`fwd_head_${e}(uk, ${T(e)}, 0u)`:`fwd_head_${e}(${C}, ${T(e)})`,D=(e,t)=>"raw"===f.kind?`bwd_head_${e}(${t}, ${N(e)})`:`bwd_head_${e}(${t}, ${N(e)}, ${E()})`,$="blend"===u?`(1.0 - uni.alpha) * ${F(0)} + uni.alpha * ${F(1)}`:F(u),R="blend"===u?`(1.0 - uni.alpha) * ${A(0)} + uni.alpha * ${A(1)}`:A(u),P="blend"===u?`let _du0 = ${D(0,"dSig * (1.0 - uni.alpha)")};
-    let _du1 = ${D(1,"dSig * uni.alpha")};`:`let _duLane = ${D(u,"dSig")};`,M=2*w,O=3*w,B=h.map((e,t)=>(0,n.emitFwdStore)(t,e,c,I,f)).join("\n"),z=h.map((e,t)=>(0,n.emitBwdStore)(t,e,c,I,f)).join("\n"),L="raw"===f.kind?"":(0,n.emitEncode)(f),G="raw"===f.kind?"":`encodeSite(uk, ${C});`,V=[];for(let t of e.segments){if("grid"===t.role)continue;let e=t.head;if("blend"!==u&&e!==u)continue;let r=t.layer,s=h[e].layers[r],n=t.floatOffset,a=t.floatOffset+t.floatLength,o=0===e?0:c.headBlk[0],i=`pBase + ${j}u + ${o}u`,l=0===r?"raw"===f.kind?"scratch[pBase + 0u + i]":"scratch[pBase + 8u + i]":`scratch[${i} + ${c.aOff[e][r-1]}u + i]`;"kernel"===t.role?V.push(`
+    let _du1 = ${D(1,"dSig * uni.alpha")};`:`let _duLane = ${D(u,"dSig")};`,M=2*w,O=3*w,B=h.map((e,t)=>(0,n.emitFwdStore)(t,e,c,I,f)).join("\n"),z=h.map((e,t)=>(0,n.emitBwdStore)(t,e,c,I,f,0===t?"seed":"accumulate")).join("\n"),L="raw"===f.kind?"":(0,n.emitEncode)(f),G="raw"===f.kind?"":`encodeSite(uk, ${C});`,V=[];for(let t of e.segments){if("grid"===t.role)continue;let e=t.head;if("blend"!==u&&e!==u)continue;let r=t.layer,s=h[e].layers[r],n=t.floatOffset,a=t.floatOffset+t.floatLength,o=0===e?0:c.headBlk[0],i=`pBase + ${j}u + ${o}u`,l=0===r?"raw"===f.kind?"scratch[pBase + 0u + i]":"scratch[pBase + 8u + i]":`scratch[${i} + ${c.aOff[e][r-1]}u + i]`;"kernel"===t.role?V.push(`
   if (t >= ${n}u && t < ${a}u) {
     let local = t - ${n}u;
     let i = local / ${s.outSize}u;
@@ -67911,6 +68120,32 @@ mk(e){return{id:this.next++,...e}}const(e){return this.mk({op:"const",value:e,in
    *  "linear" is the identity (no node minted) — needed by heads whose output
    *  layer is an unsquashed regression (tfjs `dense` with no activation, e.g.
    *  the adversary's raw-signal regression heads). It mirrors the shipped Activation
-   *  union in advect_wgsl.ts, which already includes "linear". */act(e,t){return"selu"===e?this.selu(t):"tanh"===e?this.tanh(t):"sigmoid"===e?this.sigmoid(t):"sin"===e?this.sin(t):t}/** sum a list (left fold); empty → const 0. */sum(e){return 0===e.length?this.const(0):e.reduce((e,t)=>this.add(e,t))}constructor(){this.next=0,this.inputs=new Map}}function i(e){let t=new Set,r=[],s=e=>{if(!t.has(e.id)){for(let r of(t.add(e.id),e.inputs))s(r);r.push(e)}};return s(e),r}},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],fjpTf:[function(){},{}]},["4zTVb"],"4zTVb","parcelRequire924a")//# sourceMappingURL=index.dc7ca088.js.map
+   *  union in advect_wgsl.ts, which already includes "linear". */act(e,t){return"selu"===e?this.selu(t):"tanh"===e?this.tanh(t):"sigmoid"===e?this.sigmoid(t):"sin"===e?this.sin(t):t}/** sum a list (left fold); empty → const 0. */sum(e){return 0===e.length?this.const(0):e.reduce((e,t)=>this.add(e,t))}constructor(){this.next=0,this.inputs=new Map}}function i(e){let t=new Set,r=[],s=e=>{if(!t.has(e.id)){for(let r of(t.add(e.id),e.inputs))s(r);r.push(e)}};return s(e),r}},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],fvegn:[function(e,t,r){/**
+ * Share-link codec for the dock blob — the pure, DOM-free half of the
+ * export/share path. `src/index.tsx` owns the v2 schema and its validator;
+ * this module owns only the two things that have to be exactly reversible:
+ * the base64url transport, and the piece-identity rule.
+ *
+ * It deliberately imports NOTHING (no React, no tfjs, no GALLERY), so the
+ * round-trip can be exercised directly:
+ *
+ *   bun tools/share_roundtrip_test.ts     (or any scratch script)
+ *
+ * — which is the only way a "copy link" feature gets a falsifiable test at
+ * all: everything downstream of here needs a GPU.
+ *//** `?dock=` decoded back into JSON, or the reason it could not be. */var s=e("@parcel/transformer-js/src/esmodule-helpers.js");function n(e){let t=new TextEncoder().encode(JSON.stringify(e)),r="";for(let e of t)r+=String.fromCharCode(e);return btoa(r).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")}function a(e){let t=e.replace(/-/g,"+").replace(/_/g,"/"),r=t+"=".repeat((4-t.length%4)%4);try{let e=atob(r),t=Uint8Array.from(e,e=>e.charCodeAt(0)),s=new TextDecoder("utf-8",{fatal:!0}).decode(t);return{tag:"ok",json:JSON.parse(s)}}catch(e){return{tag:"invalid",reason:`not base64url-encoded JSON (${e instanceof Error?e.message:String(e)})`}}}function o(e,t,r){let s=Number(t);if("string"!=typeof r)return{tag:"index",piece:s};let n=e.indexOf(r);return n<0?{tag:"unknown-name",piece:s,name:r}:n===s?{tag:"index",piece:s}:{tag:"renamed",piece:n,staleIndex:s,name:r}}s.defineInteropFlag(r),/**
+ * JSON → base64url. `-`/`_` for `+`/`/` and no `=` padding, so the parameter
+ * survives a URL, a chat client and a copy-paste without percent-encoding
+ * noise (a plain base64 `+` becomes a SPACE when the link is re-parsed as a
+ * query string — that is the bug this alphabet exists to avoid).
+ *
+ * UTF-8 first, via TextEncoder: `btoa` throws on any code point > 255, and
+ * every gallery piece name contains "·" (U+00B7). Latin-1 `btoa` would happen
+ * to accept that one and then hand back mojibake on decode.
+ */s.export(r,"encodeDockParam",()=>n),/** base64url → JSON. Typed failure, never a silent empty object. */s.export(r,"decodeDockParam",()=>a),/**
+ * κ for piece identity. Classifies once; the caller reports and the schema
+ * validator bounds-checks `piece` afterwards (a non-numeric index arrives here
+ * as NaN and is rejected there, NOT repaired here).
+ */s.export(r,"resolveSharedPiece",()=>o)},{"@parcel/transformer-js/src/esmodule-helpers.js":"k3151"}],fjpTf:[function(){},{}]},["4zTVb"],"4zTVb","parcelRequire924a")//# sourceMappingURL=index.c4aaf8f7.js.map
 ;
-//# sourceMappingURL=index.dc7ca088.js.map
+//# sourceMappingURL=index.c4aaf8f7.js.map
