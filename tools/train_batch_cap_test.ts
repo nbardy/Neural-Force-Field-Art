@@ -225,7 +225,49 @@ console.log("\n§4 THE COVER OBJECTIVE IS COMPUTE-BOUND, NOT MEMORY-BOUND");
   );
 }
 
-console.log("\n§5 CAP ARITHMETIC (deterministic)");
+console.log("\n§5 SPLIT-K: GAME GRADIENTS ARE ADDED ONCE, NOT ONCE PER CHUNK");
+// Pass B is split over batch chunks (ub.chunks), so a per-weight quantity added
+// in the REDUCE stage would be multiplied by the chunk count. extGrad is exactly
+// such a quantity, and the chunk count rises with the batch — so the bug would
+// be invisible at small n and scale the game gradient 256x at n=16384.
+// The tfjs oracle (tools/train_test.ts, N=256 => 4 chunks) covers structural
+// gradient coverage across chunk boundaries but has no extGrad, so it cannot
+// catch this. Zero field loss => internal g is literally 0, hence grads MUST
+// equal extGrad exactly, at every batch size.
+{
+  const ZERO_LOSS = {
+    W_CHAOS: 0, W_ISO: 0, W_DIV: 0, W_SPIRAL: 0, W_COVER: 0, W_CENTER: 0,
+    COVER_SAMPLES: 256, HH: 1e-2, SPIRAL_TURNS: 3,
+  };
+  const nFloats = kernel.layout.totalFloats;
+  const extBuf = device.createBuffer({
+    size: nFloats * 4,
+    usage: 0x80 | 0x8 | 0x4, // STORAGE | COPY_DST | COPY_SRC
+  });
+  const known = new Float32Array(nFloats);
+  for (let i = 0; i < nFloats; i++) known[i] = ((i % 17) - 8) * 0.25;
+  device.queue.writeBuffer(extBuf, 0, known);
+  const gameTrainer = new FusedTrainer(device, kernel.layout, {
+    batchCap: MAX_BATCH,
+    kSteps: 1,
+    loss: ZERO_LOSS,
+    extGradBuffer: extBuf,
+  });
+  // n=64 -> 1 chunk (no split); n=16384 -> the chunk cap. Same expected grads.
+  for (const n of [64, 16384]) {
+    gameTrainer.step(
+      { width: PHYS.width, height: PHYS.height, forceMagnitude: PHYS.forceMagnitude,
+        friction: PHYS.friction, maxVelocity: PHYS.maxVelocity },
+      { n, alpha: ALPHA, lr: 0, apply: false, source: "random", seed: 11 }
+    );
+    const g = await gameTrainer.readGrads();
+    let worst = 0;
+    for (let i = 0; i < nFloats; i++) worst = Math.max(worst, Math.abs(g[i] - known[i]));
+    ok(worst === 0, `n=${String(n).padStart(5)}: grads === extGrad exactly (max|Δ|=${worst})`);
+  }
+}
+
+console.log("\n§6 CAP ARITHMETIC (deterministic)");
 // Independent of this box: a byte budget that admits exactly 3 samples.
 const perSample = scratchBytes(kernel.layout, 1, K);
 ok(

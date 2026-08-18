@@ -274,6 +274,15 @@ Live controls backed by `LoopHandle`:
     `bun tools/train_batch_cap_test.ts`.
   - The fused adversary and pixel discriminator keep their own smaller caps
     (1024 / 512) and clamp the shared batch down independently.
+  - **Pass B is split-K** (2026-08-17). It used to be one thread per weight
+    looping over every sample, so its parallelism was `totalFloats` (~2.4k
+    threads) regardless of batch — the batch was serial inside the thread, and
+    it cost ~70% of a large-batch step. It now fans the sample sum across
+    `ub.chunks` batch chunks into a partials buffer, with a second tiny pass
+    summing chunks and running Adam. Measured step: 1024 1.51→1.02 ms, 4096
+    3.85→2.24, 16384 15.5→10.4. Game gradients (`extGrad`) are added in the
+    SECOND stage — adding them in the reduce would multiply them by the chunk
+    count. Guarded by `tools/train_batch_cap_test.ts` §5.
 - generator and predictor/discriminator learning rates plus their displayed
   ratio;
 - trail decay, stroke style, stroke length;

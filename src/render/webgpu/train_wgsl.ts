@@ -97,6 +97,32 @@ export interface FieldLossSpec {
   readonly W_CHAOS: number;
   readonly W_ISO: number;
   readonly W_DIV: number;
+  /**
+   * NORMALIZED STRUCTURE ↑ — minimizes the batch's CONSTANT-MODE FRACTION
+   *
+   *     L_struct = (‖mean Fs‖² + ε) / (mean ‖Fs‖² + ε) = (dc² + ε)/(rmsF² + ε)
+   *
+   * over the N·K rollout force sites (the same measure {@link W_ISO} uses).
+   * Since `mean‖Fs‖² = ac² + dc²` exactly, minimizing this MAXIMIZES the
+   * normalized structure `ac²/(ac²+dc²)` — the fraction of the field's energy
+   * that is spatially varying rather than one global constant push.
+   *
+   * WHY NORMALIZED AND NOT RAW VARIANCE. Maximizing `ac²` alone has an
+   * AMPLITUDE CHEAT: `ac` is homogeneous of degree 1 in F, so a field can raise
+   * it forever by growing ‖F‖ without ever acquiring a single new feature —
+   * tanh saturation is where that ends (`satFrac` in the health snapshot is
+   * exactly that failure). The ratio is invariant under `F → cF`, so the only
+   * way to move it is to trade constant push for spatial variation.
+   *
+   * Range is EXACTLY [0,1]: Jensen gives ‖mean F‖² ≤ mean‖F‖², so L ≤ 1, and
+   * ε sits in BOTH numerator and denominator on purpose — with ε in the
+   * denominator only, a dead field (F ≡ 0) would score L = 0, i.e. PERFECT
+   * structure, and the term would happily kill the field. With ε in both, a
+   * dead field scores L = 1, the worst possible value.
+   *
+   * 0 (or absent) elides the term from the generated WGSL entirely.
+   */
+  readonly W_STRUCT?: number;
   readonly W_SPIRAL: number;
   /**
    * Curve→particles spiral cover (Chamfer ↑): mean over arc-length spiral
@@ -144,11 +170,19 @@ export function maxBatchForLoss(loss: FieldLossSpec | undefined): number {
   return (loss?.W_COVER ?? 0) !== 0 ? COVER_MAX_BATCH : MAX_BATCH;
 }
 
+/**
+ * ε for {@link FieldLossSpec.W_STRUCT}, in Fs² units (Fs = F·forceMagnitude).
+ * Shared verbatim with the tfjs oracle `src/core/losses/structure.ts` — the two
+ * implementations are only comparable if this constant is literally the same.
+ */
+export const STRUCT_EPS = 1e-8;
+
 /** Historical full chaos objective; retained as the default for compatibility. */
 export const LOSS: FieldLossSpec = {
   W_CHAOS: 1.0,
   W_ISO: 1.0,
   W_DIV: 0.5,
+  W_STRUCT: 0,
   W_SPIRAL: 0.00002,
   W_COVER: 0,
   W_CENTER: 0,
@@ -651,6 +685,7 @@ function zeroFieldLoss(loss: FieldLossSpec): boolean {
     loss.W_CHAOS === 0 &&
     loss.W_ISO === 0 &&
     loss.W_DIV === 0 &&
+    (loss.W_STRUCT ?? 0) === 0 &&
     loss.W_SPIRAL === 0 &&
     (loss.W_COVER ?? 0) === 0 &&
     (loss.W_CENTER ?? 0) === 0
@@ -798,6 +833,12 @@ export function trainPassAShader(
   const useChaos = loss.W_CHAOS !== 0;
   const useIso = loss.W_ISO !== 0;
   const useDiv = loss.W_DIV !== 0;
+  const structW = loss.W_STRUCT ?? 0;
+  const useStruct = structW !== 0;
+  // Σ Fs.x², Σ Fs.y² are the isotropy covariance diagonal AND the structure
+  // term's mean‖Fs‖². One accumulation serves both; `useIso` alone reproduces
+  // the pre-W_STRUCT text byte-for-byte.
+  const useFsCov = useIso || useStruct;
   const useSpiral = loss.W_SPIRAL !== 0;
   const coverW = loss.W_COVER ?? 0;
   const useCover = coverW !== 0;
@@ -866,7 +907,11 @@ ${heads.map((h, i) => emitBwdStore(i, h, sl, maxW, enc, i === 0 ? "seed" : "accu
 
 // per-workgroup reduction scratch: vec4(Σ Fs.x², Σ Fs.y², Σ Fs.xy, Σ loss)
 // — the Fs sums run over ALL K steps' forces (isotropy batch = N·K).
-var<workgroup> red : array<vec4f, ${WG}>;
+var<workgroup> red : array<vec4f, ${WG}>;${useStruct ? `
+// SECOND moment array for W_STRUCT: (Σ Fs.x, Σ Fs.y). The structure term needs
+// the batch MEAN vector, which the covariance vec4 above has no room for, so it
+// gets its own reduction and its own partials block at [wgCount, 2·wgCount).
+var<workgroup> red2 : array<vec2f, ${WG}>;` : ""}
 
 fn mod2(p : vec2f, m : vec2f) -> vec2f { return p - floor(p / m) * m; }
 
@@ -887,7 +932,8 @@ fn fwd(@builtin(global_invocation_id) gid : vec3u,
 
   // ---------------- FORWARD: K-step rollout ----------------
   let s = gid.x;
-  var acc = vec4f(0.0);
+  var acc = vec4f(0.0);${useStruct ? `
+  var accS = vec2f(0.0);` : ""}
   if (s < n) {
     var tp : vec2f;
     var v0 = vec2f(0.0, 0.0);
@@ -938,9 +984,10 @@ fn fwd(@builtin(global_invocation_id) gid : vec3u,
       ${emitBorder(border, "p", "v", "res", "(s * 2654435761u + k) ^ (u.seed * 1103515245u)")}
       scratch[sBase + ${sl.posOff}u + (k + 1u) * 2u] = p.x;
       scratch[sBase + ${sl.posOff}u + (k + 1u) * 2u + 1u] = p.y;
-      ${useIso
+      ${useFsCov
         ? "acc = acc + vec4f(Fs.x * Fs.x, Fs.y * Fs.y, Fs.x * Fs.y, 0.0);"
-        : ""}
+        : ""}${useStruct ? `
+      accS = accS + Fs;` : ""}
     }
     let np = p;
 
@@ -991,16 +1038,21 @@ fn fwd(@builtin(global_invocation_id) gid : vec3u,
     acc = acc + vec4f(0.0, 0.0, 0.0,
                       ${sampleLoss});
   }
-  red[tid] = acc;
+  red[tid] = acc;${useStruct ? `
+  red2[tid] = accS;` : ""}
   workgroupBarrier();
   var stride = ${WG / 2}u;
   loop {
-    if (tid < stride) { red[tid] = red[tid] + red[tid + stride]; }
+    if (tid < stride) { red[tid] = red[tid] + red[tid + stride];${
+      useStruct ? " red2[tid] = red2[tid] + red2[tid + stride];" : ""
+    } }
     workgroupBarrier();
     stride = stride >> 1u;
     if (stride == 0u) { break; }
   }
-  if (tid == 0u) { partials[wgid.x] = red[0]; }
+  if (tid == 0u) { partials[wgid.x] = red[0];${
+    useStruct ? "\n    partials[u.wgCount + wgid.x] = vec4f(red2[0], 0.0, 0.0);" : ""
+  } }
 }
 
 // FINALIZE: combine the per-workgroup partials → full-batch covariance → the
@@ -1012,11 +1064,16 @@ fn finalize(@builtin(local_invocation_index) tid : u32) {
   let nkf = nf * ${K}.0;
   var acc = vec4f(0.0);
   for (var i = tid; i < u.wgCount; i = i + ${WG}u) { acc = acc + partials[i]; }
-  red[tid] = acc;
+  red[tid] = acc;${useStruct ? `
+  var accS = vec2f(0.0);
+  for (var i = tid; i < u.wgCount; i = i + ${WG}u) { accS = accS + partials[u.wgCount + i].xy; }
+  red2[tid] = accS;` : ""}
   workgroupBarrier();
   var stride = ${WG / 2}u;
   loop {
-    if (tid < stride) { red[tid] = red[tid] + red[tid + stride]; }
+    if (tid < stride) { red[tid] = red[tid] + red[tid + stride];${
+      useStruct ? " red2[tid] = red2[tid] + red2[tid + stride];" : ""
+    } }
     workgroupBarrier();
     stride = stride >> 1u;
     if (stride == 0u) { break; }
@@ -1050,7 +1107,22 @@ fn finalize(@builtin(local_invocation_index) tid : u32) {
       }
       Lcover = Lcover + best;
     }
-    lossOut[0] = lossOut[0] + ${coverW} * (Lcover / (f32(${coverM}) * coverScale));` : ""}
+    lossOut[0] = lossOut[0] + ${coverW} * (Lcover / (f32(${coverM}) * coverScale));` : ""}${useStruct ? `
+    // NORMALIZED STRUCTURE (W_STRUCT): L = (‖mean Fs‖² + ε)/(mean‖Fs‖² + ε).
+    // mean‖Fs‖² = C00 + C11 is already the isotropy trace, so the only extra
+    // batch datum is the mean VECTOR from the second partials block.
+    let msF = C00 + C11;
+    let mx = red2[0].x / nkf;
+    let my = red2[0].y / nkf;
+    let dc2 = mx * mx + my * my;
+    let sden = msF + ${STRUCT_EPS};
+    let Lstruct = (dc2 + ${STRUCT_EPS}) / sden;
+    lossOut[0] = lossOut[0] + ${structW} * Lstruct;
+    // Batch-statistic gradient the whole batch shares (bwd divides by N·K):
+    lossOut[7] = ${structW} * 2.0 * mx / sden;          // W·∂L/∂(mean Fs.x)
+    lossOut[8] = ${structW} * 2.0 * my / sden;          // W·∂L/∂(mean Fs.y)
+    lossOut[9] = -(${structW} * Lstruct / sden);        // W·∂L/∂(mean‖Fs‖²)
+    lossOut[10] = Lstruct;                              // diagnostic, unweighted` : ""}
     lossOut[1] = C00; lossOut[2] = C11; lossOut[3] = C01;
     ${useIso ? `
     lossOut[4] = 2.0 * D / (S * S) - 2.0 * Liso / S;   // dLiso/dC00
@@ -1074,7 +1146,10 @@ fn bwd(@builtin(global_invocation_id) gid : vec3u) {
   let b = maxR / (${loss.SPIRAL_TURNS}.0 * ${TWO_PI});
   let s = gid.x;
   if (s >= n) { return; }
-  let dC = vec3f(lossOut[4], lossOut[5], lossOut[6]);
+  let dC = vec3f(lossOut[4], lossOut[5], lossOut[6]);${useStruct ? `
+  // Structure's batch-statistic gradient: (∂L/∂mean Fs.x, ∂L/∂mean Fs.y,
+  // ∂L/∂mean‖Fs‖²), already weighted by W_STRUCT in finalize.
+  let dS = vec3f(lossOut[7], lossOut[8], lossOut[9]);` : ""}
   {
     let sBase = s * ${STRIDE}u;
     let np = vec2f(scratch[sBase + ${sl.posOff + 2 * K}u], scratch[sBase + ${sl.posOff + 2 * K + 1}u]);
@@ -1194,7 +1269,10 @@ fn bwd(@builtin(global_invocation_id) gid : vec3u) {
       var dFs = dpre * u.friction;
       ${useIso ? `
       dFs.x = dFs.x + ${loss.W_ISO} * (2.0 * dC.x * Fs.x + dC.z * Fs.y) / nkf;
-      dFs.y = dFs.y + ${loss.W_ISO} * (2.0 * dC.y * Fs.y + dC.z * Fs.x) / nkf;` : ""}
+      dFs.y = dFs.y + ${loss.W_ISO} * (2.0 * dC.y * Fs.y + dC.z * Fs.x) / nkf;` : ""}${useStruct ? `
+      // ∂(mean Fs)/∂Fs_i = 1/N·K ; ∂(mean‖Fs‖²)/∂Fs_i = 2·Fs_i/N·K.
+      dFs.x = dFs.x + (dS.x + 2.0 * dS.z * Fs.x) / nkf;
+      dFs.y = dFs.y + (dS.y + 2.0 * dS.z * Fs.y) / nkf;` : ""}
       let dF = dFs * u.forceMag;
       let du = ${bwdForce("dF", "k")};
       dpos = dposThroughBorder + du / res; // dL/dpos_k
@@ -1264,7 +1342,7 @@ export function trainPassBShader(
   if (t >= ${seg.floatOffset}u && t < ${seg.floatOffset + seg.floatLength}u) {
     let cell = (t - ${seg.floatOffset}u) / ${F}u;
     let f = (t - ${seg.floatOffset}u) % ${F}u;
-    for (var s = 0u; s < ub.n; s = s + 1u) {
+    for (var s = sLo; s < sHi; s = s + 1u) {
       let sBase = s * ${STRIDE}u;
       for (var site = 0u; site < ${sl.sites}u; site = site + 1u) {
         let ux = scratch[sBase + ${sl.siteInOff}u + site * 2u];
@@ -1310,7 +1388,7 @@ export function trainPassBShader(
     let local = t - ${start}u;
     let i = local / ${L.outSize}u;
     let j = local % ${L.outSize}u;
-    for (var s = 0u; s < ub.n; s = s + 1u) {
+    for (var s = sLo; s < sHi; s = s + 1u) {
       let sBase = s * ${STRIDE}u;
       let cls = u32(scratch[sBase + ${sl.clsOff}u]);
       for (var site = 0u; site < ${sl.sites}u; site = site + 1u) {
@@ -1330,7 +1408,7 @@ export function trainPassBShader(
     let local = t - ${start}u;
     let i = local / ${L.outSize}u;
     let j = local % ${L.outSize}u;
-    for (var s = 0u; s < ub.n; s = s + 1u) {
+    for (var s = sLo; s < sHi; s = s + 1u) {
       let sBase = s * ${STRIDE}u;
       for (var site = 0u; site < ${sl.sites}u; site = site + 1u) {
         g = g + ${aIn} * scratch[${hsBase} + ${sl.dOff[h][l]}u + j];
@@ -1341,7 +1419,7 @@ export function trainPassBShader(
       blocks.push(`
   if (t >= ${start}u && t < ${end}u) {
     let j = t - ${start}u;
-    for (var s = 0u; s < ub.n; s = s + 1u) {
+    for (var s = sLo; s < sHi; s = s + 1u) {
       let sBase = s * ${STRIDE}u;
       for (var site = 0u; site < ${sl.sites}u; site = site + 1u) {
         g = g + scratch[${hsBase} + ${sl.dOff[h][l]}u + j];
@@ -1360,7 +1438,7 @@ struct UB {
   t : u32,
   apply : u32,
   n : u32,
-  pad : u32,
+  chunks : u32,
 };
 @group(0) @binding(0) var<uniform> ub : UB;
 @group(0) @binding(1) var<storage, read_write> weights : array<f32>;
@@ -1370,14 +1448,41 @@ struct UB {
 @group(0) @binding(5) var<storage, read_write> adamV : array<f32>;
 ${extGradCount > 0 ? "// external game gradients, structurally separate from field loss\n@group(0) @binding(6) var<storage, read> extGrad0 : array<f32>;" : ""}
 ${extGradCount > 1 ? "@group(0) @binding(7) var<storage, read> extGrad1 : array<f32>;" : ""}
+@group(0) @binding(8) var<storage, read_write> gradPartials : array<f32>;
 
+// STAGE 1 (split-K). One thread per (weight, batch-chunk): each reduces its
+// weight over ONE SLICE of the batch, not the whole thing.
+//
+// Why: this reduction used to be a single thread per weight looping over every
+// sample, so its parallelism was totalFloats (~2.4k threads) NO MATTER the
+// batch — the batch was serial inside the thread. On a GPU that runs 1M advect
+// threads happily, that made pass B ~70% of a large-batch step (measured 10.8
+// of 15.5 ms at n=16384). Splitting the sample range across ub.chunks gives the
+// machine totalFloats x chunks threads and cuts that ~2x.
 @compute @workgroup_size(${TRAIN_WG_B})
-fn main(@builtin(global_invocation_id) gid : vec3u) {
+fn reduce(@builtin(global_invocation_id) gid : vec3u) {
   let t = gid.x;
   if (t >= ${field.totalFloats}u) { return; }
+  let per = (ub.n + ub.chunks - 1u) / ub.chunks;
+  let sLo = gid.y * per;
+  let sHi = min(sLo + per, ub.n);
   var g = 0.0;
 ${blocks.join("\n")}
 ${hasStructuralLoss ? "" : "  g = select(0.0, scratch[0], false); // retain binding 2; value is never selected"}
+  gradPartials[gid.y * ${field.totalFloats}u + t] = g;
+}
+
+// STAGE 2. Sum this step's chunk partials, add the game gradients ONCE (they
+// are per-weight, not per-sample — adding them in stage 1 would multiply them
+// by ub.chunks), then Adam. Cheap: totalFloats threads x chunks adds.
+@compute @workgroup_size(${TRAIN_WG_B})
+fn applyStep(@builtin(global_invocation_id) gid : vec3u) {
+  let t = gid.x;
+  if (t >= ${field.totalFloats}u) { return; }
+  var g = 0.0;
+  for (var c = 0u; c < ub.chunks; c = c + 1u) {
+    g = g + gradPartials[c * ${field.totalFloats}u + t];
+  }
 ${extGradCount > 0 ? "  g = g + extGrad0[t];" : ""}
 ${extGradCount > 1 ? "  g = g + extGrad1[t];" : ""}
   // Same Adam Inf/Inf guard as adversary_wgsl advOpt — a non-finite external

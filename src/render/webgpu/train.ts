@@ -28,6 +28,17 @@ import {
   type FieldLossSpec,
 } from "./train_wgsl";
 
+/**
+ * Constant-mode fraction `(dc²+ε)/(rmsF²+ε)` over the last train batch — the
+ * quantity {@link FieldLossSpec.W_STRUCT} minimizes, reported as data.
+ *
+ * `not-compiled` is a state, not an absent number: without W_STRUCT the shader
+ * never writes the slot at all.
+ */
+export type StructFraction =
+  | { readonly tag: "not-compiled" }
+  | { readonly tag: "measured"; readonly value: number };
+
 export interface TrainPhysics {
   width: number;
   height: number;
@@ -69,6 +80,18 @@ const ADAM_DEFAULTS = { beta1: 0.9, beta2: 0.999, eps: 1e-7 } as const;
 const DEFAULT_MAX_STORAGE_BINDING = 128 * 1024 * 1024;
 const DEFAULT_MAX_BUFFER = 256 * 1024 * 1024;
 
+/**
+ * Split-K tuning for pass B. Measured on a 2440-weight helmholtz layout at
+ * n=16384: 1 chunk (the old shape) 12.3 ms, 8 chunks 7.4, 256 chunks 5.9. The
+ * curve is not monotonic — more chunks also means more partials to sum and
+ * more redundant scratch passes — so cap it and size chunks by SAMPLES, which
+ * keeps small batches from paying for parallelism they cannot use.
+ */
+const MAX_GRAD_CHUNKS = 256;
+const SAMPLES_PER_GRAD_CHUNK = 64;
+/** Byte budget for the split-K partials buffer (totalFloats × chunks × 4). */
+const GRAD_PARTIAL_BUDGET = 16 * 1024 * 1024;
+
 export class FusedTrainer {
   readonly layout: FieldLayout;
   readonly weightsBuf: GPUBuffer;
@@ -85,7 +108,14 @@ export class FusedTrainer {
   private readonly pipeBwd: GPUComputePipeline;
   private readonly bglA: GPUBindGroupLayout;
   private readonly partialsBuf: GPUBuffer;
-  private readonly pipeB: GPUComputePipeline;
+  // Pass B, split-K: `reduce` fans the per-weight sample sum out over batch
+  // chunks into gradPartialsBuf, `applyStep` sums the chunks and runs Adam.
+  private readonly pipeBReduce: GPUComputePipeline;
+  private readonly pipeBApply: GPUComputePipeline;
+  private readonly bglB: GPUBindGroupLayout;
+  private readonly gradPartialsBuf: GPUBuffer;
+  /** Max batch chunks pass B may split across (buffer-bounded; see ctor). */
+  private readonly gradChunkCap: number;
   private readonly batchBuf: GPUBuffer;
   private readonly scratchBuf: GPUBuffer;
   private readonly lossBuf: GPUBuffer;
@@ -120,6 +150,10 @@ export class FusedTrainer {
   /** rollout length K — compiled into the shaders at construction */
   readonly kSteps: number;
 
+  /** Compiled {@link FieldLossSpec.W_STRUCT}; 0 ⇔ the term is absent from the
+   *  generated WGSL, which is what makes `structFraction` unmeasurable. */
+  readonly structWeight: number;
+
   constructor(
     device: GPUDevice,
     layout: FieldLayout,
@@ -146,6 +180,7 @@ export class FusedTrainer {
     this.device = device;
     this.layout = layout;
     this.kSteps = opts.kSteps ?? 1;
+    this.structWeight = opts.loss?.W_STRUCT ?? 0;
     // Resolve the batch cap ONCE, here, against the two things that really
     // bound it: the architectural MAX_BATCH and what this device will hold for
     // this layout at this K. Over-asking is CLAMPED with a warning, never fatal
@@ -217,20 +252,38 @@ export class FusedTrainer {
     this.pipeFwd = mkA("fwd");
     this.pipeFinalize = mkA("finalize");
     this.pipeBwd = mkA("bwd");
-    this.pipeB = device.createComputePipeline({
-      layout: "auto",
-      compute: {
-        module: device.createShaderModule({
-          code: trainPassBShader(layout, {
-            kSteps: this.kSteps,
-            extGradCount: extGradBuffers.length,
-            loss: opts.loss,
-            border: opts.border,
-          }),
-        }),
-        entryPoint: "main",
-      },
+    // Pass B is now TWO entry points (split-K reduce → apply) sharing one
+    // explicit bind-group layout, same idiom as pass A above: their `auto`
+    // layouts would differ because each uses a different subset of bindings.
+    this.bglB = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: COMPUTE, buffer: { type: "uniform" as const } },
+        { binding: 1, visibility: COMPUTE, buffer: rw }, // weights
+        { binding: 2, visibility: COMPUTE, buffer: ro }, // scratch
+        { binding: 3, visibility: COMPUTE, buffer: rw }, // grads
+        { binding: 4, visibility: COMPUTE, buffer: rw }, // adamM
+        { binding: 5, visibility: COMPUTE, buffer: rw }, // adamV
+        ...extGradBuffers.map((_, i) => ({
+          binding: 6 + i,
+          visibility: COMPUTE,
+          buffer: ro,
+        })),
+        { binding: 8, visibility: COMPUTE, buffer: rw }, // gradPartials
+      ],
     });
+    const plB = device.createPipelineLayout({ bindGroupLayouts: [this.bglB] });
+    const moduleB = device.createShaderModule({
+      code: trainPassBShader(layout, {
+        kSteps: this.kSteps,
+        extGradCount: extGradBuffers.length,
+        loss: opts.loss,
+        border: opts.border,
+      }),
+    });
+    const mkB = (entryPoint: string) =>
+      device.createComputePipeline({ layout: plB, compute: { module: moduleB, entryPoint } });
+    this.pipeBReduce = mkB("reduce");
+    this.pipeBApply = mkB("applyStep");
 
     const mkStorage = (bytes: number) =>
       device.createBuffer({
@@ -245,12 +298,31 @@ export class FusedTrainer {
     this.weightsBuf = opts.weightsBuffer ?? mkStorage(layout.totalFloats * 4);
     this.batchBuf = mkStorage(this.batchCap * 8);
     this.scratchBuf = mkStorage(scratchBytes(layout, this.batchCap, this.kSteps));
-    this.lossBuf = mkStorage(8 * 4);
+    // lossOut: [0]=loss [1..3]=C00/C11/C01 [4..6]=dLiso/dC [7..9]=W_STRUCT's
+    // batch-statistic gradient [10]=unweighted L_struct. Sized 16 unconditionally
+    // — the shader text stays byte-identical whether or not W_STRUCT is compiled
+    // in (that is a gated property), so the ALLOCATION must not be conditional
+    // either, or the same trainer object could not be reconfigured.
+    this.lossBuf = mkStorage(16 * 4);
     this.gradsBuf = mkStorage(layout.totalFloats * 4);
     this.adamM = mkStorage(layout.totalFloats * 4); // zero-init by spec
     this.adamV = mkStorage(layout.totalFloats * 4);
-    // one vec4 partial per fwd workgroup; ceil(batchCap / TRAIN_WG) of them.
-    this.partialsBuf = mkStorage(Math.ceil(this.batchCap / TRAIN_WG) * 16);
+    // TWO vec4 partial blocks per fwd workgroup: [0, wgCount) is the isotropy
+    // covariance + loss sum, [wgCount, 2·wgCount) is W_STRUCT's mean-force sum.
+    // Allocated unconditionally for the same reason as lossBuf above; the
+    // second block is simply never written when W_STRUCT is elided.
+    this.partialsBuf = mkStorage(Math.ceil(this.batchCap / TRAIN_WG) * 32);
+    // Split-K partials: totalFloats × chunks. Chunk count is capped so this
+    // buffer stays small — a fat hashgrid layout has many more weights, so the
+    // cap falls out of a fixed BYTE budget rather than a fixed chunk count.
+    this.gradChunkCap = Math.max(
+      1,
+      Math.min(
+        MAX_GRAD_CHUNKS,
+        Math.floor(GRAD_PARTIAL_BUDGET / (layout.totalFloats * 4))
+      )
+    );
+    this.gradPartialsBuf = mkStorage(layout.totalFloats * this.gradChunkCap * 4);
     this.uniA = device.createBuffer({
       size: 64,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -266,7 +338,7 @@ export class FusedTrainer {
 
     this.bindA = this.makeBindA();
     this.bindB = device.createBindGroup({
-      layout: this.pipeB.getBindGroupLayout(0),
+      layout: this.bglB,
       entries: [
         { binding: 0, resource: { buffer: this.uniB } },
         { binding: 1, resource: { buffer: this.weightsBuf } },
@@ -278,6 +350,7 @@ export class FusedTrainer {
           binding: 6 + i,
           resource: { buffer },
         })),
+        { binding: 8, resource: { buffer: this.gradPartialsBuf } },
       ],
     });
   }
@@ -409,6 +482,13 @@ export class FusedTrainer {
     uB[4] = Math.max(1, this.adamStep);
     uB[5] = apply ? 1 : 0;
     uB[6] = o.n;
+    // Chunk by SAMPLES so a small batch stays on one chunk (no partials
+    // overhead) and a big one spreads across the GPU.
+    const chunks = Math.max(
+      1,
+      Math.min(this.gradChunkCap, Math.ceil(o.n / SAMPLES_PER_GRAD_CHUNK))
+    );
+    uB[7] = chunks;
     this.device.queue.writeBuffer(this.uniB, 0, this.uniBData);
 
     // PASS A = three dispatches sharing this.bindA: fwd (wgA workgroups —
@@ -442,13 +522,30 @@ export class FusedTrainer {
     pBwd.setBindGroup(0, this.bindA);
     pBwd.dispatchWorkgroups(wgA);
     pBwd.end();
-    const pb = encoder.beginComputePass(
-      (tsB ? { timestampWrites: tsB } : undefined) as GPUComputePassDescriptor
+    // PASS B = split-K reduce (wgB × chunks workgroups) → applyStep (wgB). The
+    // pass boundary is the barrier applyStep needs to see every chunk partial.
+    // Timestamps span both, matching the old single-pass "optim" HUD line.
+    const wgB = Math.ceil(this.layout.totalFloats / TRAIN_WG_B);
+    const redTs = tsB
+      ? { querySet: tsB.querySet, beginningOfPassWriteIndex: tsB.beginningOfPassWriteIndex }
+      : undefined;
+    const appTs = tsB
+      ? { querySet: tsB.querySet, endOfPassWriteIndex: tsB.endOfPassWriteIndex }
+      : undefined;
+    const pbR = encoder.beginComputePass(
+      (redTs ? { timestampWrites: redTs } : undefined) as GPUComputePassDescriptor
     );
-    pb.setPipeline(this.pipeB);
-    pb.setBindGroup(0, this.bindB);
-    pb.dispatchWorkgroups(Math.ceil(this.layout.totalFloats / TRAIN_WG_B));
-    pb.end();
+    pbR.setPipeline(this.pipeBReduce);
+    pbR.setBindGroup(0, this.bindB);
+    pbR.dispatchWorkgroups(wgB, chunks);
+    pbR.end();
+    const pbA = encoder.beginComputePass(
+      (appTs ? { timestampWrites: appTs } : undefined) as GPUComputePassDescriptor
+    );
+    pbA.setPipeline(this.pipeBApply);
+    pbA.setBindGroup(0, this.bindB);
+    pbA.dispatchWorkgroups(wgB);
+    pbA.end();
   }
 
   resetAdam(): void {
@@ -479,15 +576,37 @@ export class FusedTrainer {
   readWeights(): Promise<Float32Array> {
     return this.read(this.weightsBuf, this.layout.totalFloats);
   }
-  async readLoss(): Promise<{ loss: number; C00: number; C11: number; C01: number }> {
-    const l = await this.read(this.lossBuf, 8);
-    return { loss: l[0], C00: l[1], C11: l[2], C01: l[3] };
+  async readLoss(): Promise<{
+    loss: number;
+    C00: number;
+    C11: number;
+    C01: number;
+    /** Constant-mode fraction over the train batch. `not-compiled` is a real
+     *  state, not a missing number: a shader without W_STRUCT never writes the
+     *  slot, and reporting the zero-initialized 0 would read as "all structure,
+     *  no DC" — the most flattering possible lie. */
+    structFraction: StructFraction;
+  }> {
+    const l = await this.read(this.lossBuf, 16);
+    return {
+      loss: l[0],
+      C00: l[1],
+      C11: l[2],
+      C01: l[3],
+      structFraction:
+        this.structWeight === 0
+          ? { tag: "not-compiled" }
+          : { tag: "measured", value: l[10] },
+    };
   }
 
   destroy(): void {
     const own: GPUBuffer[] = [
       this.batchBuf, this.scratchBuf, this.lossBuf, this.gradsBuf,
       this.adamM, this.adamV, this.uniA, this.uniB,
+      // partialsBuf/partDummy were already owned but missing here — same
+      // omission, fixed while adding gradPartialsBuf.
+      this.partialsBuf, this.partDummy, this.gradPartialsBuf,
     ];
     if (!this.weightsShared) own.push(this.weightsBuf);
     for (const b of own) {
