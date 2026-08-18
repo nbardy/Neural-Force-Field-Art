@@ -69,8 +69,31 @@ const MAG = Number(process.env.MAG ?? 0);
 const MAG_T = Number(process.env.MAG_T ?? 0.25);
 /**
  * λ for the TWO-SIDED anchor on the ENCODED TARGET magnitude,
- * `λ·(rms‖y‖ − ANCHOR_T)²`. This is the term the pole exploit needs: the
- * soft-angle payoff is maximized by rms‖y‖ → 0 and nothing else opposes it.
+ * `λ·(rms‖y‖ − ANCHOR_T)²`.
+ *
+ * CORRECTED 2026-08-18 — the premise this knob was built on is FALSE. It read
+ * "the soft-angle payoff is maximized by rms‖y‖ → 0 and nothing else opposes
+ * it". It is not: ψτ(0) = ψτ(0), so a predictor that also outputs 0 scores
+ * residual EXACTLY 0 and the generator earns nothing. Against a
+ * best-responding predictor the payoff is monotonically INCREASING in ‖y‖
+ * (measured, real softAngleResidual, τ=0.05): ‖y‖ = 0.0007 → 0.014,
+ * 0.05 → 0.765, 1.0 → 1.378. A bigger, more varied field pays MORE.
+ *
+ * What actually happens is on the PREDICTOR side: the embedding is scale-blind
+ * for ‖p‖ ≫ τ (that is its job — it is an angle metric), so with y = 0 the
+ * gradient pulling ‖p‖ down is 0.036 at ‖p‖ = 1 versus 19.1 at ‖p‖ = 0.01, a
+ * ~550× plateau, while the ANGLE gradient stays ≈0.94 everywhere. D can always
+ * fix its angle and effectively never its own magnitude. Measured here with the
+ * rmsY/rmsP columns: at collapse rmsY → 0.0007 (≪ τ) while rmsP → 1.9 = 38τ,
+ * having RISEN 20× on the way. A tracking D would score 0.014 there; the
+ * measured payoff is 1.36, so ~97× of it is D's failure, not the field's.
+ *
+ * TAU=0.5 control, same seed: rmsY 1.52 / rmsP 1.01 (ratio 0.67 — D tracks),
+ * payoff 0.53, AC 0.02 → 1.10, and NO collapse. Compare the τ=0.05 ratio: 2600.
+ *
+ * So this anchor treats a real symptom via a false mechanism. Kept for ablation,
+ * but the lever the evidence points at is τ (already `?advTau`), i.e. making
+ * the metric able to see magnitude at all. See the 2026-08-18 note.
  */
 const ANCHOR = Number(process.env.ANCHOR ?? 0);
 const ANCHOR_T = Number(process.env.ANCHOR_T ?? 0.3);
@@ -323,7 +346,7 @@ console.log(
     `ANCHOR=${ANCHOR}@${ANCHOR_T} seed=${SEED}`
 );
 console.log(
-  "step\tR1\tR2\t|F|\tDC\tAC\tsat\trmsCurl\trmsStrain\tOW\tDloss"
+  "step\tR1\tR2\t|F|\tDC\tAC\tsat\trmsCurl\trmsStrain\tOW\tDloss\trmsY\trmsP"
 );
 
 const rowRnd = (() => {
@@ -339,6 +362,50 @@ function uniformBatch(): tf.Tensor2D {
   const a = new Float32Array(B * 2);
   for (let i = 0; i < a.length; i++) a[i] = rowRnd();
   return tf.tensor2d(a, [B, 2]);
+}
+
+/**
+ * THE DECISIVE COLUMNS for the pole question — rms‖y‖ (encoded target) and
+ * rms‖p‖ (what the PREDICTOR actually outputs), both against τ.
+ *
+ * The received diagnosis is that a dead field MAXIMIZES the soft-angle payoff,
+ * so the generator collapses F on purpose. That is refutable arithmetic, and it
+ * is false: ψτ(0) = ψτ(0), so a predictor that also outputs 0 scores residual
+ * EXACTLY 0 and the generator earns nothing. Against a best-responding
+ * predictor the payoff is monotonically INCREASING in ‖y‖ (measured, real
+ * softAngleResidual, τ=0.05):
+ *
+ *   ‖y‖    0.0007  0.005   0.05(=τ)  0.1     0.5     1.0
+ *   payoff 0.014   0.100   0.765     1.051   1.342   1.378
+ *
+ * So a bigger, more varied field pays MORE. The √2 only appears when the
+ * predictor is stuck at ‖p‖ ≫ τ while the target sits at the pole — and the
+ * embedding is scale-blind exactly there: with y=0, |d resid/d‖p‖| is 0.036 at
+ * ‖p‖=1 versus 19.1 at ‖p‖=0.01, a ~550× plateau. D can always fix its ANGLE
+ * (gradient ≈0.94 at every magnitude) but has almost no gradient to shrink its
+ * own MAGNITUDE.
+ *
+ * So the two diagnoses make OPPOSITE predictions about this pair of columns:
+ *   generator-side pole exploit → rmsP tracks rmsY down; payoff high anyway
+ *   predictor-side scale blindness → rmsP STAYS ≫ τ while rmsY → 0
+ * Nothing else in this file distinguishes them.
+ */
+function targetAndPredMagnitude(): { rmsY: number; rmsP: number } {
+  return tf.tidy(() => {
+    const pn = uniformBatch();
+    const raw = field.forces(pn);
+    const s = adv.sampleTarget({ tag: "force", pos: pn, force: raw });
+    const rmsY = Math.sqrt(
+      s.y.square().sum(1).mean().arraySync() as number
+    );
+    // [B, K, dy] — rms over every head's predicted vector.
+    const heads = adv.predictHeads(s.u);
+    const dy = s.y.shape[1];
+    const pv = heads.slice([0, 0, 0], [-1, -1, dy]) as tf.Tensor3D;
+    const rmsP = Math.sqrt(pv.square().sum(2).mean().arraySync() as number);
+    disposeTupleSample(s);
+    return { rmsY, rmsP };
+  });
 }
 
 let lastLoss = NaN;
@@ -385,12 +452,14 @@ for (let step = 0; step <= STEPS; step++) {
 
   if (step % REPORT === 0 || step === STEPS) {
     const d = diagnostics();
+    const m = targetAndPredMagnitude();
     trace.push({ step, d, dLoss: lastLoss });
     console.log(
       `${step}\t${d.r1.toFixed(4)}\t${d.r2.toFixed(4)}\t${d.meanMag.toFixed(4)}\t` +
         `${d.dc.toFixed(4)}\t${d.ac.toFixed(4)}\t${d.sat.toFixed(3)}\t` +
         `${d.rmsCurl.toFixed(3)}\t${d.rmsStrain.toFixed(3)}\t` +
-        `${d.okuboWeiss.toFixed(4)}\t${lastLoss.toExponential(3)}`
+        `${d.okuboWeiss.toFixed(4)}\t${lastLoss.toExponential(3)}\t` +
+        `${m.rmsY.toFixed(5)}\t${m.rmsP.toFixed(5)}`
     );
   }
 }
