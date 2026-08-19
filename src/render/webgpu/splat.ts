@@ -173,6 +173,18 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       role == 2u
     );
     col = base * (0.55 + 0.45 * t);
+  } else if (u.palette == 3u) {
+    // rgb-families: EXACT R/G/B keyed on the family label — the same
+    // pcg(i ^ CLASS_SALT) % C the advect kernel and both trainers derive. The
+    // hue is the instrument here: the per-family payoff chart is only readable
+    // if "the red family" on screen is literally family 0.
+    let cls = pcg(iid ^ 2166136261u) % u.classes;
+    let base = select(
+      select(vec3f(1.0, 0.12, 0.12), vec3f(0.12, 1.0, 0.22), cls == 1u),
+      vec3f(0.22, 0.35, 1.0),
+      cls == 2u
+    );
+    col = base * (0.55 + 0.45 * t);
   } else if (u.classes > 0u) {
     // per-species base colour (cosine palette, golden-angle spaced hues),
     // brightness modulated by speed — PALETTE HOOK: swap this block for a
@@ -326,6 +338,18 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       role == 2u
     );
     col = base * (0.55 + 0.45 * t);
+  } else if (u.palette == 3u) {
+    // rgb-families: EXACT R/G/B keyed on the family label — the same
+    // pcg(i ^ CLASS_SALT) % C the advect kernel and both trainers derive. The
+    // hue is the instrument here: the per-family payoff chart is only readable
+    // if "the red family" on screen is literally family 0.
+    let cls = pcg(iid ^ 2166136261u) % u.classes;
+    let base = select(
+      select(vec3f(1.0, 0.12, 0.12), vec3f(0.12, 1.0, 0.22), cls == 1u),
+      vec3f(0.22, 0.35, 1.0),
+      cls == 2u
+    );
+    col = base * (0.55 + 0.45 * t);
   } else if (u.classes > 0u) {
     let cls = pcg(iid ^ 2166136261u) % u.classes;
     let hue = f32(cls) * 2.399963;
@@ -441,7 +465,7 @@ export interface SplatOpts {
   maxSpeed?: number;
   /** multi-species count — colours splats per class (0 = speed colouring) */
   classes?: number;
-  palette?: "speed" | "species" | "rgb-roles";
+  palette?: "speed" | "species" | "rgb-roles" | "rgb-families";
   /** per-frame trail persistence: 0 = hard clear, ~0.85-0.95 = ghost trails */
   decay?: number;
   /** linear gain on accumulated energy before the tone curve */
@@ -545,7 +569,7 @@ export class SplatRenderer {
   background: [number, number, number];
   maxSpeed: number;
   classes: number;
-  palette: "speed" | "species" | "rgb-roles";
+  palette: "speed" | "species" | "rgb-roles" | "rgb-families";
   decay: number;
   exposure: number;
   /** radial cone splat radius, CSS px (native = radius*dpr, clamped [0.75,4]) */
@@ -726,7 +750,13 @@ export class SplatRenderer {
     // beaded dash, never a 5-10fps cliff.
     this.uniF[15] = Math.max(2, Math.min(24, Math.floor(STROKE_TAP_BUDGET / (Math.max(1, n) * STROKE_TAPS_PER_SAMPLE))));
     this.uniU[16] =
-      this.palette === "rgb-roles" ? 2 : this.palette === "species" ? 1 : 0;
+      this.palette === "rgb-families"
+        ? 3
+        : this.palette === "rgb-roles"
+        ? 2
+        : this.palette === "species"
+        ? 1
+        : 0;
     this.device.queue.writeBuffer(this.uni, 0, this.uniData);
 
     const enc = encoder;

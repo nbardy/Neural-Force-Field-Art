@@ -138,6 +138,24 @@ export const ARCH = {
     alpha: 0.7,
     sirenOmega0: 6,
   },
+  /**
+   * FAMILY-CONDITIONED hashgrid — the generator sees (coordinate, family).
+   * `classes: 3` with a hashgrid encoding routes the family through the GRID
+   * (one stacked feature plane per family), so R/G/B particles can be driven by
+   * genuinely different local fields while sharing one MLP. Deeper and wider
+   * than `dualHashgrid` because the shared MLP now has to serve three fields.
+   * See advect_wgsl's `FamilyRoute`.
+   */
+  familyHashgrid: {
+    encoding: "hashgrid",
+    activation: "selu",
+    hiddenUnits: [64, 64, 64],
+    heads: 2,
+    alpha: 0.7,
+    gridSize: 32,
+    gridFeatures: 8,
+    classes: 3,
+  },
   dualHashgrid: {
     encoding: "hashgrid",
     activation: "selu",

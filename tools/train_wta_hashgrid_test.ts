@@ -246,11 +246,13 @@ console.log("\n--- 1. fusion gates ---");
   ok(built !== null, `hashgrid field is ACCEPTED by the fused adversary${err ? ` (got: ${err})` : ""}`);
   built?.destroy();
 
-  // classes are an ORTHOGONAL gap and must stay refused. layoutField itself
-  // rejects hashgrid+classes, so assert the pairing is unreachable end to end.
+  // Families on a hashgrid ARE supported now, but ONLY through stacked feature
+  // planes (`planes: C` — see tools/family_grid_test.ts). Asking for classes
+  // without the planes to hold them must still be refused end to end, because
+  // the alternative is silently indexing plane 0 for every family.
   throws(
     () => layoutField("helmholtz", [fieldDims(4), fieldDims(4)], { encoding: enc, classes: 3 }),
-    "hashgrid + classes>0 still throws (orthogonal gap, unchanged)"
+    "hashgrid + classes without matching planes still throws"
   );
   // sin predictor heads still refused (no pre-act checkpoint in adv scratch)
   throws(

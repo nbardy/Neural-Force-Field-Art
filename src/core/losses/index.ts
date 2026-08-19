@@ -9,6 +9,9 @@
  *   directionOrderLoss — polar + nematic DIRECTION order (adversary anti-collapse)
  *   directionOrderParameters — the SAME statistic as plain numbers (telemetry,
  *                      not differentiable — it dataSyncs)
+ *   constantModeFraction — (dc²+ε)/(rms‖F‖²+ε); minimizing it MAXIMIZES the
+ *                      normalized structure ac²/(ac²+dc²) (Max Structure piece)
+ *   acDcSplit        — the same AC/DC split as plain numbers (telemetry)
  *   divergencePenalty — finite-difference ∇·F (measure preservation)
  *   chaosLoss        — local finite-time Lyapunov proxy (rewards sensitivity)
  *   spectrumLoss     — best-effort power-law spectral slope shaping (optional)
@@ -18,6 +21,11 @@ export {
   directionOrderLoss,
   directionOrderParameters,
 } from "./isotropy";
+export {
+  constantModeFraction,
+  acDcSplit,
+  STRUCTURE_EPS,
+} from "./structure";
 export { divergencePenalty } from "./divergence";
 export { chaosLoss } from "./chaos";
 export { spectrumLoss } from "./spectrum";

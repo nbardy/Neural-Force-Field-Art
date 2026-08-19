@@ -58,6 +58,7 @@ import {
   borderJacobianExpr,
   emitBorder,
   encodingDim,
+  encodingPlanes,
   type BorderMode,
   type Encoding,
   type FieldLayout,
@@ -427,16 +428,23 @@ export function emitEncode(enc: Encoding): string {
     // bilinear interp of the learned grid at weights offset 0 — same indexing
     // as advect_wgsl's looped emitter and helmholtz.ts gridInterp.
     const { gridSize: gs, features: F } = enc;
-    return `fn encodeSite(uIn : vec2f, encBase : u32) {
+    // Family plane: `planes > 1` makes the table (family, y, x), so the cell
+    // index picks up `cls · gs²` and the signature grows the `cls` argument.
+    // `planes == 1` emits the pre-family text CHARACTER FOR CHARACTER — that
+    // is what keeps the shipped hashgrid pieces numerically untouched.
+    const planed = encodingPlanes(enc) > 1;
+    const clsArg = planed ? `, cls : u32` : ``;
+    const plane = planed ? `cls * ${gs * gs}u + ` : ``;
+    return `fn encodeSite(uIn : vec2f, encBase : u32${clsArg}) {
   let gxf = clamp(uIn.x, 0.0, 1.0) * ${(gs - 1).toFixed(1)};
   let gyf = clamp(uIn.y, 0.0, 1.0) * ${(gs - 1).toFixed(1)};
   let ix = u32(floor(gxf)); let iy = u32(floor(gyf));
   let fx = gxf - floor(gxf); let fy = gyf - floor(gyf);
   let ix1 = min(ix + 1u, ${gs - 1}u); let iy1 = min(iy + 1u, ${gs - 1}u);
-  let b00 = (iy * ${gs}u + ix) * ${F}u;
-  let b10 = (iy * ${gs}u + ix1) * ${F}u;
-  let b01 = (iy1 * ${gs}u + ix) * ${F}u;
-  let b11 = (iy1 * ${gs}u + ix1) * ${F}u;
+  let b00 = (${plane}iy * ${gs}u + ix) * ${F}u;
+  let b10 = (${plane}iy * ${gs}u + ix1) * ${F}u;
+  let b01 = (${plane}iy1 * ${gs}u + ix) * ${F}u;
+  let b11 = (${plane}iy1 * ${gs}u + ix1) * ${F}u;
   let w00 = (1.0 - fx) * (1.0 - fy); let w10 = fx * (1.0 - fy);
   let w01 = (1.0 - fx) * fy; let w11 = fx * fy;
   for (var fi = 0u; fi < ${F}u; fi = fi + 1u) {
@@ -542,7 +550,8 @@ export function emitBwdStore(
       ? `fn bwd_head_${h}(dOut : vec2f, base : u32) -> vec2f {`
       : enc.kind === "fourier"
       ? `fn bwd_head_${h}(dOut : vec2f, base : u32, encBase : u32) -> vec2f {`
-      : `fn bwd_head_${h}(dOut : vec2f, base : u32, uIn : vec2f, dEncBase : u32) -> vec2f {`;
+      : `fn bwd_head_${h}(dOut : vec2f, base : u32, uIn : vec2f, dEncBase : u32` +
+        `${encodingPlanes(enc) > 1 ? ", cls : u32" : ""}) -> vec2f {`;
   lines.push(sig);
   lines.push(`  var dcur : array<f32, ${maxW}>;`);
   lines.push(`  var dprev : array<f32, ${maxW}>;`);
@@ -611,6 +620,8 @@ export function emitBwdStore(
   }
   // hashgrid
   const { gridSize: gs, features: F } = enc;
+  const planed = encodingPlanes(enc) > 1;
+  const plane = planed ? `cls * ${gs * gs}u + ` : ``;
   const store = dEncMode === "seed"
     ? `scratch[dEncBase + i] = dEnc[i];`
     : `scratch[dEncBase + i] = scratch[dEncBase + i] + dEnc[i];`;
@@ -622,10 +633,10 @@ export function emitBwdStore(
   lines.push(`  let ix = u32(floor(gxf)); let iy = u32(floor(gyf));`);
   lines.push(`  let fx = gxf - floor(gxf); let fy = gyf - floor(gyf);`);
   lines.push(`  let ix1 = min(ix + 1u, ${gs - 1}u); let iy1 = min(iy + 1u, ${gs - 1}u);`);
-  lines.push(`  let b00 = (iy * ${gs}u + ix) * ${F}u;`);
-  lines.push(`  let b10 = (iy * ${gs}u + ix1) * ${F}u;`);
-  lines.push(`  let b01 = (iy1 * ${gs}u + ix) * ${F}u;`);
-  lines.push(`  let b11 = (iy1 * ${gs}u + ix1) * ${F}u;`);
+  lines.push(`  let b00 = (${plane}iy * ${gs}u + ix) * ${F}u;`);
+  lines.push(`  let b10 = (${plane}iy * ${gs}u + ix1) * ${F}u;`);
+  lines.push(`  let b01 = (${plane}iy1 * ${gs}u + ix) * ${F}u;`);
+  lines.push(`  let b11 = (${plane}iy1 * ${gs}u + ix1) * ${F}u;`);
   lines.push(`  var gx = 0.0; var gy = 0.0;`);
   lines.push(`  for (var fi = 0u; fi < ${F}u; fi = fi + 1u) {`);
   lines.push(`    let g00 = weights[b00 + fi]; let g10 = weights[b10 + fi];`);
@@ -807,9 +818,13 @@ export function trainPassAShader(
   /** stored site input u, for bwd call sites that need it (hashgrid jacobian) */
   const siteU = (site: string) =>
     `vec2f(scratch[sBase + ${sl.siteInOff}u + (${site}) * 2u], scratch[sBase + ${sl.siteInOff}u + (${site}) * 2u + 1u])`;
+  /** `, cls` on a family-planed hashgrid table; empty everywhere else. */
+  const clsArg = encodingPlanes(enc) > 1 ? `, cls` : ``;
   /** lines to run once per site before the head evals (encoded layouts only) */
   const encodeAt = (uExpr: string, site: string) =>
-    enc.kind === "raw" ? `` : `encodeSite(${uExpr}, ${encBase(site)});\n    `;
+    enc.kind === "raw"
+      ? ``
+      : `encodeSite(${uExpr}, ${encBase(site)}${clsArg});\n    `;
   const fwdCall = (h: number, uExpr: string, site: string) =>
     enc.kind === "raw"
       ? `fwd_head_${h}(${uExpr}, ${hsBase(site, h)}, cls)`
@@ -819,7 +834,7 @@ export function trainPassAShader(
       ? `bwd_head_${h}(${dExpr}, ${hsBase(site, h)})`
       : enc.kind === "fourier"
       ? `bwd_head_${h}(${dExpr}, ${hsBase(site, h)}, ${encBase(site)})`
-      : `bwd_head_${h}(${dExpr}, ${hsBase(site, h)}, ${siteU(site)}, ${dEncBase(site)})`;
+      : `bwd_head_${h}(${dExpr}, ${hsBase(site, h)}, ${siteU(site)}, ${dEncBase(site)}${clsArg})`;
   const forceAt = (uExpr: string, site: string) =>
     dual
       ? `(1.0 - u.alpha) * ${fwdCall(0, uExpr, site)} + u.alpha * ${fwdCall(1, uExpr, site)}`
@@ -1151,7 +1166,14 @@ fn bwd(@builtin(global_invocation_id) gid : vec3u) {
   // ∂L/∂mean‖Fs‖²), already weighted by W_STRUCT in finalize.
   let dS = vec3f(lossOut[7], lossOut[8], lossOut[9]);` : ""}
   {
-    let sBase = s * ${STRIDE}u;
+    let sBase = s * ${STRIDE}u;${
+      encodingPlanes(enc) > 1
+        ? `
+    // Family plane selector, re-read from the forward's store (the label is
+    // never carried across dispatches — it is derived once, in fwd).
+    let cls = u32(scratch[sBase + ${sl.clsOff}u]);`
+        : ""
+    }
     let np = vec2f(scratch[sBase + ${sl.posOff + 2 * K}u], scratch[sBase + ${sl.posOff + 2 * K + 1}u]);
 
     var dfx = vec2f(0.0);
@@ -1338,12 +1360,24 @@ export function trainPassBShader(
       // as tfjs summing coincident scatters).
       const encH = enc as Extract<Encoding, { kind: "hashgrid" }>;
       const { gridSize: gs, features: F } = encH;
+      // Family plane: a sample only ever touches ITS OWN plane, so a grid float
+      // in plane c must ignore every sample whose family is not c. Folding
+      // `cls · gs²` into the cell comparison does that with no extra branch —
+      // and a MISSING term here still runs and still trains, it just trains the
+      // wrong family's features, which is why tools/family_grid_test.ts gates
+      // plane isolation directly rather than through an aggregate cosine.
+      const planeTerm = encodingPlanes(encH) > 1 ? `cls * ${gs * gs}u + ` : ``;
+      const clsRead =
+        encodingPlanes(encH) > 1
+          ? `
+      let cls = u32(scratch[sBase + ${sl.clsOff}u]);`
+          : ``;
       blocks.push(`
   if (t >= ${seg.floatOffset}u && t < ${seg.floatOffset + seg.floatLength}u) {
     let cell = (t - ${seg.floatOffset}u) / ${F}u;
     let f = (t - ${seg.floatOffset}u) % ${F}u;
     for (var s = sLo; s < sHi; s = s + 1u) {
-      let sBase = s * ${STRIDE}u;
+      let sBase = s * ${STRIDE}u;${clsRead}
       for (var site = 0u; site < ${sl.sites}u; site = site + 1u) {
         let ux = scratch[sBase + ${sl.siteInOff}u + site * 2u];
         let uy = scratch[sBase + ${sl.siteInOff}u + site * 2u + 1u];
@@ -1353,10 +1387,10 @@ export function trainPassBShader(
         let fx = gxf - floor(gxf); let fy = gyf - floor(gyf);
         let ix1 = min(ix + 1u, ${gs - 1}u); let iy1 = min(iy + 1u, ${gs - 1}u);
         var wsum = 0.0;
-        if (iy * ${gs}u + ix == cell) { wsum = wsum + (1.0 - fx) * (1.0 - fy); }
-        if (iy * ${gs}u + ix1 == cell) { wsum = wsum + fx * (1.0 - fy); }
-        if (iy1 * ${gs}u + ix == cell) { wsum = wsum + (1.0 - fx) * fy; }
-        if (iy1 * ${gs}u + ix1 == cell) { wsum = wsum + fx * fy; }
+        if (${planeTerm}iy * ${gs}u + ix == cell) { wsum = wsum + (1.0 - fx) * (1.0 - fy); }
+        if (${planeTerm}iy * ${gs}u + ix1 == cell) { wsum = wsum + fx * (1.0 - fy); }
+        if (${planeTerm}iy1 * ${gs}u + ix == cell) { wsum = wsum + (1.0 - fx) * fy; }
+        if (${planeTerm}iy1 * ${gs}u + ix1 == cell) { wsum = wsum + fx * fy; }
         g = g + wsum * scratch[sBase + ${sl.dEncOff}u + site * ${sl.encDim}u + f];
       }
     }

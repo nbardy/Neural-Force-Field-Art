@@ -55,6 +55,7 @@ export { HelmholtzField } from "./core/field/helmholtz";
 // helmholtzChaosLoss); the standalone chaosLoss/divergencePenalty exports are
 // consumed by the legacy pages and tests, not by the gallery loop.
 import {
+  constantModeFraction,
   directionOrderLoss,
   directionOrderParameters,
   isotropyLoss,
@@ -69,18 +70,30 @@ import { AdvectKernel } from "./render/webgpu/advect";
 import type { BorderMode, FieldLayout } from "./render/webgpu/advect_wgsl";
 import { FusedTrainer } from "./render/webgpu/train";
 import { MAX_BATCH, type FieldLossSpec } from "./render/webgpu/train_wgsl";
+import { FieldProbe, type FieldHealth } from "./render/webgpu/field_probe";
+import {
+  HEALTH_GRID_N,
+  HEALTH_PERIOD_MS,
+  l2Norm,
+  type AdvHealth,
+  type HealthSnapshot,
+  type HealthWindow,
+  type PixelHealth,
+} from "./health";
 // FUSED ADVERSARY (adversary_train.ts + adversary_wgsl.ts): the WGSL port of
 // the tfjs adversary below — discriminator train + generator reward + the
 // packed raw/per-unit surprise buffer, ~0.7-0.8 ms/step at B=512 vs tfjs's
 // 19-32 ms.
 // Oracle-gated by tools/train_wta_test.ts (cos = 1.0000000 vs the AD-IR
 // oracle AND tf.variableGrads) and tools/train_wta_hashgrid_test.ts /
-// tools/train_wta_pressure_test.ts. Classless fields only; anything else falls
-// back to the tfjs path below, loudly.
+// tools/train_wta_pressure_test.ts. Classless fields AND family-PLANED
+// hashgrid fields (tools/family_grid_test.ts); one-hot class channels still
+// fall back to the tfjs path below, loudly.
 import {
   AdversaryTrainer,
   type SurpriseMetric,
   type DirectionOrder,
+  type FamilyPayoff,
 } from "./render/webgpu/adversary_train";
 import { PixelDiscTrainer } from "./render/webgpu/pixel_disc_train";
 import { classifyPixelDiscFusion } from "./render/webgpu/pixel_disc_wgsl";
@@ -304,7 +317,7 @@ export interface ArtPieceConfig {
   alphaBlend: number;
   renderer: RendererType;
   /** Explicit particle palette; Agree+Disagree uses stable exact RGB roles. */
-  palette?: "speed" | "species" | "rgb-roles";
+  palette?: "speed" | "species" | "rgb-roles" | "rgb-families";
   mode?: "standard" | "agree-disagree";
   /**
    * Legacy path: a sigmoid MLP whose `[0,1]` output is re-centered by
@@ -1197,7 +1210,14 @@ function helmholtzChaosLoss(
   }
 ): ArtPieceConfig["computeLoss"] {
   const { W_CHAOS, W_ISO, W_DIV, W_SPIRAL, HH } = spec;
-  if (W_CHAOS === 0 && W_ISO === 0 && W_DIV === 0 && W_SPIRAL === 0) {
+  const W_STRUCT = spec.W_STRUCT ?? 0;
+  if (
+    W_CHAOS === 0 &&
+    W_ISO === 0 &&
+    W_DIV === 0 &&
+    W_SPIRAL === 0 &&
+    W_STRUCT === 0
+  ) {
     return () => tf.scalar(0);
   }
   return (pos, w, h, ctx) =>
@@ -1242,11 +1262,15 @@ function helmholtzChaosLoss(
 
       const iso = isotropyLoss(force);
       const spiral = spiralLoss(pos, w, h);
+      // Same measure the fused W_STRUCT uses: the PHYSICAL force (post
+      // forceMagnitude), exactly as isotropyLoss above — Fs in the shader.
+      const struct = constantModeFraction(force);
 
       return chaos
         .mul(W_CHAOS)
         .add(iso.mul(W_ISO))
         .add(div.mul(W_DIV))
+        .add(struct.mul(W_STRUCT))
         .add(spiral.mul(W_SPIRAL))
         .asScalar();
     });
@@ -1494,6 +1518,13 @@ export type AdversaryTelemetry =
        * read as "perfectly isotropic" on a piece that may be fully laminar.
        */
       readonly directionOrder: DirectionOrder;
+      /**
+       * Payoff split by particle FAMILY. `unmeasured` on every piece except a
+       * family-conditioned one played on a point observer — the tfjs trainer
+       * has no family input at all, and a relational observer's tuples can mix
+       * families. See AdvStats.perFamily.
+       */
+      readonly perFamily: FamilyPayoff;
       /**
        * The payoff value that means "the encoded target has gone to zero", for
        * objectives whose residual is bounded by a fixed chord. See
@@ -1798,6 +1829,9 @@ export function adversaryTrainStep(
         surprise,
         predLoss: report.loss,
         directionOrder,
+        // The tfjs field REFUSES a family label (HelmholtzField.forces throws
+        // for classes > 0), so this arm can never have a per-family split.
+        perFamily: { tag: "unmeasured" },
         payoffReference: payoffReferenceOf(rt.adv.cfg.loss),
         winFractions,
         health: classifyHeads(winsSkewed, rt.spread, rt.adv.rewardScaleState()),
@@ -1885,6 +1919,50 @@ export const MAX_CHAOS_FIELD_LOSS: FieldLossSpec = {
   W_CHAOS: 1,
   W_ISO: 1,
   W_DIV: 0.5,
+  W_SPIRAL: 0,
+  W_COVER: 0,
+  W_CENTER: 0,
+  HH: 1e-2,
+  SPIRAL_TURNS: 3,
+};
+
+/**
+ * NORMALIZED STRUCTURE ↑ plus a small divergence anchor — the "Neural Field ·
+ * Max Structure" objective.
+ *
+ * `W_STRUCT: 1` is the natural scale: L_struct is exactly [0,1] (Jensen), so a
+ * weight of 1 means "one loss unit between a pure-DC field and a pure-AC one"
+ * and there is nothing to tune against.
+ *
+ * `W_DIV: 0.6` is NOT decoration, and it is the one number here that was tuned
+ * rather than derived. TUNED AGAINST WHAT, MEASURED:
+ *
+ * The structure ratio is scale-invariant in VALUE but its gradient is not
+ * amplitude-neutral. `∂L/∂(mean‖Fs‖²) = −L/(ms+ε)` is negative, so the descent
+ * direction contains a component that GROWS every force — small (it is
+ * proportional to L, and L falls to ~0.001 once the DC mode is gone) but
+ * systematic, and Adam renormalizes small-but-systematic into full-size steps.
+ * Left alone the field random-walks its amplitude up until tanh clips.
+ *
+ * Live measurement, `tools/health_audit.mjs struct`, satFrac after 60–120 s
+ * (satFrac = fraction of the domain with BOTH tanh components past ±0.9):
+ *
+ *     W_DIV 0.05, lr 0.003  →  0.00 on one run, **0.35** on another (frozen)
+ *     W_DIV 0.3,  lr 0.003  →  0.00 and 0.14
+ *     W_DIV 0.6,  lr 0.002  →  **0.00 and 0.00**, ac 0.62–0.70, dc/ac 0.04–0.21
+ *
+ * Init is unseeded (tfjs glorot), so this is genuinely run-to-run: a single
+ * healthy run does NOT clear a weight here. `div_i = (∇·F)²` is UNNORMALIZED
+ * and grows with the field's derivatives, which is exactly why it is the
+ * available counterweight to an amplitude drift — and why it must not go much
+ * higher, or the piece becomes a divergence-free piece that happens to import
+ * W_STRUCT.
+ */
+export const MAX_STRUCTURE_FIELD_LOSS: FieldLossSpec = {
+  W_CHAOS: 0,
+  W_ISO: 0,
+  W_DIV: 0.6,
+  W_STRUCT: 1,
   W_SPIRAL: 0,
   W_COVER: 0,
   W_CENTER: 0,
@@ -2316,16 +2394,17 @@ export const GALLERY: ArtPieceConfig[] = [
     pixelDisc: {
       kind: "vec-field",
       weight: 0.04,
-      // COST, not taste: the critic kernels are workgroup_size(1), so one GPU
-      // thread walks all G² cells. G=16 measured 17-37 ms/step on an M-series
-      // desktop GPU (tools/pixel_disc_cost_probe.ts) — more than the whole
-      // 16 ms frame budget, which is what made these pieces look frozen on a
-      // phone. G=8 is 4-11 ms. Raise G only after criticDisc/criticGen are
-      // parallelized across the workgroup; until then G is a frame-time dial.
-      G: 8,
-      E: 4,
-      K: 8,
-      hidden: 16,
+      // G was briefly dropped to 8 because criticDisc/criticGen were
+      // workgroup_size(1) — one GPU thread walked all G² cells, and G=16 cost
+      // 17-37 ms/step against a ~16 ms frame budget, which is what made these
+      // pieces look frozen on a phone. Those kernels are now workgroup-parallel
+      // (cell-parallel activations, weight-parallel gradients), so G=16 measures
+      // 1.2-1.5 ms/step — indistinguishable from G=8 — and the full-resolution
+      // density grid is back. tools/pixel_disc_cost_probe.ts gates this.
+      G: 16,
+      E: 8,
+      K: 16,
+      hidden: 32,
       dt: 0.15,
     },
     fieldLoss: ZERO_FIELD_LOSS,
@@ -2349,16 +2428,17 @@ export const GALLERY: ArtPieceConfig[] = [
     pixelDisc: {
       kind: "next-frame",
       weight: 0.04,
-      // COST, not taste: the critic kernels are workgroup_size(1), so one GPU
-      // thread walks all G² cells. G=16 measured 17-37 ms/step on an M-series
-      // desktop GPU (tools/pixel_disc_cost_probe.ts) — more than the whole
-      // 16 ms frame budget, which is what made these pieces look frozen on a
-      // phone. G=8 is 4-11 ms. Raise G only after criticDisc/criticGen are
-      // parallelized across the workgroup; until then G is a frame-time dial.
-      G: 8,
-      E: 4,
-      K: 8,
-      hidden: 16,
+      // G was briefly dropped to 8 because criticDisc/criticGen were
+      // workgroup_size(1) — one GPU thread walked all G² cells, and G=16 cost
+      // 17-37 ms/step against a ~16 ms frame budget, which is what made these
+      // pieces look frozen on a phone. Those kernels are now workgroup-parallel
+      // (cell-parallel activations, weight-parallel gradients), so G=16 measures
+      // 1.2-1.5 ms/step — indistinguishable from G=8 — and the full-resolution
+      // density grid is back. tools/pixel_disc_cost_probe.ts gates this.
+      G: 16,
+      E: 8,
+      K: 16,
+      hidden: 32,
       dt: 0.15,
     },
     fieldLoss: ZERO_FIELD_LOSS,
@@ -2382,16 +2462,17 @@ export const GALLERY: ArtPieceConfig[] = [
     pixelDisc: {
       kind: "real-fake",
       weight: 0.03,
-      // COST, not taste: the critic kernels are workgroup_size(1), so one GPU
-      // thread walks all G² cells. G=16 measured 17-37 ms/step on an M-series
-      // desktop GPU (tools/pixel_disc_cost_probe.ts) — more than the whole
-      // 16 ms frame budget, which is what made these pieces look frozen on a
-      // phone. G=8 is 4-11 ms. Raise G only after criticDisc/criticGen are
-      // parallelized across the workgroup; until then G is a frame-time dial.
-      G: 8,
-      E: 4,
-      K: 8,
-      hidden: 16,
+      // G was briefly dropped to 8 because criticDisc/criticGen were
+      // workgroup_size(1) — one GPU thread walked all G² cells, and G=16 cost
+      // 17-37 ms/step against a ~16 ms frame budget, which is what made these
+      // pieces look frozen on a phone. Those kernels are now workgroup-parallel
+      // (cell-parallel activations, weight-parallel gradients), so G=16 measures
+      // 1.2-1.5 ms/step — indistinguishable from G=8 — and the full-resolution
+      // density grid is back. tools/pixel_disc_cost_probe.ts gates this.
+      G: 16,
+      E: 8,
+      K: 16,
+      hidden: 32,
       dt: 0.15,
     },
     fieldLoss: ZERO_FIELD_LOSS,
@@ -2415,16 +2496,17 @@ export const GALLERY: ArtPieceConfig[] = [
     pixelDisc: {
       kind: "inpaint",
       weight: 0.04,
-      // COST, not taste: the critic kernels are workgroup_size(1), so one GPU
-      // thread walks all G² cells. G=16 measured 17-37 ms/step on an M-series
-      // desktop GPU (tools/pixel_disc_cost_probe.ts) — more than the whole
-      // 16 ms frame budget, which is what made these pieces look frozen on a
-      // phone. G=8 is 4-11 ms. Raise G only after criticDisc/criticGen are
-      // parallelized across the workgroup; until then G is a frame-time dial.
-      G: 8,
-      E: 4,
-      K: 8,
-      hidden: 16,
+      // G was briefly dropped to 8 because criticDisc/criticGen were
+      // workgroup_size(1) — one GPU thread walked all G² cells, and G=16 cost
+      // 17-37 ms/step against a ~16 ms frame budget, which is what made these
+      // pieces look frozen on a phone. Those kernels are now workgroup-parallel
+      // (cell-parallel activations, weight-parallel gradients), so G=16 measures
+      // 1.2-1.5 ms/step — indistinguishable from G=8 — and the full-resolution
+      // density grid is back. tools/pixel_disc_cost_probe.ts gates this.
+      G: 16,
+      E: 8,
+      K: 16,
+      hidden: 32,
       dt: 0.15,
     },
     fieldLoss: ZERO_FIELD_LOSS,
@@ -2528,8 +2610,8 @@ export const GALLERY: ArtPieceConfig[] = [
   // DEFAULT_PIECE_INDEX below), a renumber is not. New pieces go at the end.
   {
     // THE DEFAULT PIECE (see DEFAULT_PIECE_NAME). The Pair WTA K=4 game — the
-    // SE(2)-canonicalized pair observer with the explicit soft-angle payoff,
-    // which is what makes the swirls — moved onto the HASHGRID dual field.
+    // SE(2)-canonicalized pair observer with an explicit ANGULAR payoff, which
+    // is what makes the swirls — moved onto the HASHGRID dual field.
     // The grid's local features give the generator per-cell freedom instead of
     // one global MLP surface, so the hard-to-predict structure lands as fine
     // filaments; α stays at the Pair piece's 0.55 so the position ENCODING is
@@ -2550,15 +2632,31 @@ export const GALLERY: ArtPieceConfig[] = [
     // Curl strokes are the point of this piece, so it colours by velocity with
     // ghost trails. (The RAW/PER-UNIT surprise diagnostic is fused-only; it now
     // WOULD be available here, but the stroke still wins the render pass.)
+    //
+    // ── PROMOTED GREAT WORK ────────────────────────────────────────────────
+    // `drive`, `learningRate` and the angle+relative-scale `loss` below are a
+    // CAPTURED LIVE TUNING, not chosen numbers: see GREAT_WORKS.md, entry
+    // "Adversary · Pair · HashGrid · Curl — ink swirls" (commit b72aa54),
+    // which holds the whole dock recipe plus its `?dock=` restore link. Keep
+    // the two in step. Two of the recorded dials have NO piece field to be
+    // promoted INTO, so the link stays the only way to get them back:
+    //   · discriminator lr 7.2e-4 — `?dLR=` only; startLoop defaults to 3e-3.
+    //   · border RESET — the dock hardcodes `{tag:"wrap"}` in defaultsForPiece
+    //     (src/index.tsx) and always passes it down as an override, so this
+    //     piece still OPENS ON WRAP however this entry is written.
+    // (Train B 256 needs no field: it is already startLoop's sampleRate.)
     name: "Adversary · Pair · HashGrid · Curl",
     particleCount: 70000,
     friction: 0.97,
-    drive: 0.65,
-    forceMagnitude: forceMagnitudeForDrive(0.65, 24, 0.97),
+    drive: 0.9,
+    // DERIVED from drive — the two move TOGETHER. Editing `drive` alone
+    // silently keeps the old force scale (cfg.forceMagnitude is what a
+    // no-dock, no-`?drive` start uses before resolveLiveGameControls agrees).
+    forceMagnitude: forceMagnitudeForDrive(0.9, 24, 0.97),
     maxVelocity: 24,
     resetRate: 0.003,
     drawRate: 2,
-    learningRate: 0.001,
+    learningRate: 0.0048,
     backgroundColor: [2, 3, 9],
     alphaBlend: 0.05,
     renderer: "alpha-fade",
@@ -2572,16 +2670,163 @@ export const GALLERY: ArtPieceConfig[] = [
       kind: { tag: "wta", k: 4, relaxEps: 0.05 },
       encoding: { tag: "pair-rotation-scale-adjusted" },
       // Explicit — do not rely only on the legacy encoding→soft-angle alias.
-      // Soft-angle (direction-only) is what made the pair swirls; raw-vector
-      // on this observer collapses into amplitude / shear cheats.
+      // The ANGULAR term (direction-only) is what made the pair swirls;
+      // raw-vector on this observer collapses into amplitude / shear cheats.
+      // Relative-scale adds a local, homogeneous log-magnitude descriptor on
+      // top, and the energy anchor holds ABSOLUTE rms so the generator cannot
+      // buy that extra variance by blowing the field up — together they are
+      // what stretch the swirls into long laminar filaments.
+      //
+      // LITERALS, deliberately, not ADVERSARY_OBJECTIVE_DEFAULTS.* (which
+      // coincide with them today): these four are RECORDED values from the
+      // GREAT_WORKS.md capture noted above, so they must not silently drift
+      // when a shared default moves.
       loss: {
-        tag: "soft-angle",
-        tau: ADVERSARY_OBJECTIVE_DEFAULTS.tau,
+        tag: "angle-relative-scale",
+        tau: 0.05,
+        scaleWeight: 0.5,
+        energyWeight: 0.1,
+        energyTarget: 0.35,
       },
       weight: 0.015, // reward units — see the note on the Single piece
       // Anti-collapse: the soft-angle north pole pays the generator 3.15x
       // more for a DEAD field than for a varied one, so every adversarial
       // piece prices direction order. See GALLERY_ANTI_COLLAPSE.
+      pressure: GALLERY_ANTI_COLLAPSE,
+    },
+    fieldLoss: ZERO_FIELD_LOSS,
+    computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
+  },
+  {
+    // THE ONE PIECE THAT OPTIMIZES STRUCTURE DIRECTLY.
+    //
+    // Every other piece in this gallery treats AC/DC as an OBSERVATION (see
+    // src/health.ts): on the adversarial pieces nothing may feed the structure
+    // metrics into a loss, because the whole claim under test is that a healthy
+    // game raises them by itself. This piece is the control experiment for that
+    // claim — it asks the field for the structure directly and shows what the
+    // objective alone buys.
+    //
+    // WHY NORMALIZED, NOT RAW VARIANCE. The obvious objective is "maximize
+    // AC = rms‖F − mean F‖". It does not work, and the reason is not subtle:
+    // AC is homogeneous of degree 1 in F, so scaling every force by c scales AC
+    // by c. Maximizing it is therefore satisfied by GROWING THE FIELD, not by
+    // structuring it — the optimizer walks straight into tanh saturation
+    // (satFrac 0.46 on the measured collapse baseline) and stops, having
+    // acquired zero new spatial features. What this piece maximizes is the
+    // SCALE-INVARIANT fraction
+    //
+    //     ac² / (ac² + dc²) = 1 − L_struct,   L_struct = (dc²+ε)/(rmsF²+ε)
+    //
+    // which is unchanged by F → cF, so the only way to move it is to trade
+    // global constant push for spatial variation. See FieldLossSpec.W_STRUCT.
+    //
+    // W_DIV pairs with it for two reasons, one aesthetic and one numerical.
+    // Aesthetic: the structure term has no opinion about the local CHARACTER of
+    // the variation, and a compressible field satisfies it perfectly well by
+    // building sinks that eat the cloud. Numerical: it is the counterweight to
+    // this objective's Adam amplitude drift, and its weight was MEASURED against
+    // exactly that — see MAX_STRUCTURE_FIELD_LOSS. Chaos/isotropy are
+    // deliberately NOT stacked on: the Late Lesson from the collapse
+    // investigation is that piling terms on produces a field optimized for the
+    // sum and legible as none of them.
+    name: "Neural Field · Max Structure",
+    particleCount: 200000,
+    friction: 0.985,
+    forceMagnitude: 4.5,
+    maxVelocity: 24,
+    resetRate: 0.006,
+    drawRate: 2,
+    // 0.002, not Max Chaos's 0.01: see MAX_STRUCTURE_FIELD_LOSS on the Adam
+    // amplitude drift this objective has once the DC mode is gone.
+    learningRate: 0.002,
+    backgroundColor: [3, 2, 14],
+    alphaBlend: 0.05,
+    renderer: "alpha-fade",
+    // Same ink as the default piece: curl strokes draw each particle's curved
+    // per-frame trajectory, so the structure reads as filaments rather than a
+    // dot cloud — which is the entire point of a piece about structure.
+    stroke: "curl",
+    fieldArch: { ...ARCH.dualStd, alpha: 0.7 },
+    archEditable: true,
+    archDock: "dual",
+    lookEditable: true,
+    fieldLoss: MAX_STRUCTURE_FIELD_LOSS,
+    computeLoss: helmholtzChaosLoss(MAX_STRUCTURE_FIELD_LOSS),
+  },
+  {
+    // RGB FAMILIES — the first piece where the generator is conditioned on
+    // something the DISCRIMINATOR CANNOT SEE.
+    //
+    // Every other adversarial piece plays a game over one field: the predictor
+    // observes a context u and the field answers with one signal, so a
+    // sufficiently strong predictor can in principle drive the residual toward
+    // its approximation error. Here each particle carries a FAMILY label
+    // c ∈ {R, G, B} (derived, never stored: pcg(i ^ CLASS_SALT) % 3) and the
+    // generator is F(x, c) — a hashgrid with one feature plane per family, so
+    // the three fields can differ CELL BY CELL. The predictor's context is the
+    // POINT observer: the coordinate alone. It never receives c.
+    //
+    // WHY THAT IS A DIFFERENT GAME. P(F | x) is now a 3-mode mixture, and the
+    // generator is paid for the modes being far apart — for two families
+    // wanting opposite things at the same place. The relaxed-WTA predictor
+    // answers with K hypotheses, so the whole game is set by K vs the family
+    // count:
+    //
+    //   K >= 3  the predictor can park one head per family and the conditioning
+    //           buys the generator nothing — an ordinary single-field game.
+    //   K == 2  (SHIPPED) the predictor structurally cannot cover three modes.
+    //           One family is always the mispredicted one, and the generator is
+    //           paid to keep it that way — which family that is, and whether the
+    //           role rotates, is the question the HUD's per-family row answers.
+    //   K == 1  the predictor must answer with the mean, so all three families
+    //           spread symmetrically. The stable, least interesting corner.
+    //
+    // K is live (?advK / the dock slider), so sweeping 1→4 with the per-family
+    // chart open is the experiment this piece exists for.
+    //
+    // The per-family instrument REQUIRES the point observer: with m = 1 a tuple
+    // has exactly one family, so attributing its payoff is exact. On a pair/tri
+    // observer a tuple can mix families and AdvStats.perFamily correctly reports
+    // `unmeasured` rather than inventing a bucketing rule — see
+    // familyInstrument (adversary_wgsl.ts).
+    //
+    // Colour IS the instrument: palette "rgb-families" paints family 0/1/2 as
+    // exact R/G/B from the same hash the kernels use, so "the green family
+    // stopped fighting" is a thing you can see as well as read.
+    //
+    // Design + gates: agent_notes/2026-08-19_family_conditioned_hashgrid_adversary.md
+    name: "Adversary · RGB Families · HashGrid",
+    particleCount: 90000,
+    friction: 0.97,
+    drive: 0.6,
+    forceMagnitude: forceMagnitudeForDrive(0.6, 24, 0.97),
+    maxVelocity: 24,
+    resetRate: 0.004,
+    drawRate: 2,
+    learningRate: 0.001,
+    backgroundColor: [3, 3, 8],
+    alphaBlend: 0.05,
+    renderer: "alpha-fade",
+    // Curl strokes, same as the default piece: three interleaved families read
+    // as three inks only if each particle draws its trajectory rather than a dot.
+    stroke: "curl",
+    palette: "rgb-families",
+    createField: () => createFieldFromArch(ARCH.familyHashgrid),
+    adversary: {
+      tag: "on",
+      kind: { tag: "wta", k: 2, relaxEps: 0.05 },
+      encoding: { tag: "point" },
+      // Direction-only, like every other shipped game: raw-vector on a point
+      // observer collapses into amplitude cheats.
+      loss: {
+        tag: "soft-angle",
+        tau: ADVERSARY_OBJECTIVE_DEFAULTS.tau,
+      },
+      weight: 0.012, // reward units — see the note on the Single piece
+      // Anti-collapse: the soft-angle north pole pays the generator 3.15x more
+      // for a DEAD field than for a varied one. It matters MORE here — three
+      // families all going quiet is a cheap way to be unpredictable.
       pressure: GALLERY_ANTI_COLLAPSE,
     },
     fieldLoss: ZERO_FIELD_LOSS,
@@ -2868,6 +3113,10 @@ export interface LoopHandle {
   /** Normalisation window of the selected fused surprise plane plus exact cloud
    *  coverage. `null` for velocity/RGB or an oracle-only tfjs path. */
   getSurpriseSpan(): { lo: number; mid: number; hi: number; covered: number; collapsed: boolean } | null;
+  /** Latest ~1 Hz field-grid measurement (AC/DC/saturation/Okubo–Weiss).
+   *  `{tag:"unprobed"}` until the first readback lands — a real state, so the
+   *  chart shows a gap rather than a run of zeros that reads as a dead field. */
+  getFieldHealth(): FieldHealth;
 }
 
 export interface StartLoopOptions {
@@ -3039,6 +3288,19 @@ export function startLoop(
   let trainSource: "particles" | "random" = "particles";
   let mixRandom = 0;
   let hudLoss = NaN;
+  // ---- health instrumentation (OBSERVATION ONLY — see src/health.ts) -------
+  // The field probe reads the SAME packed weights the advect kernel draws from,
+  // so it works identically on the fused and tfjs trainer paths. It runs on its
+  // own encoder, on a ~1 Hz timer, and writes to buffers nothing else reads:
+  // the hot path stays one encodeStep encoder → one queue.submit.
+  let fieldProbe: FieldProbe | null = null;
+  let fieldHealth: FieldHealth = { tag: "unprobed" };
+  /** L2 of the pixel critic's external field gradient; NaN until the first
+   *  1 Hz readback lands. Read-only — this never re-enters the buffer. */
+  let pixelExtGradNorm = NaN;
+  let pixelExtGradPending = false;
+  let lastHealthMs = 0;
+  const loopStartMs = performance.now();
   // The shared GPUDevice (tfjs's) and the optional GPU profiler. Assigned in
   // the async init once the webgpu backend is confirmed; timer is null when the
   // adapter lacks "timestamp-query" (→ HUD falls back to CPU-encode lines).
@@ -3090,6 +3352,116 @@ export function startLoop(
     emaTrain = 0,
     emaRender = 0,
     lastT = performance.now();
+
+  /**
+   * ADVERSARY block of the health snapshot, from the EXACT floats each trainer
+   * produces — not from the HUD, and not from the aggregated telemetry record.
+   *
+   * The fused arm reads `AdversaryTrainer.lastStats` directly, so `payoff` and
+   * `payoffUngated` are the two independent readback slots rather than one
+   * number printed twice; their disagreement is the nonfinite canary the audit
+   * gates on. The tfjs arm has no gate and no batch-RMS slot, so it reports a
+   * DIFFERENT shape rather than padding the missing fields with zeros.
+   */
+  function advHealthBlock(): AdvHealth | null {
+    // Dispatch on the RUNTIME, not on "did lastStats happen to be there". A
+    // fused piece whose first readback has not landed must report `null` (no
+    // sample yet), never a tfjs-shaped record — the audit reads `trainer` to
+    // decide whether the payoffUngated canary is even applicable.
+    if (advRt.tag !== "on") return null;
+    const t = advTele;
+    if (t.tag === "off") return null;
+    const order = t.directionOrder;
+    // `unmeasured` → null, never 0: a zero R₁ reads as "perfectly isotropic",
+    // which is the exact opposite of what an unmeasured collapsed field is.
+    const r1 = order.tag === "measured" ? order.r1 : null;
+    const r2 = order.tag === "measured" ? order.r2 : null;
+    if (advRt.implementation === "fused") {
+      // Lane A only on the two-lane Agree+Disagree game — the same choice
+      // `AdversaryTelemetry.directionOrder` documents: each lane prices its OWN
+      // field head, so a blended payoff/R₁ is not a statistic anything computes
+      // and inventing one would be a lie. Lane B is visible in the HUD.
+      const stats = advTrainer?.lastStats;
+      if (!stats) return null;
+      return {
+        trainer: "fused",
+        payoff: stats.surprise,
+        payoffUngated: stats.payoffUngated,
+        surprise: stats.surprise,
+        r1,
+        r2,
+        batchRms: stats.batchRms,
+        heads: [...stats.winCounts],
+      };
+    }
+    return {
+      trainer: "tfjs",
+      payoff: t.surprise,
+      surprise: t.surprise,
+      r1,
+      r2,
+      heads: [...t.winFractions],
+    };
+  }
+
+  /** PIXEL CRITIC block. `extGradNorm` is the 1 Hz readback of the buffer the
+   *  critic hands the field trainer — an observation of the gradient, never a
+   *  write to it. */
+  function pixelHealthBlock(): PixelHealth | null {
+    const s = pixelDiscTrainer?.lastStats;
+    if (!s) return null;
+    return {
+      dLoss: s.discLoss,
+      gLoss: s.genLoss,
+      extGradNorm: Number.isFinite(pixelExtGradNorm) ? pixelExtGradNorm : null,
+    };
+  }
+
+  /**
+   * Publish `window.__nffHealth` and kick the two async 1 Hz readbacks.
+   *
+   * Both readbacks are FIRE-AND-FORGET into local state: awaiting them here
+   * would put a pipeline sync inside `tick`, which is the one thing the fused
+   * path exists to avoid. A late sample simply lands in the next snapshot.
+   */
+  function publishHealth(nowMs: number): void {
+    if (fieldProbe && advect) {
+      const alpha = field ? (field as HelmholtzField).alpha : 0;
+      void fieldProbe
+        .sample(alpha)
+        .then((m) => {
+          if (m) fieldHealth = { tag: "measured", metrics: m };
+        })
+        .catch((e: unknown) => {
+          console.warn(`[health] field probe failed — ${String(e)}`);
+        });
+    }
+    if (pixelDiscTrainer && !pixelExtGradPending) {
+      pixelExtGradPending = true;
+      void pixelDiscTrainer
+        .readExtGrads()
+        .then((g) => {
+          pixelExtGradNorm = l2Norm(g);
+        })
+        .catch(() => {})
+        .finally(() => {
+          pixelExtGradPending = false;
+        });
+    }
+    const snapshot: HealthSnapshot = {
+      piece: cfg.name,
+      frame,
+      t: (nowMs - loopStartMs) / 1000,
+      fps: emaFrame > 0 ? 1000 / emaFrame : 0,
+      learnMs: emaTrain,
+      backend: tf.getBackend(),
+      trainer: trainer ? "fused" : "tfjs",
+      adv: advHealthBlock(),
+      field: fieldHealth.tag === "measured" ? fieldHealth.metrics : null,
+      pixel: pixelHealthBlock(),
+    };
+    (window as unknown as HealthWindow).__nffHealth = snapshot;
+  }
 
   /**
    * Adversary block of the telemetry HUD. Prints the two numbers that can lie
@@ -3485,6 +3857,10 @@ export function startLoop(
           // the direction order of its OWN field head, so there is no single
           // blended R₁ in the stats and inventing one would be a lie.
           directionOrder: stA.directionOrder,
+          // Lane A's, for the same reason directionOrder is: each lane prices
+          // its own field head. Single-lane games (every family piece today)
+          // have only lane A anyway.
+          perFamily: stA.perFamily,
           payoffReference:
             advSpec.tag === "on"
               ? payoffReferenceOf(adversaryLossOf(advSpec))
@@ -3655,6 +4031,14 @@ export function startLoop(
         head + body + adversaryHudLines() + `tensors ${tf.memory().numTensors}`;
     }
 
+    // ~1 Hz health snapshot. AFTER the HUD block on purpose: the snapshot is
+    // built from the same EMAs the HUD just refreshed, so the two can never
+    // disagree about a frame.
+    if (now - lastHealthMs >= HEALTH_PERIOD_MS) {
+      lastHealthMs = now;
+      publishHealth(now);
+    }
+
     requestAnimationFrame(tick);
   }
 
@@ -3748,6 +4132,17 @@ export function startLoop(
       ? AdvectKernel.fromField(field as HelmholtzField, physics, particleCount)
       : AdvectKernel.fromModel(model!, physics, particleCount);
 
+    // Health probe on the advect kernel's OWN weights buffer — the one buffer
+    // that is current on both trainer paths (born there when fused, synced
+    // every frame by advect.encodeStep when tfjs). Diagnostics only: separate
+    // encoder, separate buffers, ~1 Hz. See src/health.ts.
+    fieldProbe = new FieldProbe(
+      device!,
+      advect.layout,
+      advect.weightsBuffer,
+      HEALTH_GRID_N
+    );
+
     // Field pieces train FUSED by default: the trainer co-owns the advect
     // kernel's weights buffer and Adam-updates it in place — weights never
     // leave the GPU. tfjs remains only as the (idle) blueprint. Legacy MLP
@@ -3800,7 +4195,16 @@ export function startLoop(
     // grid block, gated vs live tfjs autograd in tools/train_wta_hashgrid_test.ts.
     // Class-aware fields and ?train=tfjs keep the tfjs autograd path, and the
     // loop says which one it picked out loud.
-    const adversaryDisabled = advSpec.tag === "on" && fieldClasses > 0;
+    // FAMILY-CONDITIONED FIELDS ARE NOT "class-aware fields" for this gate.
+    // The blocker was never the family label — it was the ONE-HOT ROUTE, whose
+    // extra layer-0 rows the adversary's field backward has no counterpart for.
+    // A family-PLANED hashgrid moves the label into the grid's cell index, so
+    // it rides the dEnc machinery the reward already uses and the fused game is
+    // exact. `familyRoute` (advect_wgsl) is the single place that distinction
+    // is made; this reads it rather than re-deriving it from `classes`.
+    const familyRouteTag = advect.layout.family.tag;
+    const adversaryDisabled =
+      advSpec.tag === "on" && familyRouteTag === "onehot";
     // THE ANTI-COLLAPSE PRESSURE IS NOW FUSED (2026-08-17). It compiles into
     // adversary pass A as a compile-time variant and rides the generator's own
     // dSig seam, so it reaches every encoding through the machinery the reward
@@ -3814,7 +4218,7 @@ export function startLoop(
       !adversaryDisabled &&
       !!field &&
       !wantTfjsTrainer &&
-      advect.layout.classes === 0;
+      familyRouteTag !== "onehot";
     const agreeDisagreeField = advect.layout.spec.kind === "agree-disagree";
     if (
       (agreeDisagreeGame && !agreeDisagreeField) ||
@@ -3828,9 +4232,10 @@ export function startLoop(
     }
     if (adversaryDisabled) {
       console.warn(
-        "[adversary] disabled for class-conditioned fields: class identity is " +
-          "not yet part of the predictor context, so enabling it would create " +
-          "fake hidden-state surprise."
+        "[adversary] disabled for ONE-HOT class-conditioned fields: the extra " +
+          "layer-0 rows have no counterpart in the fused field backward. A " +
+          "family-PLANED hashgrid (FamilyRoute 'grid-plane') is supported and " +
+          "is what the RGB Families piece uses."
       );
       advRt = { tag: "off" };
     } else if (fusedAdvOk) {
@@ -4336,6 +4741,7 @@ export function startLoop(
                 collapsed: advSurStats.norm.collapsed,
               }
             : null,
+        getFieldHealth: () => fieldHealth,
       });
     }
     console.log(`starting: ${cfg.name} (webgpu)`);
@@ -4362,6 +4768,10 @@ export function startLoop(
     if (pixelDiscTrainer) pixelDiscTrainer.destroy();
     if (advSurStats) advSurStats.destroy();
     if (speedStats) speedStats.destroy();
+    if (fieldProbe) fieldProbe.destroy(); // diagnostics points/out/staging
+    // The snapshot describes a loop that no longer exists; leaving it would let
+    // a headless auditor gate a piece switch on the PREVIOUS piece's numbers.
+    delete (window as unknown as HealthWindow).__nffHealth;
     if (advect) advect.destroy(); // pos/vel/weights GPUBuffers
     if (model) model.dispose();
     if (field) field.dispose();

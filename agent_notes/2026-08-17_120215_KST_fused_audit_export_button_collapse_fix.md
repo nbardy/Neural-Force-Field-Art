@@ -155,10 +155,55 @@ until the tree is committed.
 - Worktrees for all four round-2 agents removed after merge+verify
   (pressure agent's pending removal once soak re-run concludes).
 
+## SHIPPED
+
+Round 2 deployed 2026-08-17: main @ b72aa54, bundle index.74c2c06f.js,
+live-verified (default piece boots FUSED + pressure on the real adapter, no
+page errors, favicon 404 gone). Soak green post-gate-fix. All agent
+worktrees removed.
+
+## Round 3 (2026-08-18): health metrics + headless audit — MERGED, NOT deployed
+
+- `window.__nffHealth` 1 Hz exact-float snapshot (src/health.ts); FieldProbe
+  32²×5 stencil on its own 1 Hz encoder (field_probe.ts + advect_wgsl) —
+  ac/dc/rmsF/satFrac/OW matching collapse_probe definitions; AC sparkline on
+  HUD; tools/health_audit.mjs (typed verdicts: healthy/laminar-collapse/
+  pole-exploit/frozen-saturated/dead-field/blown-up/nonfinite/stalled/
+  browser-stalled/perf-regression; exit code = unhealthy count; usage:
+  `node tools/health_audit.mjs [keys|all|adversary] [baseURL] [sec] [sampleSec]`,
+  keys: single wta8 pair4 tri6 quad6 agree weave hashgrid vecfield struct);
+  new GALLERY piece "Neural Field · Max Structure" (fused W_STRUCT maximizing
+  ac²/(ac²+dc²); W_DIV 0.6 / lr 0.002 — scale-invariant loss is NOT
+  amplitude-neutral under Adam, hence the div anchor). Health metrics are
+  OBSERVED ONLY on adversary/pixel pieces (three independent proofs in
+  agent_notes/2026-08-18_health_metrics_audit.md).
+- Merged over the OTHER SESSION's overnight split-K train throughput work
+  (train.ts/train_wgsl.ts, last edit 03:11) via patch; one reject hand-merged
+  (lossBuf 16-slot + two-block partials alloc). Their batch-cap test + all
+  suites pass in the merged tree; build clean.
+- Findings worth acting on: Pixel · VecField audits FROZEN-SATURATED
+  (satFrac 0.426, ac flat) — chip filed; fixing means adding a loss to a
+  pixel piece (owner decision). Auditor caught two of its own blind spots
+  (JSON NaN→null laundering; stalled-loop republishing last snapshot).
+- **BLOCKED on environment:** headless Chrome on this box stopped firing
+  requestAnimationFrame entirely (0 ticks pre-artwork, any piece; flags +
+  caffeinate don't help) — live audit/verification impossible until a
+  browser/host restart. Offline (bun-webgpu) gates unaffected and all green.
+- NOT deployed: other session possibly mid-flight (03:11 edits) + no live
+  verification until restart. Health worktree retained until commit.
+
 ## Next
 
-1. Consider baking user's 2026-08-17 hand-tuned settings (above) into a new
+1. Restart browser/box → `node tools/health_audit.mjs all` for the first
+   full-gallery health baseline; then deploy round 3 (coordinate with the
+   split-K session so its work is commit-ready).
+2. Consider baking user's 2026-08-17 hand-tuned settings (above) into a new
    gallery piece once they share a COPY LINK. (User decision.)
+3. Taste knob if the default piece reads sluggish: λ=0.01
+   (?advPolar=0.01&advNematic=0.01) also kills collapse and removes the
+   ~25 s √2 warm-up excursion — see pressure note λ sweep.
+4. Pixel · VecField saturation (chip) — genuine artwork issue, needs an
+   owner decision on adding a loss to a pixel piece.
 3. ~~Soak flake attribution~~ DONE (agent_notes/2026-08-17_soak_flake_attribution.md):
    hashgrid 6/9 fail vs pair4 0/8 (Fisher p=0.0068); warm-up irrelevant; NOT a
    pipeline-compile tail (60 fps from first sample). Mechanism: the two span

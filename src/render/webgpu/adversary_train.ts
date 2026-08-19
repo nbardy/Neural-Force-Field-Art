@@ -42,6 +42,7 @@ import {
   adversaryPassBShader,
   advScratchBytes,
   advStatsLayout,
+  familyInstrument,
   validateAdversaryFusion,
   adjustedTuple,
   fusedObjectiveDims,
@@ -55,6 +56,7 @@ import {
   type FusedAdversaryTarget,
   type FusedAdversaryLoss,
   type FusedGamePressure,
+  type FamilyInstrument,
 } from "./adversary_wgsl";
 
 const ADAM_DEFAULTS = { beta1: 0.9, beta2: 0.999, eps: 1e-7 } as const;
@@ -92,6 +94,25 @@ export type DirectionOrder =
   | { readonly tag: "unmeasured" }
   | { readonly tag: "measured"; readonly r1: number; readonly r2: number };
 
+/**
+ * PER-FAMILY PAYOFF. `unmeasured` is a real state, exactly like
+ * {@link DirectionOrder}: a classless field has no families, and an m > 1
+ * observer can sample a tuple whose members disagree about their family, so
+ * there is nothing to attribute. A family with `count[c] === 0` was simply not
+ * sampled this batch — its `mean[c]` is 0 and must be DROPPED by the reader,
+ * not drawn as "perfectly predicted".
+ */
+export type FamilyPayoff =
+  | { readonly tag: "unmeasured" }
+  | {
+      readonly tag: "measured";
+      /** Mean shared payoff over this family's tuples. Same scalar as
+       *  {@link AdvStats.surprise}, restricted to one family. */
+      readonly mean: readonly number[];
+      /** Tuples this family contributed. Σ count === the active batch. */
+      readonly count: readonly number[];
+    };
+
 export interface AdvStats {
   /**
    * Mean relaxed-weighted residual BEFORE the isFiniteF gate.
@@ -125,6 +146,8 @@ export interface AdvStats {
   energyActive: number;
   /** Direction order over the SAME batch the pressure is priced on. */
   directionOrder: DirectionOrder;
+  /** Payoff decomposed by particle family (family-planed fields, m == 1). */
+  perFamily: FamilyPayoff;
 }
 
 export interface AdvStepOpts {
@@ -247,7 +270,16 @@ export class AdversaryTrainer {
   private readonly scratchBuf: GPUBuffer;
   private readonly statsBuf: GPUBuffer;
   private readonly statsFloats: number;
-  private readonly statsL: { finalized: number; pstride: number; momentOff: number };
+  private readonly statsL: {
+    finalized: number;
+    pstride: number;
+    momentOff: number;
+    familyOff: number;
+  };
+  /** Whether a tuple has one unambiguous family — decided by the SAME κ the
+   *  shader's reduction slots are sized from, so host and shader cannot
+   *  disagree about how many slots exist. */
+  private readonly familyInst: FamilyInstrument;
   private readonly tupleBuf: GPUBuffer;
   private surBuf: GPUBuffer;
   private surFloats: number;
@@ -383,7 +415,8 @@ export class AdversaryTrainer {
     );
     const wgCap = Math.ceil(this.batchCap / ADV_WG);
     // ONE source of truth for the stats geometry, shared with the codegen.
-    this.statsL = advStatsLayout(this.k, this.pressure);
+    this.familyInst = familyInstrument(field.family, m);
+    this.statsL = advStatsLayout(this.k, this.pressure, this.familyInst);
     this.statsFloats = ADV_STATS_BASE + wgCap * this.statsL.pstride;
     this.statsBuf = mkStorage(this.statsFloats * 4);
     this.extGradsBuf = mkStorage(field.totalFloats * 4);
@@ -658,6 +691,8 @@ export class AdversaryTrainer {
         // No complete tuple exists, so no direction was observed. Reporting
         // R₁ = 0 here would paint "perfectly isotropic" onto an empty batch.
         directionOrder: { tag: "unmeasured" },
+        // Same reason: an empty batch sampled no family.
+        perFamily: { tag: "unmeasured" },
       };
       this.lastCoverageWindow = {
         start: this.coverageCursor,
@@ -785,6 +820,20 @@ export class AdversaryTrainer {
     }
   }
 
+  /** δ: instrument variant → how (and whether) the family slots are read. */
+  private readPerFamily(f: Float32Array): FamilyPayoff {
+    if (this.familyInst.tag === "off") return { tag: "unmeasured" };
+    const o = this.statsL.familyOff;
+    const c = this.familyInst.count;
+    const mean: number[] = [];
+    const count: number[] = [];
+    for (let i = 0; i < c; i++) {
+      mean.push(f[o + 2 * i]);
+      count.push(f[o + 2 * i + 1]);
+    }
+    return { tag: "measured", mean, count };
+  }
+
   private parseStats(f: Float32Array): AdvStats {
     return {
       payoffUngated: f[0],
@@ -803,6 +852,7 @@ export class AdversaryTrainer {
       energyRms: f[5 + this.k],
       energyActive: f[6 + this.k],
       directionOrder: this.readDirectionOrder(f),
+      perFamily: this.readPerFamily(f),
     };
   }
 

@@ -234,7 +234,9 @@ export class HelmholtzField implements ForceField {
   readonly fourierOctaves: number;
   readonly gridSize: number;
   readonly gridFeatures: number;
-  /** hashgrid learned feature table [gridSize², features]; null otherwise. */
+  /** Stacked hashgrid feature planes (= max(classes, 1)); 1 when classless. */
+  readonly gridPlanes: number = 1;
+  /** hashgrid learned feature table [planes·gridSize², features]; null otherwise. */
   readonly grid: tf.Variable | null = null;
 
   constructor({
@@ -264,7 +266,12 @@ export class HelmholtzField implements ForceField {
     if (modelType === "hashgrid" && this.hiddenAct === "sin") {
       throw new Error(`HelmholtzField: hashgrid + sin not supported`);
     }
-    if (modelType !== "standard" && modelType !== "siren" && classes > 0) {
+    // HASHGRID + classes IS supported, but the family reaches the field through
+    // the GRID (one stacked feature plane per family, cell index offset by
+    // cls·gridSize²), not through one-hot channels on head B. Both routes are
+    // named and validated once, in advect_wgsl's `familyRoute`; this object
+    // only has to allocate the matching variables.
+    if (modelType === "fourier" && classes > 0) {
       throw new Error(`HelmholtzField: ${modelType} + classes not supported yet`);
     }
     if (this.headCount === 1 && classes > 0) {
@@ -282,8 +289,15 @@ export class HelmholtzField implements ForceField {
         ? gridFeatures
         : 2;
     if (modelType === "hashgrid") {
+      // planes = max(classes, 1): one feature table per family, stacked so the
+      // packed buffer stays a single contiguous grid segment.
+      this.gridPlanes = Math.max(classes, 1);
       this.grid = tf.variable(
-        tf.randomUniform([gridSize * gridSize, gridFeatures], -0.1, 0.1)
+        tf.randomUniform(
+          [this.gridPlanes * gridSize * gridSize, gridFeatures],
+          -0.1,
+          0.1
+        )
       );
     }
     const makeNet = (inDim: number) =>
@@ -291,8 +305,13 @@ export class HelmholtzField implements ForceField {
         ? makeSirenNet(hiddenUnits, inDim, sirenOmega0)
         : makeVectorNet(hiddenUnits, inDim);
     this.g = makeNet(encIn);
+    // One-hot class channels are the RAW-encoding route only. On a hashgrid the
+    // family already moved the grid lookup, so head B's input width is
+    // unchanged — widening it here would allocate weights the fused kernel has
+    // no rows for and the packed-segment check would fail loudly at upload.
+    const onehotChannels = modelType === "hashgrid" ? 0 : classes;
     this.r =
-      this.headCount === 1 ? null : makeNet(encIn + classes);
+      this.headCount === 1 ? null : makeNet(encIn + onehotChannels);
 
     const collect = (net: tf.Sequential): tf.Variable[] =>
       net.trainableWeights.map((w) => (w as any).val as tf.Variable);

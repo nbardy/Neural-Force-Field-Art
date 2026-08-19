@@ -89,6 +89,18 @@ fn vs(@builtin(vertex_index) vid : u32,
       role == 2u
     );
     col = base * (0.55 + 0.45 * t);
+  } else if (u.palette == 3u) {
+    // rgb-families: EXACT R/G/B keyed on the family label — the same
+    // pcg(i ^ CLASS_SALT) % C the advect kernel and both trainers derive. The
+    // hue is the instrument here: the per-family payoff chart is only readable
+    // if "the red family" on screen is literally family 0.
+    let cls = pcg(iid ^ 2166136261u) % u.classes;
+    let base = select(
+      select(vec3f(1.0, 0.12, 0.12), vec3f(0.12, 1.0, 0.22), cls == 1u),
+      vec3f(0.22, 0.35, 1.0),
+      cls == 2u
+    );
+    col = base * (0.55 + 0.45 * t);
   } else if (u.classes > 0u) {
     // per-species base colour (cosine palette, golden-angle spaced hues),
     // brightness modulated by speed
@@ -117,7 +129,7 @@ export interface GpuPointOpts {
   maxSpeed?: number;
   /** multi-species count — colours dots per class (0 = speed colouring) */
   classes?: number;
-  palette?: "speed" | "species" | "rgb-roles";
+  palette?: "speed" | "species" | "rgb-roles" | "rgb-families";
 }
 
 export class GpuPointRendererWebGPU {
@@ -167,7 +179,13 @@ export class GpuPointRendererWebGPU {
     this.maxSpeed = opts.maxSpeed ?? 4;
     this.classes = opts.classes ?? 0;
     this.palette =
-      opts.palette === "rgb-roles" ? 2 : opts.palette === "species" ? 1 : 0;
+      opts.palette === "rgb-families"
+        ? 3
+        : opts.palette === "rgb-roles"
+        ? 2
+        : opts.palette === "species"
+        ? 1
+        : 0;
   }
 
   /** Live velocity-colour scale; independent of the render pipeline. */

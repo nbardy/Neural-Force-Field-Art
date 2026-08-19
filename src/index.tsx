@@ -40,6 +40,8 @@ import {
   type InkLook,
   type LoopHandle,
 } from "./main";
+import type { FieldHealth } from "./render/webgpu/field_probe";
+import type { FamilyPayoff } from "./render/webgpu/adversary_train";
 import { objectiveDims } from "./core/gan/adversary";
 import type {
   AdversaryLoss,
@@ -73,6 +75,12 @@ const HISTORY_SMOOTH = 0.08; // EMA α for overlay (higher = snappier)
  * where it is indistinguishable from an empty chart.
  */
 const R1_HEALTHY_CEILING = 0.1;
+/**
+ * AC history length. The field probe lands at ~1 Hz (not the 200 ms poll rate),
+ * so 180 points is a ~3 minute window — long enough to read a convergence
+ * TREND, which is the thing a single AC number cannot tell you.
+ */
+const STRUCTURE_HISTORY = 180;
 const CMAPS: ColormapName[] = ["inferno", "viridis", "coolwarm"];
 const G_LR_MIN = GAME_LEARNING_RATE_RANGE.generator.min;
 const G_LR_MAX = GAME_LEARNING_RATE_RANGE.generator.max;
@@ -1002,6 +1010,117 @@ type SparkRule =
   | { readonly tag: "none" }
   | { readonly tag: "at"; readonly value: number; readonly label: string };
 
+/**
+ * Family colours — the SAME R/G/B the `rgb-families` palette paints the cloud
+ * with (splat.ts / points.ts). The chart is only readable if "the red curve"
+ * and "the red particles" are the same family, so these two lists are a pair:
+ * change one and change the other.
+ */
+const FAMILY_COLORS = ["#ff5555", "#3ddc6b", "#5f7bff"] as const;
+
+/**
+ * Multi-series sparkline on ONE SHARED domain.
+ *
+ * The shared domain is the whole point: the question this row answers is
+ * "are the families balanced, or is one of them carrying the payoff", and
+ * per-series auto-scaling would normalize exactly that difference away — three
+ * curves at 0.1, 0.6 and 1.3 would each fill the box and look identical.
+ */
+function FamilySparkline({
+  series,
+  label,
+}: {
+  series: readonly (readonly number[])[];
+  label: string;
+}): ReactElement {
+  const width = 160;
+  const height = 28;
+  const pool = series.flat().filter(Number.isFinite);
+  const drawable = series.filter((s) => s.length >= 2);
+  if (!pool.length || !drawable.length) {
+    return (
+      <svg
+        className="sparkline"
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label={`${label} awaiting samples`}
+      />
+    );
+  }
+  const lo = Math.min(...pool);
+  const hi = Math.max(...pool);
+  const flat = hi - lo <= Math.max(Math.abs(hi), 1e-12) * 1e-3;
+  const span = Math.max(hi - lo, 1e-30);
+  const toY = (sample: number) =>
+    flat ? height / 2 : height - 2 - ((sample - lo) / span) * (height - 4);
+  return (
+    <svg
+      className="sparkline"
+      viewBox={`0 0 ${width} ${height}`}
+      role="img"
+      aria-label={`${label} from ${lo.toExponential(1)} to ${hi.toExponential(1)}`}
+    >
+      {series.map((s, c) =>
+        s.length < 2 ? null : (
+          <polyline
+            key={c}
+            className="sparkline-raw"
+            stroke={FAMILY_COLORS[c % FAMILY_COLORS.length]}
+            strokeOpacity={0.95}
+            points={s
+              .map((sample, index) => {
+                const x = (index / (s.length - 1)) * (width - 2) + 1;
+                return `${x.toFixed(1)},${toY(sample).toFixed(1)}`;
+              })
+              .join(" ")}
+          />
+        )
+      )}
+    </svg>
+  );
+}
+
+/**
+ * The per-family payoff row. Takes the sum type whole so the `unmeasured` case
+ * is a HANDLER (render nothing) rather than a truthiness check at the call site
+ * — the row must be absent on every piece that has no families, not present
+ * and empty.
+ */
+function FamilyPayoffRow({
+  payoff,
+  series,
+}: {
+  payoff: FamilyPayoff;
+  series: readonly (readonly number[])[];
+}): ReactElement | null {
+  if (payoff.tag === "unmeasured") return null;
+  return (
+    <div className="diagnostic-row" data-testid="family-payoff-chart">
+      <span
+        className="diagnostic-name"
+        title={
+          "Shared payoff split by particle FAMILY. The generator sees" +
+          " (coordinate, family); the predictor sees the coordinate only, so it" +
+          " cannot tell the families apart and must spend its K hypotheses on a" +
+          " multi-mode conditional. Curves share ONE scale: the family ABOVE the" +
+          " others is the one the predictor is currently failing on. Watch for" +
+          " the roles rotating (a live game), converging (families collapsed" +
+          " onto one field), or one curve pinned high forever (a permanent" +
+          " scapegoat). Colours match the particles."
+        }
+      >
+        family payoff
+      </span>
+      <FamilySparkline series={series} label="payoff per family" />
+      <strong>
+        {payoff.mean
+          .map((v, c) => (payoff.count[c] > 0 ? v.toFixed(2) : "—"))
+          .join(" ")}
+      </strong>
+    </div>
+  );
+}
+
 function Sparkline({
   data,
   smoothed,
@@ -1218,6 +1337,38 @@ function App(): ReactElement {
    * collapse this row now measures.
    */
   const [orderHistory, setOrderHistory] = useState<number[]>([]);
+  /**
+   * PER-FAMILY payoff, one series per particle family (RGB Families piece).
+   * `[]` means the running piece has no family split — the row is not drawn at
+   * all rather than drawn flat, because a flat zero would read as "all three
+   * families are perfectly predicted", the exact opposite of "not measured".
+   *
+   * A family that contributed NO tuples this batch is skipped rather than
+   * pushed as 0, for the same reason (see AdvStats.perFamily.count).
+   */
+  const [familyHistory, setFamilyHistory] = useState<number[][]>([]);
+  /**
+   * AC — rms‖F − mean F‖ over a 32² grid, i.e. how much of the field is
+   * spatially VARYING rather than one global push. DISPLAY ONLY on every piece
+   * except Max Structure: on adversarial pieces nothing optimizes it, so a
+   * rising trace is evidence the GAME is producing structure.
+   */
+  const [acHistory, setAcHistory] = useState<number[]>([]);
+  /**
+   * R₁ — DIRECTION CONVERGENCE on the same 32² grid: ‖mean of the field's soft
+   * unit directions‖. This is the "has it collapsed to one direction?" series,
+   * and unlike `orderHistory` it exists on EVERY piece, because the field probe
+   * runs on every piece while the batch R₁ needs anti-collapse pressure
+   * compiled. Sampled from the same metrics object as `acHistory`, so the two
+   * traces are aligned point-for-point and can be read together: the collapse
+   * signature is R₁ climbing while AC falls.
+   */
+  const [dirHistory, setDirHistory] = useState<number[]>([]);
+  const [fieldHealth, setFieldHealth] = useState<FieldHealth>({ tag: "unprobed" });
+  /** Identity of the last metrics object folded into `acHistory`. The probe
+   *  mints a fresh object per sample (~1 Hz) while this poll runs at 200 ms, so
+   *  without it the series would be 80% repeated points and the EMA would lag. */
+  const lastFieldMetricsRef = useRef<object | null>(null);
   const [copyState, setCopyState] = useState<CopyState>({ tag: "idle" });
   const copyTimerRef = useRef<number | null>(null);
 
@@ -1407,6 +1558,10 @@ function App(): ReactElement {
   useEffect(() => {
     setPayoffHistory([]);
     setOrderHistory([]);
+    setAcHistory([]);
+    setDirHistory([]);
+    setFieldHealth({ tag: "unprobed" });
+    lastFieldMetricsRef.current = null;
     setTelemetry({ tag: "off" });
     setSurpriseSpan(null);
     const poll = window.setInterval(() => {
@@ -1416,6 +1571,18 @@ function App(): ReactElement {
       setTelemetry(next);
       setSurpriseSpan(handle.getSurpriseSpan());
       setColorMode(handle.getColorMode());
+      const health = handle.getFieldHealth();
+      setFieldHealth(health);
+      if (
+        health.tag === "measured" &&
+        (health.metrics as object) !== lastFieldMetricsRef.current
+      ) {
+        lastFieldMetricsRef.current = health.metrics as object;
+        const ac = health.metrics.ac;
+        const dir = health.metrics.r1;
+        setAcHistory((previous) => previous.concat(ac).slice(-STRUCTURE_HISTORY));
+        setDirHistory((previous) => previous.concat(dir).slice(-STRUCTURE_HISTORY));
+      }
       if (next.tag === "on") {
         // ONE shared payoff: D minimizes it, disagreeing G maximizes it.
         setPayoffHistory((previous) =>
@@ -1428,6 +1595,22 @@ function App(): ReactElement {
           setOrderHistory((previous) =>
             previous.concat(r1).slice(-SURPRISE_HISTORY)
           );
+        }
+        const fam = next.perFamily;
+        if (fam.tag === "measured") {
+          setFamilyHistory((previous) => {
+            const series =
+              previous.length === fam.mean.length
+                ? previous
+                : fam.mean.map(() => []);
+            return series.map((s, c) =>
+              // An unsampled family holds its series still. Charting a 0 for it
+              // would draw a cliff that no measurement produced.
+              fam.count[c] > 0
+                ? s.concat(fam.mean[c]).slice(-SURPRISE_HISTORY)
+                : s
+            );
+          });
         }
       }
     }, 200);
@@ -2171,8 +2354,80 @@ function App(): ReactElement {
             </ControlSection>
           )}
 
-          {adversary && (
+          {(adversary || fieldHealth.tag === "measured") && (
             <ControlSection title="diagnostics" testid="adversary-diagnostics">
+              <div className="diagnostic-row" data-testid="field-structure-chart">
+                <span
+                  className="diagnostic-name"
+                  title={
+                    "AC = rms‖F − mean F‖ on a 32² grid — the spatially VARYING" +
+                    " part of the field. DC = ‖mean F‖ is the constant push that" +
+                    " survives when a field collapses. HIGH AC IS STRUCTURE;" +
+                    " AC below ~1e-4 is a dead field and DC/AC above ~3 is the" +
+                    " laminar end state (measured 3.7 at full collapse, 0.25 with" +
+                    " the anti-collapse pressure working). On every piece but" +
+                    " Max Structure this is OBSERVED, never optimized — a rising" +
+                    " trace here is evidence the GAME made the structure."
+                  }
+                >
+                  AC structure
+                </span>
+                <Sparkline
+                  label="field AC"
+                  data={acHistory}
+                  smoothed={emaSeries(acHistory, HISTORY_SMOOTH)}
+                />
+                <strong>
+                  {fieldHealth.tag === "measured"
+                    ? fieldHealth.metrics.ac.toExponential(2)
+                    : "—"}
+                </strong>
+              </div>
+              <div className="diagnostic-row" data-testid="field-direction-chart">
+                <span
+                  className="diagnostic-name"
+                  title={
+                    "DIRECTION CONVERGENCE. R₁ = ‖mean of the field's soft unit" +
+                    " directions‖ over the same 32² grid as AC. 0 = the" +
+                    " directions are isotropic (a field of vortices), 1 = every" +
+                    " sample points the same way (laminar streaks — the collapse" +
+                    " this measures). LOW IS HEALTHY: 0.99 with the anti-collapse" +
+                    " pressure off on the default piece, 0.01–0.10 with it on." +
+                    " Fixed 0–1 scale; the dashed rule is the 0.10 healthy" +
+                    " ceiling, so a trace hugging the floor is the good case." +
+                    " READ IT WITH R₂ in the line below — a field that splits" +
+                    " into ± counter-streaming sheets scores R₁ ≈ 0 and looks" +
+                    " just as laminar. This one is measured on EVERY piece; the" +
+                    " adversary's `R1 batch` row is the same statistic over the" +
+                    " training batch and only exists under ?advPolar."
+                  }
+                >
+                  R1 direction
+                </span>
+                <Sparkline
+                  label="field direction order R1"
+                  data={dirHistory}
+                  smoothed={emaSeries(dirHistory, HISTORY_SMOOTH)}
+                  scale={{ tag: "fixed", lo: 0, hi: 1 }}
+                  rule={{ tag: "at", value: R1_HEALTHY_CEILING, label: "healthy ceiling 0.10" }}
+                />
+                <strong>
+                  {fieldHealth.tag === "measured"
+                    ? fieldHealth.metrics.r1.toFixed(3)
+                    : "—"}
+                </strong>
+              </div>
+              <div className="chart-legend" data-testid="field-structure-detail">
+                {fieldHealth.tag === "measured"
+                  ? `DC/AC ${(
+                      fieldHealth.metrics.dc / Math.max(fieldHealth.metrics.ac, 1e-12)
+                    ).toFixed(2)} · sat ${fieldHealth.metrics.satFrac.toFixed(
+                      2
+                    )} · OW ${fieldHealth.metrics.okuboWeiss.toFixed(
+                      2
+                    )} · R2 ${fieldHealth.metrics.r2.toFixed(2)} · R1 0=swirl 1=laminar`
+                  : "field probe warming"}
+              </div>
               {telemetry.tag === "on" ? (
                 <>
                   <div className="diagnostic-row" data-testid="disc-loss-chart">
@@ -2209,19 +2464,29 @@ function App(): ReactElement {
                     />
                     <strong>{telemetry.surprise.toExponential(2)}</strong>
                   </div>
+                  {/* The BATCH twin of the always-on `field-direction-chart`
+                      above: same statistic, same τ, sampled at the particles
+                      the adversary actually trained on instead of on a uniform
+                      grid. It is drawn only when the pressure is compiled —
+                      before the grid R₁ existed this row rendered a permanent
+                      "—" on every piece without ?advPolar, which is a dead row,
+                      not a measurement. */}
+                  {telemetry.directionOrder.tag === "measured" && (
                   <div className="diagnostic-row" data-testid="direction-order-chart">
                     <span
                       className="diagnostic-name"
                       title={
                         "R₁ = ‖mean of the field's soft-unit directions‖ over the training" +
-                        " batch. 0 = isotropic (swirls), 1 = one global direction (laminar" +
-                        " streaks). LOW IS HEALTHY — measured live on the default piece:" +
-                        " 0.99 with the pressure off (diagonal streaks), 0.01–0.10 with it" +
-                        " on (a field of vortices). Fixed 0–1 scale; the dashed rule is the" +
-                        " 0.10 healthy ceiling, so a trace hugging the floor is the good case."
+                        " BATCH — the particles the adversary trained on this step, where" +
+                        " the grid row above samples the domain uniformly. They diverge when" +
+                        " the cloud has bunched into part of the domain, and that gap is" +
+                        " itself the reading. 0 = isotropic (swirls), 1 = one global" +
+                        " direction (laminar streaks). LOW IS HEALTHY — measured live on the" +
+                        " default piece: 0.99 with the pressure off (diagonal streaks)," +
+                        " 0.01–0.10 with it on (a field of vortices)."
                       }
                     >
-                      R1 laminar
+                      R1 batch
                     </span>
                     <Sparkline
                       label="direction order R1"
@@ -2230,17 +2495,18 @@ function App(): ReactElement {
                       scale={{ tag: "fixed", lo: 0, hi: 1 }}
                       rule={{ tag: "at", value: R1_HEALTHY_CEILING, label: "healthy ceiling 0.10" }}
                     />
-                    <strong>
-                      {telemetry.directionOrder.tag === "measured"
-                        ? telemetry.directionOrder.r1.toFixed(3)
-                        : "—"}
-                    </strong>
+                    <strong>{telemetry.directionOrder.r1.toFixed(3)}</strong>
                   </div>
+                  )}
+                  <FamilyPayoffRow
+                    payoff={telemetry.perFamily}
+                    series={familyHistory}
+                  />
                   <div className="chart-legend" aria-hidden="true">
                     dim=raw · bright=EMA · ~{Math.round((SURPRISE_HISTORY * 0.2) / 60)}m window
                     {telemetry.directionOrder.tag === "measured"
-                      ? " · R1 0=swirl 1=laminar"
-                      : " · R1 needs ?advPolar"}
+                      ? " · R1 batch vs R1 grid above"
+                      : " · batch R1 needs ?advPolar"}
                   </div>
                   <div className="diagnostic-row">
                     <span>heads</span>
@@ -2276,10 +2542,15 @@ function App(): ReactElement {
                   )}
                 </>
               ) : (
-                <div className="tui-static-row">
-                  <span>game</span>
-                  <strong>initialising…</strong>
-                </div>
+                // "initialising…" is a claim about a GAME. A piece with no
+                // adversary has nothing to initialise, and printing it there
+                // would read as a stuck adversary rather than an absent one.
+                adversary && (
+                  <div className="tui-static-row">
+                    <span>game</span>
+                    <strong>initialising…</strong>
+                  </div>
+                )
               )}
               {colorMode.tag !== "velocity" && surpriseSpan && (
                 <div className="span-readout" data-testid="surprise-span">

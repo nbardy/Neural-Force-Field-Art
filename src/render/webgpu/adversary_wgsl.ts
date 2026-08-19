@@ -73,8 +73,11 @@
  */
 
 import {
+  CLASS_SALT,
   encodingDim,
+  encodingPlanes,
   type Encoding,
+  type FamilyRoute,
   type FieldLayout,
   type HeadSpec,
   type AdversaryLayout,
@@ -192,23 +195,67 @@ function checkedPressure(p: FusedGamePressure | undefined): FusedGamePressure {
  * four as batch constants: dL/du depends on M₁ₓ, M₁ᵧ, M₂c and M₂s separately.
  * The host derives R₁ = ‖M₁‖ and R₂ = ‖M₂‖ from them.
  */
+/**
+ * PER-FAMILY PAYOFF INSTRUMENT.
+ *
+ * `off` is a real state, not a zero: on a classless field there is no family to
+ * attribute a payoff to, and on an m > 1 observer a tuple can MIX families, so
+ * there is no honest attribution either — inventing a bucketing rule there
+ * would put a number on the HUD that nothing computes. See
+ * {@link familyInstrument}, which is the only place this is decided.
+ */
+export type FamilyInstrument =
+  | { readonly tag: "off" }
+  | { readonly tag: "per-family"; readonly count: number };
+
+/** κ: the instrument exists exactly when a tuple has ONE unambiguous family. */
+export function familyInstrument(
+  family: FamilyRoute,
+  m: number
+): FamilyInstrument {
+  switch (family.tag) {
+    case "none":
+    case "onehot":
+      return { tag: "off" };
+    case "grid-plane":
+      return m === 1 ? { tag: "per-family", count: family.count } : { tag: "off" };
+  }
+}
+
+/** Reduction slots the instrument adds: Σpayoff and count, per family. */
+function familySlots(instrument: FamilyInstrument): number {
+  return instrument.tag === "off" ? 0 : 2 * instrument.count;
+}
+
 export function advStatsLayout(
   k: number,
-  pressure: FusedGamePressure
-): { finalized: number; pstride: number; momentOff: number } {
+  pressure: FusedGamePressure,
+  family: FamilyInstrument = { tag: "off" }
+): {
+  finalized: number;
+  pstride: number;
+  momentOff: number;
+  familyOff: number;
+} {
   const base = 7 + k;
-  switch (pressure.tag) {
-    case "none":
-      return { finalized: base, pstride: base, momentOff: base };
-    case "anti-collapse":
-      return { finalized: base + 4, pstride: base + 4, momentOff: base };
-    default: {
-      const unhandled: never = pressure;
-      throw new Error(
-        `adversary: unhandled pressure ${JSON.stringify(unhandled)}`
-      );
+  const momentOff = base;
+  const afterPressure = (() => {
+    switch (pressure.tag) {
+      case "none":
+        return base;
+      case "anti-collapse":
+        return base + 4;
+      default: {
+        const unhandled: never = pressure;
+        throw new Error(
+          `adversary: unhandled pressure ${JSON.stringify(unhandled)}`
+        );
+      }
     }
-  }
+  })();
+  const familyOff = afterPressure;
+  const finalized = afterPressure + familySlots(family);
+  return { finalized, pstride: finalized, momentOff, familyOff };
 }
 
 export type TupleTag =
@@ -439,6 +486,17 @@ export interface AdvScratchLayout {
   /** the field's per-(site,head) sub-layout — aOff/dOff/pOff/headBlk reused */
   fieldSl: TrainScratchLayout;
   advBlk: number;
+  /**
+   * Per-member family label as f32 (m floats on a family-planed grid, 0
+   * otherwise — so every classless layout's stride is unchanged and its
+   * generated shaders stay byte-identical).
+   *
+   * Stored rather than re-hashed in pass B on purpose: pass B has no `pcg`,
+   * and a SECOND copy of the derivation is exactly the kind of drift that
+   * would advect a particle with one family's field and score it against
+   * another's. Appended last so no pre-existing offset moves.
+   */
+  clsOff: number;
   /** shared across heads (identical dims): per-layer act / delta offsets */
   advAOff: number[];
   advDOff: number[];
@@ -489,11 +547,12 @@ export function advScratchLayout(
   const dEncOff = encOff + m * fieldSl.encStore;
   const fieldSiteOff = dEncOff + m * fieldSl.dEncStore;
   const advOff = fieldSiteOff + m * fieldSl.siteBlk;
-  const stride = advOff + advL.k * advBlk;
+  const clsOff = advOff + advL.k * advBlk;
+  const stride = clsOff + (encodingPlanes(field.encoding) > 1 ? m : 0);
   return {
     tag, m, k: advL.k, du, dy, vectorDy, scaleDy,
     idxOff, surOff, winOff, uOff, yOff, siteInOff, encOff, dEncOff, fieldSiteOff,
-    advOff, stride, fieldSiteBlk: fieldSl.siteBlk, fieldSl, advBlk,
+    advOff, clsOff, stride, fieldSiteBlk: fieldSl.siteBlk, fieldSl, advBlk,
     advAOff, advDOff,
   };
 }
@@ -520,10 +579,19 @@ export function validateAdversaryFusion(field: FieldLayout, advL: AdversaryLayou
         `(got ${field.spec.kind})`
     );
   }
-  if (field.classes > 0) {
-    throw new Error(
-      "adversary: class-aware fields are not supported by the fused adversary yet"
-    );
+  switch (field.family.tag) {
+    case "none":
+    case "grid-plane":
+      break;
+    case "onehot":
+      // One-hot channels widen head 1's layer-0 input, and the adversary's
+      // field backward has no counterpart for those rows. The family-planed
+      // hashgrid needs none: the label only moves the grid's cell index, so it
+      // rides the dEnc machinery the reward already uses.
+      throw new Error(
+        "adversary: one-hot class channels are not supported by the fused " +
+          "adversary — use a family-planed hashgrid field"
+      );
   }
   for (const h of advL.heads) {
     for (const L of h.layers) {
@@ -1038,6 +1106,13 @@ export function adversaryPassAShader(
   }
   const sl = advScratchLayout(field, advL, tag, target, opts.loss);
   const { m, k, du, dy, vectorDy, scaleDy } = sl;
+  // FAMILY. `planed` says the field's grid is indexed by (family, y, x), so
+  // every member needs its label; `instrument` says a tuple has ONE family, so
+  // the payoff can be attributed. They are independent: a pair observer on a
+  // planed field still trains correctly, it just cannot be charted per family.
+  const planed = encodingPlanes(field.encoding) > 1;
+  const instrument = familyInstrument(field.family, m);
+  const famCount = instrument.tag === "per-family" ? instrument.count : 0;
   if (k >= 2 && relaxEps === 0) {
     // permitted — hard WTA is a real (collapsing) variant; the app never ships it
   }
@@ -1057,7 +1132,7 @@ export function adversaryPassAShader(
   // Legacy finalized slots [0..5+k) stay stable. Energy RMS/active count are
   // appended at 5+k / 6+k; partials carry the same two extra reductions. Under
   // anti-collapse pressure four direction moments follow at [7+k, 11+k).
-  const statsL = advStatsLayout(k, pressure);
+  const statsL = advStatsLayout(k, pressure, instrument);
   const PSTRIDE = statsL.pstride;
   if (statsL.finalized > ADV_STATS_BASE) {
     throw new Error(
@@ -1093,8 +1168,12 @@ export function adversaryPassAShader(
     `sBase + ${sl.fieldSiteOff}u + (${site}) * ${sl.fieldSiteBlk}u + ${h === 0 ? 0 : fsl.headBlk[0]}u`;
   const encBase = (site: string) => `sBase + ${sl.encOff}u + (${site}) * ${fsl.encDim}u`;
   const dEncBase = (site: string) => `sBase + ${sl.dEncOff}u + (${site}) * ${fsl.encDim}u`;
+  /** `, mcls[site]` on a family-planed grid; empty everywhere else. */
+  const clsArg = (site: string) => (planed ? `, mcls[${site}]` : ``);
   const encodeAt = (uExpr: string, site: string) =>
-    enc.kind === "raw" ? `` : `encodeSite(${uExpr}, ${encBase(site)});\n      `;
+    enc.kind === "raw"
+      ? ``
+      : `encodeSite(${uExpr}, ${encBase(site)}${clsArg(site)});\n      `;
   const fwdCall = (h: number, uExpr: string, site: string) =>
     enc.kind === "raw"
       ? `fwd_head_${h}(${uExpr}, ${fieldBase(site, h)}, 0u)`
@@ -1108,7 +1187,8 @@ export function adversaryPassAShader(
       ? `bwd_head_${h}(${dExpr}, ${fieldBase(site, h)})`
       : enc.kind === "fourier"
       ? `bwd_head_${h}(${dExpr}, ${fieldBase(site, h)}, ${encBase(site)})`
-      : `bwd_head_${h}(${dExpr}, ${fieldBase(site, h)}, pn[${site}], ${dEncBase(site)})`;
+      : `bwd_head_${h}(${dExpr}, ${fieldBase(site, h)}, pn[${site}], ` +
+        `${dEncBase(site)}${clsArg(site)})`;
   // Which field head SEEDS the shared per-site dL/dEnc block (hashgrid only).
   // `fieldBackward` calls both heads on the blend lane and exactly one head on
   // a direct lane, so the seed is the lane, NOT head 0: a lane-1 game (Agree +
@@ -1234,6 +1314,80 @@ export function adversaryPassAShader(
   const pressureRedDecl = usePressure
     ? `\nvar<workgroup> red4 : array<vec4f, ${WG}>;`
     : "";
+
+  // ---- per-family payoff instrument (all "" when off, so a classless or
+  // multi-member game emits the pre-family text verbatim) -------------------
+  //
+  // `statFam[c]` is this thread's tuple payoff when its family is c and 0
+  // otherwise; `statFamN[c]` is the matching indicator. Reducing BOTH is what
+  // makes the chart a mean rather than a sum — family sizes are a hash of the
+  // particle index, so they are only equal in expectation, and dividing three
+  // unequal sums by one batch size would draw three curves that differ by
+  // sampling noise alone.
+  const FAM = statsL.familyOff;
+  const familyStatDecl =
+    famCount > 0
+      ? `
+  var statFam : array<f32, ${famCount}>;` +
+        `
+  var statFamN : array<f32, ${famCount}>;` +
+        `
+  for (var c = 0u; c < ${famCount}u; c = c + 1u) { statFam[c] = 0.0; statFamN[c] = 0.0; }`
+      : "";
+  const familyAccum =
+    famCount > 0
+      ? `
+    // m == 1 is what makes this attribution exact (familyInstrument).
+    let famId = min(mcls[0], ${famCount - 1}u);
+    statFam[famId] = sur;
+    statFamN[famId] = 1.0;`
+      : "";
+  const familyReduce =
+    famCount > 0
+      ? Array.from({ length: 2 * famCount }, (_, i) => {
+          const c = i >> 1;
+          const src = i % 2 === 0 ? `statFam[${c}]` : `statFamN[${c}]`;
+          return `
+  workgroupBarrier();
+  red[tid] = ${src};
+  workgroupBarrier();
+  stride = ${WG / 2}u;
+  loop {
+    if (tid < stride) { red[tid] = red[tid] + red[tid + stride]; }
+    workgroupBarrier();
+    stride = stride >> 1u;
+    if (stride == 0u) { break; }
+  }
+  if (tid == 0u) { stats[pb + ${FAM + i}u] = red[0]; }`;
+        }).join("")
+      : "";
+  const familyFinalDecl =
+    famCount > 0
+      ? `
+  var sfam : array<f32, ${2 * famCount}>;` +
+        `
+  for (var i = 0u; i < ${2 * famCount}u; i = i + 1u) { sfam[i] = 0.0; }`
+      : "";
+  const familyFinalAcc =
+    famCount > 0
+      ? `
+    for (var i = 0u; i < ${2 * famCount}u; i = i + 1u) {
+      sfam[i] = sfam[i] + stats[pb + ${FAM}u + i];
+    }`
+      : "";
+  const familyFinalWrite =
+    famCount > 0
+      ? `
+  // MEAN payoff per family, then the family's tuple count. An EMPTY family
+  // (no sampled particle carried that label this batch) writes 0 payoff and a
+  // 0 count — the host reads the count and reports "no sample", never a 0 that
+  // would draw as "this family is perfectly predicted".
+  for (var c = 0u; c < ${famCount}u; c = c + 1u) {
+    let n = sfam[2u * c + 1u];
+    stats[${FAM}u + 2u * c] = select(0.0, sfam[2u * c] / n, n > 0.0);
+    stats[${FAM}u + 2u * c + 1u] = n;
+  }`
+      : "";
   const pressureFinalDecl = usePressure ? `\n  var smom = vec4f(0.0);` : "";
   const pressureFinalAcc = usePressure
     ? `
@@ -1623,7 +1777,7 @@ fn advFwd(@builtin(global_invocation_id) gid : vec3u,
   var statHeadMean = 0.0;
   var statHeadMin = 0.0;
   var statEnergy = 0.0;
-  var statActive = 0.0;${pressureStatDecl}
+  var statActive = 0.0;${pressureStatDecl}${familyStatDecl}
   if (s < u.b) {
     let sBase = s * ${STRIDE}u;
 
@@ -1650,6 +1804,19 @@ fn advFwd(@builtin(global_invocation_id) gid : vec3u,
     }
     for (var t = 0u; t < ${m}u; t = t + 1u) {
       scratch[sBase + ${sl.idxOff}u + t] = f32(midx[t]);
+    }${
+      planed
+        ? `
+    // FAMILY LABEL — never stored in a particle buffer, always derived, with
+    // the SAME salt and modulus the advect kernel and the renderer use. If
+    // these three derivations ever disagree the cloud is advected by one
+    // family's field and coloured as another, silently.
+    var mcls : array<u32, ${m}>;
+    for (var t = 0u; t < ${m}u; t = t + 1u) {
+      mcls[t] = pcg(midx[t] ^ ${CLASS_SALT}u) % ${field.classes}u;
+      scratch[sBase + ${sl.clsOff}u + t] = f32(mcls[t]);
+    }`
+        : ""
     }
 
     // ---- selected target signal per member. Force mode is raw F(x).
@@ -1769,7 +1936,7 @@ ${signalBackward}${pressureBwd}
     }
 
     statW = weighted;
-    statS = sur;
+    statS = sur;${familyAccum}
     if (targetActive) {
       // Guard the RMS reductions: a single nonfinite y-component used to make
       // batchRms/energyRms NaN even after resid was zeroed, which the HUD
@@ -1866,7 +2033,7 @@ ${signalBackward}${pressureBwd}
     stride = stride >> 1u;
     if (stride == 0u) { break; }
   }
-  if (tid == 0u) { stats[pb + ${6 + k}u] = red[0]; }${pressureReduce}
+  if (tid == 0u) { stats[pb + ${6 + k}u] = red[0]; }${pressureReduce}${familyReduce}
 }
 
 // finalize: legacy five scalars + win counts, then energy RMS/active count.
@@ -1878,7 +2045,7 @@ fn advFinalize() {
   var shMean = 0.0;
   var shMin = 0.0;
   var se = 0.0;
-  var sa = 0.0;${pressureFinalDecl}
+  var sa = 0.0;${pressureFinalDecl}${familyFinalDecl}
   var wins : array<f32, ${k}>;
   for (var j = 0u; j < ${k}u; j = j + 1u) { wins[j] = 0.0; }
   for (var wg = 0u; wg < u.wgCount; wg = wg + 1u) {
@@ -1890,7 +2057,7 @@ fn advFinalize() {
     shMin = shMin + stats[pb + 4u];
     for (var j = 0u; j < ${k}u; j = j + 1u) { wins[j] = wins[j] + stats[pb + 5u + j]; }
     se = se + stats[pb + ${5 + k}u];
-    sa = sa + stats[pb + ${6 + k}u];${pressureFinalAcc}
+    sa = sa + stats[pb + ${6 + k}u];${pressureFinalAcc}${familyFinalAcc}
   }
   let bf = f32(max(u.b, 1u));
   stats[0] = sw / bf;             // discriminator loss  (mean weighted residual)
@@ -1902,7 +2069,7 @@ fn advFinalize() {
   // Match the core/AD energy anchor exactly. This is deliberately 1e-16,
   // distinct from the 1e-12 squared soft norm used by chord residuals.
   stats[${5 + k}u] = sqrt(se / max(sa, 1.0) + 1e-16);
-  stats[${6 + k}u] = sa;${pressureFinalWrite}
+  stats[${6 + k}u] = sa;${pressureFinalWrite}${familyFinalWrite}
 }
 `;
 }
@@ -2010,6 +2177,14 @@ export function adversaryPassBShader(
         );
       }
       const { gridSize: gs, features: F } = enc;
+      // Family plane. The cell comparison carries `cls · gs²`, so a grid float
+      // in plane c collects gradient ONLY from members labelled c — which is
+      // what makes the three families separately trainable. Dropping the term
+      // does not crash and does not NaN: it silently trains one shared plane
+      // and the families converge to identical fields, so
+      // tools/family_grid_test.ts gates plane isolation explicitly.
+      const planeTerm =
+        encodingPlanes(enc) > 1 ? `u32(scratch[sBase + ${sl.clsOff}u + site]) * ${gs * gs}u + ` : ``;
       fieldBlocks.push(`
   if (t >= ${seg.floatOffset}u && t < ${seg.floatOffset + seg.floatLength}u) {
     let cell = (t - ${seg.floatOffset}u) / ${F}u;
@@ -2025,10 +2200,10 @@ export function adversaryPassBShader(
         let fx = gxf - floor(gxf); let fy = gyf - floor(gyf);
         let ix1 = min(ix + 1u, ${gs - 1}u); let iy1 = min(iy + 1u, ${gs - 1}u);
         var wsum = 0.0;
-        if (iy * ${gs}u + ix == cell) { wsum = wsum + (1.0 - fx) * (1.0 - fy); }
-        if (iy * ${gs}u + ix1 == cell) { wsum = wsum + fx * (1.0 - fy); }
-        if (iy1 * ${gs}u + ix == cell) { wsum = wsum + (1.0 - fx) * fy; }
-        if (iy1 * ${gs}u + ix1 == cell) { wsum = wsum + fx * fy; }
+        if (${planeTerm}iy * ${gs}u + ix == cell) { wsum = wsum + (1.0 - fx) * (1.0 - fy); }
+        if (${planeTerm}iy * ${gs}u + ix1 == cell) { wsum = wsum + fx * (1.0 - fy); }
+        if (${planeTerm}iy1 * ${gs}u + ix == cell) { wsum = wsum + (1.0 - fx) * fy; }
+        if (${planeTerm}iy1 * ${gs}u + ix1 == cell) { wsum = wsum + fx * fy; }
         g = g + wsum * scratch[sBase + ${sl.dEncOff}u + site * ${fsl.encDim}u + f];
       }
     }

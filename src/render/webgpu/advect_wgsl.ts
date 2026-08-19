@@ -89,7 +89,23 @@ export const ROLE_SALT = 2246822519;
 export type Encoding =
   | { kind: "raw" }
   | { kind: "fourier"; octaves: number }
-  | { kind: "hashgrid"; gridSize: number; features: number };
+  | {
+      kind: "hashgrid";
+      gridSize: number;
+      features: number;
+      /**
+       * Stacked feature PLANES, one per particle family. Omitted ≡ 1, which
+       * regenerates the pre-family shader text verbatim.
+       *
+       * With `planes = C` the table is indexed by (family, y, x) instead of
+       * (y, x): the lookup offsets the cell by `cls · gridSize²`, so a family
+       * owns its own local features and two families can disagree in ONE
+       * region without the whole field moving. That locality is the mechanism
+       * the family game is built on — see
+       * agent_notes/2026-08-19_family_conditioned_hashgrid_adversary.md.
+       */
+      planes?: number;
+    };
 
 /**
  * What the domain's EDGE does — the one axis that decides the topology the
@@ -211,11 +227,19 @@ export function encodingDim(e: Encoding): number {
   return 2;
 }
 
+/** Stacked hashgrid feature planes (1 = classless table). 1 for every other
+ *  encoding, which have no table at all. */
+export function encodingPlanes(e: Encoding): number {
+  return e.kind === "hashgrid" ? e.planes ?? 1 : 1;
+}
+
 /** Trainable-parameter floats the encoding adds AHEAD of the heads (a learned
  *  feature grid for hashgrid; 0 otherwise). Packed at offset 0 of the weights
  *  buffer so the fill can read it via W(). */
 export function encodingParamFloats(e: Encoding): number {
-  return e.kind === "hashgrid" ? e.gridSize * e.gridSize * e.features : 0;
+  return e.kind === "hashgrid"
+    ? encodingPlanes(e) * e.gridSize * e.gridSize * e.features
+    : 0;
 }
 
 /** One packed tensor's location — pairs 1:1 with the model's variable list. */
@@ -225,6 +249,40 @@ export interface PackedSegment {
   role: "kernel" | "bias" | "grid";
   head: number;
   layer: number;
+}
+
+/**
+ * WHERE a particle's family label enters the field. Orthogonal to
+ * {@link FieldLayout.classes}, which only says HOW MANY families exist — the
+ * label itself is never stored, it is `pcg(i ^ CLASS_SALT) % C` derived
+ * identically in the advect kernel, both trainers and the renderer.
+ *
+ * Computed ONCE, in {@link layoutField}, from (classes, encoding). Every
+ * consumer dispatches on this tag and no consumer re-derives the routing from
+ * `classes` + `encoding.kind` — that re-derivation is exactly the structural
+ * branching this type exists to delete.
+ *
+ *   none       — classless field (bit-identical to the pre-class kernels).
+ *   onehot     — RAW encoding only: C one-hot channels appended to head 1's
+ *                layer-0 input (the `Neural Field · Species` piece). Head 0
+ *                stays family-blind.
+ *   grid-plane — HASHGRID only: the family selects its own feature plane of a
+ *                C-plane table. BOTH heads see it, because both read the grid.
+ */
+export type FamilyRoute =
+  | { readonly tag: "none" }
+  | { readonly tag: "onehot"; readonly count: number }
+  | { readonly tag: "grid-plane"; readonly count: number };
+
+/** One-hot channels this route appends to head 1's layer-0 input. */
+export function onehotChannels(route: FamilyRoute): number {
+  switch (route.tag) {
+    case "none":
+    case "grid-plane":
+      return 0;
+    case "onehot":
+      return route.count;
+  }
 }
 
 export interface FieldLayout {
@@ -238,6 +296,8 @@ export interface FieldLayout {
    * kernel, the trainer, and the renderer.
    */
   classes: number;
+  /** Where the family label enters the net. Derived from (classes, encoding). */
+  family: FamilyRoute;
   /** input encoding (raw / fourier) — the head's layer-0 input width. */
   encoding: Encoding;
   /** total packed weights buffer length in floats (multiple of 4) */
@@ -324,6 +384,42 @@ function validateChain(
 }
 
 /**
+ * κ — the ONE site that decides how the family label reaches the field.
+ * Throws on every combination that has no handler; there is no silent
+ * "family is ignored" fallback, because a field that quietly drops the label
+ * still trains, still renders, and produces three IDENTICAL families.
+ */
+export function familyRoute(classes: number, encoding: Encoding): FamilyRoute {
+  const planes = encodingPlanes(encoding);
+  if (!Number.isInteger(planes) || planes < 1 || planes > 16) {
+    throw new Error(`advect: hashgrid planes ${planes} outside [1, 16]`);
+  }
+  if (classes === 0) {
+    if (planes !== 1) {
+      throw new Error(
+        `advect: ${planes} hashgrid planes with classes 0 — nothing would ever ` +
+          `select a plane past the first; set classes to ${planes}`
+      );
+    }
+    return { tag: "none" };
+  }
+  switch (encoding.kind) {
+    case "raw":
+      return { tag: "onehot", count: classes };
+    case "hashgrid":
+      if (planes !== classes) {
+        throw new Error(
+          `advect: hashgrid + classes needs one feature plane per family ` +
+            `(classes ${classes}, planes ${planes})`
+        );
+      }
+      return { tag: "grid-plane", count: classes };
+    case "fourier":
+      throw new Error(`advect: fourier + classes not supported yet`);
+  }
+}
+
+/**
  * Validate head chains and assign packed-buffer offsets (each segment padded
  * to a 4-float boundary so kernel rows with outSize%4==0 are vec4-loadable).
  * `headsDims` must have exactly 2 heads for "helmholtz" (g then r) and
@@ -343,9 +439,7 @@ export function layoutField(
   if (classes > 0 && kind !== "helmholtz") {
     throw new Error(`advect: classes need the helmholtz kind (got '${kind}')`);
   }
-  if (encoding.kind !== "raw" && classes > 0) {
-    throw new Error(`advect: ${encoding.kind} + classes not supported yet`);
-  }
+  const family = familyRoute(classes, encoding);
   const wantHeads =
     kind === "helmholtz" || kind === "agree-disagree" ? 2 : 1;
   if (headsDims.length !== wantHeads) {
@@ -372,7 +466,12 @@ export function layoutField(
     // legacy MLP stay class-blind. This does not assign order/chaos semantics
     // to either head. Both take the ENCODED input width (encDim = 2 for raw,
     // 2+4·octaves for Fourier).
-    validateChain(dims, `${kind}[${h}]`, h === 1 ? encDim + classes : encDim, 2);
+    validateChain(
+      dims,
+      `${kind}[${h}]`,
+      h === 1 ? encDim + onehotChannels(family) : encDim,
+      2
+    );
     const layers: LayerSpec[] = dims.map((d, l) => {
       const weightOffset = align4(off);
       off = weightOffset + d.inSize * d.outSize;
@@ -393,7 +492,7 @@ export function layoutField(
     kind === "helmholtz" || kind === "agree-disagree"
       ? { kind, heads: heads as [HeadSpec, HeadSpec] }
       : { kind, heads: heads as [HeadSpec] };
-  return { spec, classes, encoding, totalFloats: align4(off), segments };
+  return { spec, classes, family, encoding, totalFloats: align4(off), segments };
 }
 
 /**
@@ -656,7 +755,10 @@ function emitHeadLooped(
   const classChannels = head.layers[0].inSize - encDim;
   const bufs = [`h0_${h}`, `h1_${h}`];
   const lines: string[] = [`fn eval_head_${h}(p : vec2f, cls : u32) -> vec2f {`];
-  if (classChannels === 0) lines.push(`  let _cls = cls; // classless head`);
+  // `cls` is live if it picks one-hot channels OR a hashgrid feature plane.
+  if (classChannels === 0 && encodingPlanes(encoding) === 1) {
+    lines.push(`  let _cls = cls; // classless head`);
+  }
   lines.push(`  var ${bufs[0]} : array<f32, ${maxW}>;`);
   lines.push(`  var ${bufs[1]} : array<f32, ${maxW}>;`);
   // encoded input γ(p): raw = [x,y]; fourier prepends the raw coords then, per
@@ -678,16 +780,20 @@ function emitHeadLooped(
     // same indexing as helmholtz.ts). encDim = features; fills h0[0..F-1],
     // OVERWRITING the raw [x,y] above (the grid IS the encoded input).
     const { gridSize: gs, features: F } = encoding;
+    // Family plane: the table is (family, y, x) when planes > 1, so every cell
+    // index picks up `cls · gs²`. planes == 1 emits NOTHING here, which is what
+    // keeps every pre-family hashgrid shader byte-identical.
+    const plane = encodingPlanes(encoding) > 1 ? `cls * ${gs * gs}u + ` : ``;
     lines.push(`  {`);
     lines.push(`    let gxf = clamp(p.x, 0.0, 1.0) * ${(gs - 1).toFixed(1)};`);
     lines.push(`    let gyf = clamp(p.y, 0.0, 1.0) * ${(gs - 1).toFixed(1)};`);
     lines.push(`    let ix = u32(floor(gxf)); let iy = u32(floor(gyf));`);
     lines.push(`    let fx = gxf - floor(gxf); let fy = gyf - floor(gyf);`);
     lines.push(`    let ix1 = min(ix + 1u, ${gs - 1}u); let iy1 = min(iy + 1u, ${gs - 1}u);`);
-    lines.push(`    let b00 = (iy * ${gs}u + ix) * ${F}u;`);
-    lines.push(`    let b10 = (iy * ${gs}u + ix1) * ${F}u;`);
-    lines.push(`    let b01 = (iy1 * ${gs}u + ix) * ${F}u;`);
-    lines.push(`    let b11 = (iy1 * ${gs}u + ix1) * ${F}u;`);
+    lines.push(`    let b00 = (${plane}iy * ${gs}u + ix) * ${F}u;`);
+    lines.push(`    let b10 = (${plane}iy * ${gs}u + ix1) * ${F}u;`);
+    lines.push(`    let b01 = (${plane}iy1 * ${gs}u + ix) * ${F}u;`);
+    lines.push(`    let b11 = (${plane}iy1 * ${gs}u + ix1) * ${F}u;`);
     lines.push(`    let w00 = (1.0 - fx) * (1.0 - fy); let w10 = fx * (1.0 - fy);`);
     lines.push(`    let w01 = (1.0 - fx) * fy; let w11 = fx * fy;`);
     lines.push(`    for (var fi = 0u; fi < ${F}u; fi = fi + 1u) {`);
@@ -765,6 +871,95 @@ function emitForce(spec: FieldSpec): string {
         `}`
       );
   }
+}
+
+/**
+ * DIAGNOSTICS-ONLY field probe: evaluate `forceAt` at an arbitrary list of
+ * NORMALIZED points and write the raw (pre-forceMagnitude) forces out.
+ *
+ * This exists so the health snapshot's field metrics (AC/DC/rmsF/satFrac/
+ * Okubo–Weiss) can be measured on ONE code path regardless of which trainer is
+ * running: the AdvectKernel's packed weights buffer is current on both the
+ * fused path (weights are born there) and the tfjs path (synced every frame),
+ * so binding it here reads exactly the field the artwork is drawing.
+ *
+ * NOT the hot path. It is dispatched from its own encoder on a ~1 Hz timer
+ * (see `FieldProbe`), never inside `encodeStep`, and it writes to a buffer
+ * nothing else reads. The reduction is deliberately left to the HOST: at 32²
+ * points × 5 stencil offsets the readback is 40 KB and the JS reduction can be
+ * the LITERAL transcription of `tools/collapse_probe.ts::diagnostics`, which is
+ * what makes the two comparable at all.
+ *
+ * Bindings:
+ *   0 uniform  UP { alpha, count }
+ *   1 storage read       weights  (packed FieldLayout — shared with advect)
+ *   2 storage read       points   array<vec2f>, normalized coords
+ *   3 storage read_write out      array<vec2f>, raw F(points[i])
+ */
+export function fieldProbeShader(layout: FieldLayout): string {
+  const { spec } = layout;
+  const WG = WORKGROUP_SIZE;
+  const maxW = Math.max(
+    2,
+    encodingDim(layout.encoding),
+    ...spec.heads.flatMap((h) => h.layers.map((L) => Math.max(L.outSize, L.inSize)))
+  );
+  // Always LOOPED: it is the emitter that supports every encoding, and 32²×5
+  // evaluations once a second is not a place where unrolling pays for itself.
+  const heads = spec.heads
+    .map((h, i) => emitHeadLooped(i, h, maxW, layout.encoding))
+    .join("\n\n");
+  return /* wgsl */ `
+struct UP {
+  alpha : f32,
+  count : u32,
+  pad0  : u32,
+  pad1  : u32,
+};
+
+@group(0) @binding(0) var<uniform> u : UP;
+@group(0) @binding(1) var<storage, read> weights : array<vec4f>;
+@group(0) @binding(2) var<storage, read> points : array<vec2f>;
+@group(0) @binding(3) var<storage, read_write> forces : array<vec2f>;
+
+fn W4(i : u32) -> vec4f { return weights[i]; }
+fn W(i : u32) -> f32 { return weights[i >> 2u][i & 3u]; }
+
+fn selu(x : f32) -> f32 {
+  let xc = clamp(x, -80.0, 80.0);
+  return select(1.7580993408473768 * (exp(xc) - 1.0), 1.0507009873554805 * xc, xc > 0.0);
+}
+fn selu4(x : vec4f) -> vec4f {
+  let xc = clamp(x, vec4f(-80.0), vec4f(80.0));
+  return select(1.7580993408473768 * (exp(xc) - vec4f(1.0)), 1.0507009873554805 * xc, xc > vec4f(0.0));
+}
+fn sigmoid_(x : f32) -> f32 { return 1.0 / (1.0 + exp(-x)); }
+fn sigmoid4(x : vec4f) -> vec4f { return vec4f(1.0) / (vec4f(1.0) + exp(-x)); }
+
+fn pcg(v : u32) -> u32 {
+  let s = v * 747796405u + 2891336453u;
+  let t = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+  return (t >> 22u) ^ t;
+}
+fn rand01(x : u32) -> f32 { return f32(x) * 2.3283064365386963e-10; }
+
+${heads}
+
+${emitForce(spec)}
+
+@compute @workgroup_size(${WG})
+fn probe(@builtin(global_invocation_id) gidv : vec3u) {
+  let gid = gidv.x;
+  if (gid >= u.count) { return; }
+  // Class and agree/disagree role are per-SITE hashes here, derived with the
+  // same salts the advect kernel uses per PARTICLE. On a classed or
+  // agree-disagree layout the field genuinely differs by role, so the probe
+  // samples the same mixture the cloud sees rather than inventing a single
+  // canonical head that no particle is actually advected by.
+  let cls = ${layout.classes > 0 ? `pcg(gid ^ ${CLASS_SALT}u) % ${layout.classes}u` : `0u`};
+  forces[gid] = forceAt(points[gid], cls, gid);
+}
+`;
 }
 
 export interface AdvectShaderOpts {

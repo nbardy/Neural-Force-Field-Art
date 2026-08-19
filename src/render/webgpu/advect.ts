@@ -125,6 +125,9 @@ export class AdvectKernel {
             kind: "hashgrid",
             gridSize: field.gridSize,
             features: field.gridFeatures,
+            // The field allocated one plane per family; the layout must agree
+            // or `layoutField` throws rather than silently indexing plane 0.
+            planes: field.gridPlanes,
           } as const)
         : ({ kind: "raw" } as const);
     const gridVar = field.grid ? [field.grid] : [];

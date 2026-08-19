@@ -87,7 +87,40 @@ It also waits for the asynchronous Pages build and asserts the live `index.html`
 - Both `yarn.lock` and `package-lock.json` may exist; the deploy path uses `npm` + `git push` to the `gh-pages` branch (site: https://nbardy.github.io/Neural-Force-Field-Art/).
 - `tools/smoke.mjs` needs `puppeteer` (a devDependency; downloads a Chromium on install).
 
-### Adversary numerical stability
+#### Particle families (RGB Families piece)
+
+A particle's family label is **never stored** — it is
+`pcg(i ^ CLASS_SALT) % C`, derived identically in the advect kernel, both
+trainers, the adversary and the renderer. Three copies of that derivation must
+agree or the cloud is advected by one family's field and coloured as another,
+silently.
+
+**Two routes, one κ.** `FamilyRoute` (`advect_wgsl.ts`) is the only place the
+routing is decided; every consumer dispatches on the tag and none re-derives it
+from `classes` + `encoding.kind`:
+
+- `onehot` — RAW encoding only. C one-hot channels on head 1's layer-0 input
+  (the `Neural Field · Species` piece). **The fused adversary refuses this** —
+  those extra rows have no counterpart in its field backward.
+- `grid-plane` — HASHGRID only. `planes: C` stacks one feature table per family
+  and every cell index carries `cls · gridSize²`. Fully supported by the fused
+  adversary; the label rides the dEnc machinery the reward already uses.
+
+Dropping the `cls · gridSize²` term is the failure mode to watch: it compiles,
+runs, trains, and quietly collapses the three families onto one shared plane.
+`tools/family_grid_test.ts` gates the offset directly (FD vs analytic, plane
+isolation, per-plane training displacement) — run it after touching any grid
+indexing. `planes: 1` regenerates the pre-family WGSL byte for byte, which is
+what protects the shipped hashgrid pieces.
+
+Per-family payoff telemetry requires **m == 1** (the point observer): only then
+does a tuple have one unambiguous family. `familyInstrument` reports the typed
+state `off`/`unmeasured` otherwise rather than inventing a bucketing rule.
+
+Design + measurements:
+`agent_notes/2026-08-19_family_conditioned_hashgrid_adversary.md`.
+
+## Adversary numerical stability
 
 - Standalone adversary pieces use field/G Adam LR `0.001`, D LR `0.003`. Reward
   weight is **not** an honest generator-step knob under Adam (see
