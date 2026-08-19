@@ -50,7 +50,9 @@ default. The recipe below is unchanged either way — that is the point of
 recording it.
 
 - **Commit:** `b72aa542d29834f573e172d59d0e53362bff55bd`
-- **Deployed:** gh-pages `8b9026c`, bundle `index.74c2c06f.js`, live at
+- **Captured on deploy:** gh-pages `8b9026c`, bundle `index.74c2c06f.js`. That
+  is provenance, not where to look now — the link below is piece-resolved by
+  name and keeps working across deploys. Live site:
   <https://nbardy.github.io/Neural-Force-Field-Art/>
 - **Diverges from the gallery default in:** `border` (`wrap` → `reset`) and
   `discriminatorLearningRate` (3e-3 → 7.2e-4) — and ONLY those, because neither
