@@ -19,6 +19,11 @@
  *
  * Trainer must allocate densPack with densPackFloats(G) floats (4×G²).
  * See PIXEL_DISC_KIND_PASSES for per-kind pass order.
+ *
+ * criticDisc/criticGen are workgroup-parallel (one cell per invocation for the
+ * activations, one WEIGHT per invocation for the gradients), dispatched as a
+ * SINGLE workgroup so the phases can be separated by barriers. Their per-cell
+ * workspace lives in the tail of `scratch` — see pixelScratchBytes.
  */
 
 import { type FieldLayout, type HeadSpec } from "./advect_wgsl";
@@ -147,20 +152,30 @@ export function pixelCritSiteStride(field: FieldLayout): number {
   return sl.encStore + sl.siteBlk;
 }
 
+/**
+ * `scratch` sizing. Three regions, in the order the shader indexes them:
+ *   [0, batchCap·partStride)   per-particle blocks
+ *   +8                          pad
+ *   + sites·critSiteStride      critic field-eval sites — `fillForceGrid` runs
+ *                               ONE CELL PER INVOCATION, so vec-field needs one
+ *                               per cell or the parallel pass races on scratch
+ *   + critWorkFloats            per-cell critic workspace (cFeat/cSoft/…)
+ *
+ * Takes `dims` rather than a caller-supplied site count on purpose: the shader
+ * derives the critic-work base from the same {@link pixelCritSites}, and a
+ * hand-passed number is exactly how that base and this size drift apart.
+ */
 export function pixelScratchBytes(
   field: FieldLayout,
   batchCap: number,
-  /**
-   * Critic field-eval workspaces to reserve. `fillForceGrid` runs ONE CELL PER
-   * INVOCATION, so each needs its own site block — a single shared workspace
-   * (what this used to allocate) makes the parallel pass race on scratch.
-   * Kinds without a force grid pass 1 and pay nothing.
-   */
-  critSites = 1
+  dims: PixelDiscDims
 ): number {
   const partStride = pixelParticleScratchFloats(field);
   return (
-    batchCap * partStride + 8 + critSites * pixelCritSiteStride(field)
+    batchCap * partStride +
+    8 +
+    pixelCritSites(dims) * pixelCritSiteStride(field) +
+    pixelCritWorkFloats(dims)
   ) * 4;
 }
 
@@ -251,166 +266,399 @@ fn mulberry32(seed : u32) -> f32 {
 `;
 }
 
-/** Read density slice: off=0 dens, off=2 auxA. */
-function emitBackboneForward(d: PixelDiscDims, densOffExpr: string): string {
-  const { G, E, K } = d;
-  const nCell = G * G;
-  const wl = pixelWeightLayout(d);
-  const convB = wl.convB;
-  const convW = wl.convW;
-  const code = wl.code;
+/**
+ * Cross-invocation sync point for the critic kernels.
+ *
+ * BOTH barriers, always. `workgroupBarrier()` orders workgroup memory (the
+ * reduction scratch and the GAP/MLP activations); `storageBarrier()` orders the
+ * storage buffer the per-cell workspace lives in. Dropping the storage half is
+ * the silent-wrong-answer bug: execution still synchronises, so nothing hangs
+ * and nothing errors — a lane just reads a neighbour's stale cFeat.
+ */
+const BAR = /* wgsl */ `workgroupBarrier();
+  storageBarrier();`;
+
+/**
+ * Per-cell critic workspace, carved out of the tail of `scratch` (floats,
+ * relative to the critic-work base that gets baked into the accessors).
+ *
+ * These used to be function-scope PRIVATE arrays in a `@workgroup_size(1)`
+ * kernel: cFeat[E·G²] + cSoft[K·G²] (+ dSoft, gD, gW) held by ONE lane — ~24 KB
+ * of spilled thread-local memory per invocation with no latency hiding, which is
+ * where 19–22 ms/step at G=16 went. All of it is per-CELL data, so it belongs in
+ * storage indexed by cell and shared by the whole workgroup.
+ *
+ * It deliberately does NOT live in `var<workgroup>`: cSoft alone is K·G²·4 =
+ * 16 KB at the gallery config and `maxComputeWorkgroupStorageSize` is 16384
+ * bytes on mobile. Only small cross-cell scalars go in workgroup memory
+ * (see {@link pixelCritWorkgroupBytes}).
+ */
+interface CritWorkLayout {
+  /** cFeat[E·nCell] — post-ReLU conv features. */
+  feat: number;
+  /** cSoft[K·nCell] — per-cell softmax over the codebook. */
+  soft: number;
+  /** dSoft[K·nCell] in; overwritten IN PLACE by dLogit[K·nCell]. */
+  dsoft: number;
+  /** dFeat[E·nCell], stored already masked by the ReLU (i.e. `gf`). */
+  dfeat: number;
+  /** 2·nCell per-cell head grads (dvx,dvy for vec-field; dPred otherwise). */
+  hg: number;
+  total: number;
+}
+
+function critWorkLayout(d: PixelDiscDims): CritWorkLayout {
+  const n = d.G * d.G;
+  const feat = 0;
+  const soft = feat + d.E * n;
+  const dsoft = soft + d.K * n;
+  const dfeat = dsoft + d.K * n;
+  const hg = dfeat + d.E * n;
+  return { feat, soft, dsoft, dfeat, hg, total: hg + 2 * n };
+}
+
+/** f32s of per-cell critic workspace appended to `scratch`. */
+export function pixelCritWorkFloats(d: PixelDiscDims): number {
+  return critWorkLayout(d).total;
+}
+
+/**
+ * Critic field-eval sites to reserve in `scratch`. `fillForceGrid` runs ONE
+ * CELL PER INVOCATION, so vec-field needs a site block per cell; the other
+ * kinds have no force grid and pay for one.
+ */
+export function pixelCritSites(d: PixelDiscDims): number {
+  return d.kind === "vec-field" ? d.G * d.G : 1;
+}
+
+/**
+ * Bytes of `var<workgroup>` the critic kernels declare. MUST stay ≤ 16384 —
+ * that is `maxComputeWorkgroupStorageSize` on mobile, and exceeding it is a
+ * pipeline-creation failure on exactly the devices this parallelisation was
+ * for. Nothing that scales with G² may move into workgroup memory.
+ */
+export function pixelCritWorkgroupBytes(d: PixelDiscDims): number {
+  const reduce = PIXEL_DISC_WG * 4;
+  const gapMlp = d.kind === "real-fake" ? (2 * d.K + 2 * d.hidden) * 4 : 0;
+  return reduce + gapMlp;
+}
+
+/** Storage accessors for the per-cell workspace, with the base baked in. */
+function emitCritAccessors(d: PixelDiscDims, base: number): string {
+  const cw = critWorkLayout(d);
+  const at = (off: number) => `${base + off}u`;
   return /* wgsl */ `
-  for (var e = 0u; e < ${E}u; e = e + 1u) {
-    let b = critW[${convB}u + e];
-    for (var y = 0u; y < ${G}u; y = y + 1u) {
-      for (var x = 0u; x < ${G}u; x = x + 1u) {
-        var s = b;
-        for (var dy = 0u; dy < 3u; dy = dy + 1u) {
-          let yy = u32(clamp(i32(y) + i32(dy) - 1, 0, ${G - 1}));
-          for (var dx = 0u; dx < 3u; dx = dx + 1u) {
-            let xx = u32(clamp(i32(x) + i32(dx) - 1, 0, ${G - 1}));
-            let di = ${densOffExpr} + yy * ${G}u + xx;
-            s = s + critW[${convW}u + e * 9u + dy * 3u + dx] * densPack[di];
-          }
-        }
-        cFeat[e * ${nCell}u + y * ${G}u + x] = max(s, 0.0);
-      }
-    }
+fn cFeatAt(e : u32, c : u32) -> f32 { return scratch[${at(cw.feat)} + e * N_CELL + c]; }
+fn setCFeat(e : u32, c : u32, v : f32) { scratch[${at(cw.feat)} + e * N_CELL + c] = v; }
+fn cSoftAt(k : u32, c : u32) -> f32 { return scratch[${at(cw.soft)} + k * N_CELL + c]; }
+fn setCSoft(k : u32, c : u32, v : f32) { scratch[${at(cw.soft)} + k * N_CELL + c] = v; }
+fn dSoftAt(k : u32, c : u32) -> f32 { return scratch[${at(cw.dsoft)} + k * N_CELL + c]; }
+fn setDSoft(k : u32, c : u32, v : f32) { scratch[${at(cw.dsoft)} + k * N_CELL + c] = v; }
+fn gFeatAt(e : u32, c : u32) -> f32 { return scratch[${at(cw.dfeat)} + e * N_CELL + c]; }
+fn setGFeat(e : u32, c : u32, v : f32) { scratch[${at(cw.dfeat)} + e * N_CELL + c] = v; }
+fn hGradAt(j : u32, c : u32) -> f32 { return scratch[${at(cw.hg)} + j * N_CELL + c]; }
+fn setHGrad(j : u32, c : u32, v : f32) { scratch[${at(cw.hg)} + j * N_CELL + c] = v; }
+`;
+}
+
+/**
+ * Workgroup sum reduction.
+ *
+ * MUST be called from UNIFORM control flow by EVERY invocation — it contains
+ * barriers, so an `if (cell >= N_CELL) { return; }` guard above it is a hang,
+ * not an optimisation. That is also why every cell loop in these kernels is a
+ * grid-stride loop instead of a one-cell-per-thread guard.
+ *
+ * The trailing barrier is not redundant: without it a fast lane can start the
+ * NEXT wgSum's `wgRed[tid]` store while a slow lane still reads `wgRed[0]`.
+ */
+function emitWgReduce(): string {
+  return /* wgsl */ `
+var<workgroup> wgRed : array<f32, ${PIXEL_DISC_WG}>;
+fn wgSum(tid : u32, v : f32) -> f32 {
+  wgRed[tid] = v;
+  ${BAR}
+  for (var s = ${PIXEL_DISC_WG / 2}u; s > 0u; s = s >> 1u) {
+    if (tid < s) { wgRed[tid] = wgRed[tid] + wgRed[tid + s]; }
+    workgroupBarrier();
   }
-  for (var cell = 0u; cell < ${nCell}u; cell = cell + 1u) {
-    var maxL = -1e30;
-    var logits : array<f32, ${K}>;
-    for (var k = 0u; k < ${K}u; k = k + 1u) {
-      var s = 0.0;
-      for (var e = 0u; e < ${E}u; e = e + 1u) {
-        s = s + cFeat[e * ${nCell}u + cell] * critW[${code}u + k * ${E}u + e];
+  let r = wgRed[0];
+  workgroupBarrier();
+  return r;
+}
+`;
+}
+
+/** Zero the critMeta gradient slice so every later write can just accumulate. */
+function emitZeroGrads(nW: number): string {
+  return /* wgsl */ `
+  for (var w = tid; w < ${nW}u; w = w + ${PIXEL_DISC_WG}u) { critMeta[w] = 0.0; }
+  ${BAR}
+`;
+}
+
+/**
+ * conv3×3 → ReLU → codebook softmax, ONE CELL PER INVOCATION (grid-strided, so
+ * G² may exceed the workgroup). The softmax needs only this cell's features, so
+ * it fuses into the same loop with no barrier in between.
+ */
+function emitFwdPar(d: PixelDiscDims, densOff: string): string {
+  const { G, E, K } = d;
+  const wl = pixelWeightLayout(d);
+  return /* wgsl */ `
+  for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
+    let cy = c / G;
+    let cx = c % G;
+    var feat : array<f32, ${E}>;
+    for (var e = 0u; e < ${E}u; e = e + 1u) {
+      var s = critW[${wl.convB}u + e];
+      for (var dy = 0u; dy < 3u; dy = dy + 1u) {
+        let yy = u32(clamp(i32(cy) + i32(dy) - 1, 0, ${G - 1}));
+        for (var dx = 0u; dx < 3u; dx = dx + 1u) {
+          let xx = u32(clamp(i32(cx) + i32(dx) - 1, 0, ${G - 1}));
+          s = s + critW[${wl.convW}u + e * 9u + dy * 3u + dx] * densPack[${densOff} + yy * G + xx];
+        }
       }
-      logits[k] = s;
-      maxL = max(maxL, s);
+      let a = max(s, 0.0);
+      feat[e] = a;
+      setCFeat(e, c, a);
+    }
+    var logits : array<f32, ${K}>;
+    var maxL = -1e30;
+    for (var k = 0u; k < ${K}u; k = k + 1u) {
+      var s2 = 0.0;
+      for (var e = 0u; e < ${E}u; e = e + 1u) {
+        s2 = s2 + feat[e] * critW[${wl.code}u + k * ${E}u + e];
+      }
+      logits[k] = s2;
+      maxL = max(maxL, s2);
     }
     var sum = 0.0;
     for (var k = 0u; k < ${K}u; k = k + 1u) {
       let v = exp(logits[k] - maxL);
-      cSoft[k * ${nCell}u + cell] = v;
+      logits[k] = v;
       sum = sum + v;
     }
     let inv = 1.0 / sum;
-    for (var k = 0u; k < ${K}u; k = k + 1u) {
-      cSoft[k * ${nCell}u + cell] = cSoft[k * ${nCell}u + cell] * inv;
-    }
+    for (var k = 0u; k < ${K}u; k = k + 1u) { setCSoft(k, c, logits[k] * inv); }
   }
+  ${BAR}
 `;
 }
 
-/** VJP through backbone; dSoft[K*nCell] in, gW/gD out; densOff like forward. */
-function emitBackboneBackward(
-  d: PixelDiscDims,
-  densOffExpr: string,
-  nW: number
-): string {
-  const { G, E, K } = d;
-  const nCell = G * G;
+/**
+ * Softmax VJP + codebook VJP, one cell per invocation. dSoft is overwritten in
+ * place by dLogit (the `dot` that needs the old values is computed first), and
+ * dFeat is stored already multiplied by the ReLU mask — so the weight-gradient
+ * and gD passes downstream read one array, `gFeatAt`, and never re-check it.
+ */
+function emitBwdActPar(d: PixelDiscDims): string {
+  const { E, K } = d;
   const wl = pixelWeightLayout(d);
-  const convB = wl.convB;
-  const convW = wl.convW;
-  const code = wl.code;
   return /* wgsl */ `
-  var dFeat : array<f32, ${E * nCell}>;
-  for (var i = 0u; i < ${E * nCell}u; i = i + 1u) { dFeat[i] = 0.0; }
-  for (var cell = 0u; cell < ${nCell}u; cell = cell + 1u) {
+  for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
     var dot = 0.0;
+    for (var k = 0u; k < ${K}u; k = k + 1u) { dot = dot + cSoftAt(k, c) * dSoftAt(k, c); }
+    var dl : array<f32, ${K}>;
     for (var k = 0u; k < ${K}u; k = k + 1u) {
-      dot = dot + cSoft[k * ${nCell}u + cell] * dSoft[k * ${nCell}u + cell];
+      let v = cSoftAt(k, c) * (dSoftAt(k, c) - dot);
+      dl[k] = v;
+      setDSoft(k, c, v);
     }
-    for (var k = 0u; k < ${K}u; k = k + 1u) {
-      let dLogit = cSoft[k * ${nCell}u + cell] * (dSoft[k * ${nCell}u + cell] - dot);
-      for (var e = 0u; e < ${E}u; e = e + 1u) {
-        let f = cFeat[e * ${nCell}u + cell];
-        gW[${code}u + k * ${E}u + e] = gW[${code}u + k * ${E}u + e] + dLogit * f;
-        dFeat[e * ${nCell}u + cell] =
-          dFeat[e * ${nCell}u + cell] + dLogit * critW[${code}u + k * ${E}u + e];
+    for (var e = 0u; e < ${E}u; e = e + 1u) {
+      var g = 0.0;
+      for (var k = 0u; k < ${K}u; k = k + 1u) {
+        g = g + dl[k] * critW[${wl.code}u + k * ${E}u + e];
       }
+      setGFeat(e, c, select(0.0, g, cFeatAt(e, c) > 0.0));
     }
   }
+  ${BAR}
+`;
+}
+
+/**
+ * Backbone WEIGHT gradients — ONE WEIGHT PER INVOCATION, each summing over all
+ * cells. This is why the kernel needs no gW partials and no atomics: every
+ * output index has exactly one owning invocation, and its reduction is a plain
+ * in-order loop over cells, so the sum order matches the old serial kernel.
+ */
+function emitBackboneWeightGrads(d: PixelDiscDims, densOff: string): string {
+  const { G, E, K } = d;
+  const wl = pixelWeightLayout(d);
+  return /* wgsl */ `
+  for (var w = tid; w < ${K * E}u; w = w + ${PIXEL_DISC_WG}u) {
+    let k = w / ${E}u;
+    let e = w % ${E}u;
+    var s = 0.0;
+    for (var c = 0u; c < N_CELL; c = c + 1u) { s = s + dSoftAt(k, c) * cFeatAt(e, c); }
+    critMeta[${wl.code}u + w] = critMeta[${wl.code}u + w] + s;
+  }
+  for (var e = tid; e < ${E}u; e = e + ${PIXEL_DISC_WG}u) {
+    var s = 0.0;
+    for (var c = 0u; c < N_CELL; c = c + 1u) { s = s + gFeatAt(e, c); }
+    critMeta[${wl.convB}u + e] = critMeta[${wl.convB}u + e] + s;
+  }
+  for (var w = tid; w < ${E * 9}u; w = w + ${PIXEL_DISC_WG}u) {
+    let e = w / 9u;
+    let tap = w % 9u;
+    let dy = tap / 3u;
+    let dx = tap % 3u;
+    var s = 0.0;
+    for (var c = 0u; c < N_CELL; c = c + 1u) {
+      let yy = u32(clamp(i32(c / G) + i32(dy) - 1, 0, ${G - 1}));
+      let xx = u32(clamp(i32(c % G) + i32(dx) - 1, 0, ${G - 1}));
+      s = s + gFeatAt(e, c) * densPack[${densOff} + yy * G + xx];
+    }
+    critMeta[${wl.convW}u + w] = critMeta[${wl.convW}u + w] + s;
+  }
+  ${BAR}
+`;
+}
+
+/**
+ * ∂L/∂D at one cell — the GATHER form of the conv backward.
+ *
+ * The serial kernel SCATTERED: `gD[clamp(y+dy-1)][clamp(x+dx-1)] += gf[e][y][x]·W`.
+ * A scatter races the moment cells are spread across invocations, so this
+ * inverts it. For target row Y the contributing source rows are the contiguous
+ * range [lo,hi] with
+ *   lo = (Y == 0)   ? 0   : Y-dy+1
+ *   hi = (Y == G-1) ? G-1 : Y-dy+1
+ * and the range is EMPTY when lo > hi. Those two edge cases are exactly the
+ * clamp's edge replication: a border cell receives every tap the clamp folded
+ * onto it (Y=0 takes y∈{0,1} at dy=0 and nothing at dy=2), an interior cell
+ * takes the single source Y-dy+1. Columns are identical by separability.
+ */
+function emitGdGather(d: PixelDiscDims): string {
+  const { G, E } = d;
+  const wl = pixelWeightLayout(d);
+  return /* wgsl */ `
+fn gdAt(c : u32) -> f32 {
+  let cy = i32(c / G);
+  let cx = i32(c % G);
+  var acc = 0.0;
   for (var e = 0u; e < ${E}u; e = e + 1u) {
-    for (var y = 0u; y < ${G}u; y = y + 1u) {
-      for (var x = 0u; x < ${G}u; x = x + 1u) {
-        let idx = e * ${nCell}u + y * ${G}u + x;
-        if (cFeat[idx] <= 0.0) { continue; }
-        let gf = dFeat[idx];
-        gW[${convB}u + e] = gW[${convB}u + e] + gf;
-        for (var dy = 0u; dy < 3u; dy = dy + 1u) {
-          let yy = u32(clamp(i32(y) + i32(dy) - 1, 0, ${G - 1}));
-          for (var dx = 0u; dx < 3u; dx = dx + 1u) {
-            let xx = u32(clamp(i32(x) + i32(dx) - 1, 0, ${G - 1}));
-            let wi = ${convW}u + e * 9u + dy * 3u + dx;
-            let di = ${densOffExpr} + yy * ${G}u + xx;
-            gW[wi] = gW[wi] + gf * densPack[di];
-            gD[yy * ${G}u + xx] = gD[yy * ${G}u + xx] + gf * critW[wi];
+    for (var dy = 0u; dy < 3u; dy = dy + 1u) {
+      let ylo = select(cy - i32(dy) + 1, 0, cy == 0);
+      let yhi = select(cy - i32(dy) + 1, ${G - 1}, cy == ${G - 1});
+      for (var dx = 0u; dx < 3u; dx = dx + 1u) {
+        let xlo = select(cx - i32(dx) + 1, 0, cx == 0);
+        let xhi = select(cx - i32(dx) + 1, ${G - 1}, cx == ${G - 1});
+        let wv = critW[${wl.convW}u + e * 9u + dy * 3u + dx];
+        for (var y = ylo; y <= yhi; y = y + 1) {
+          for (var x = xlo; x <= xhi; x = x + 1) {
+            acc = acc + wv * gFeatAt(e, u32(y) * G + u32(x));
           }
         }
       }
     }
   }
+  return acc;
+}
 `;
 }
 
-function emitGapMlpForward(d: PixelDiscDims): string {
+/** GAP → MLP forward (real-fake). Leaves `logit` uniform across the workgroup. */
+function emitGapMlpFwdPar(d: PixelDiscDims): string {
   const { K, hidden } = d;
   const wl = pixelWeightLayout(d);
   if (wl.kind !== "real-fake") throw new Error("GAP MLP only for real-fake");
   return /* wgsl */ `
-  for (var k = 0u; k < ${K}u; k = k + 1u) { cZ[k] = 0.0; }
-  for (var cell = 0u; cell < N_CELL; cell = cell + 1u) {
-    for (var k = 0u; k < ${K}u; k = k + 1u) {
-      cZ[k] = cZ[k] + cSoft[k * N_CELL + cell];
-    }
+  for (var k = tid; k < ${K}u; k = k + ${PIXEL_DISC_WG}u) {
+    var s = 0.0;
+    for (var c = 0u; c < N_CELL; c = c + 1u) { s = s + cSoftAt(k, c); }
+    wgZ[k] = s / f32(N_CELL);
   }
-  for (var k = 0u; k < ${K}u; k = k + 1u) { cZ[k] = cZ[k] / f32(N_CELL); }
-  for (var i = 0u; i < ${hidden}u; i = i + 1u) {
+  ${BAR}
+  for (var i = tid; i < ${hidden}u; i = i + ${PIXEL_DISC_WG}u) {
     var s = critW[${wl.mlp0B}u + i];
     for (var k = 0u; k < ${K}u; k = k + 1u) {
-      s = s + critW[${wl.mlp0W}u + i * ${K}u + k] * cZ[k];
+      s = s + critW[${wl.mlp0W}u + i * ${K}u + k] * wgZ[k];
     }
-    cH[i] = tanh(s);
+    wgH[i] = tanh(s);
   }
-  logit = critW[${wl.mlp1B}u];
+  ${BAR}
+  var logit = critW[${wl.mlp1B}u];
   for (var i = 0u; i < ${hidden}u; i = i + 1u) {
-    logit = logit + critW[${wl.mlp1W}u + i] * cH[i];
+    logit = logit + critW[${wl.mlp1W}u + i] * wgH[i];
   }
 `;
 }
 
-function emitGapMlpBackward(d: PixelDiscDims, dLogitExpr: string): string {
-  const { G, K, hidden } = d;
-  const nCell = G * G;
+/**
+ * MLP backward (real-fake). `dLogit` is uniform, so each MLP weight gradient is
+ * owned by one invocation; `dz` reduces over `hidden`, and the resulting
+ * per-code constant is broadcast into every cell's dSoft.
+ *
+ * `wantGrads=false` drops the weight writes entirely: criticGen only ever
+ * produces ∂L/∂D — its gW was computed and then discarded by the old kernel.
+ */
+function emitGapMlpBwdPar(
+  d: PixelDiscDims,
+  dLogitExpr: string,
+  wantGrads: boolean
+): string {
+  const { K, hidden } = d;
   const wl = pixelWeightLayout(d);
   if (wl.kind !== "real-fake") throw new Error("GAP MLP only for real-fake");
+  const wGrad1B = wantGrads
+    ? `  if (tid == 0u) { critMeta[${wl.mlp1B}u] = critMeta[${wl.mlp1B}u] + dLogit; }`
+    : "";
+  const wGradI = wantGrads
+    ? `    critMeta[${wl.mlp1W}u + i] = critMeta[${wl.mlp1W}u + i] + dLogit * wgH[i];
+    critMeta[${wl.mlp0B}u + i] = critMeta[${wl.mlp0B}u + i] + pre;`
+    : "";
+  const wGrad0W = wantGrads
+    ? `  for (var w = tid; w < ${hidden * K}u; w = w + ${PIXEL_DISC_WG}u) {
+    critMeta[${wl.mlp0W}u + w] = critMeta[${wl.mlp0W}u + w] + wgPre[w / ${K}u] * wgZ[w % ${K}u];
+  }`
+    : "";
   return /* wgsl */ `
   let dLogit = ${dLogitExpr};
-  gW[${wl.mlp1B}u] = gW[${wl.mlp1B}u] + dLogit;
-  var dh : array<f32, ${hidden}>;
-  for (var i = 0u; i < ${hidden}u; i = i + 1u) {
-    gW[${wl.mlp1W}u + i] = gW[${wl.mlp1W}u + i] + dLogit * cH[i];
-    dh[i] = dLogit * critW[${wl.mlp1W}u + i];
+${wGrad1B}
+  for (var i = tid; i < ${hidden}u; i = i + ${PIXEL_DISC_WG}u) {
+    let pre = (dLogit * critW[${wl.mlp1W}u + i]) * (1.0 - wgH[i] * wgH[i]);
+    wgPre[i] = pre;
+${wGradI}
   }
-  var dz : array<f32, ${K}>;
-  for (var k = 0u; k < ${K}u; k = k + 1u) { dz[k] = 0.0; }
-  for (var i = 0u; i < ${hidden}u; i = i + 1u) {
-    let pre = dh[i] * (1.0 - cH[i] * cH[i]);
-    gW[${wl.mlp0B}u + i] = gW[${wl.mlp0B}u + i] + pre;
-    for (var k = 0u; k < ${K}u; k = k + 1u) {
-      gW[${wl.mlp0W}u + i * ${K}u + k] =
-        gW[${wl.mlp0W}u + i * ${K}u + k] + pre * cZ[k];
-      dz[k] = dz[k] + pre * critW[${wl.mlp0W}u + i * ${K}u + k];
+  ${BAR}
+${wGrad0W}
+  for (var k = tid; k < ${K}u; k = k + ${PIXEL_DISC_WG}u) {
+    var dzk = 0.0;
+    for (var i = 0u; i < ${hidden}u; i = i + 1u) {
+      dzk = dzk + wgPre[i] * critW[${wl.mlp0W}u + i * ${K}u + k];
     }
+    wgDz[k] = dzk / f32(N_CELL);
   }
-  for (var k = 0u; k < ${K}u; k = k + 1u) {
-    let gz = dz[k] / f32(N_CELL);
-    for (var cell = 0u; cell < ${nCell}u; cell = cell + 1u) {
-      dSoft[k * ${nCell}u + cell] = dSoft[k * ${nCell}u + cell] + gz;
-    }
+  ${BAR}
+  for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
+    for (var k = 0u; k < ${K}u; k = k + 1u) { setDSoft(k, c, wgDz[k]); }
   }
+  ${BAR}
+`;
+}
+
+/**
+ * Random block mask + the masked conv input, one cell per invocation. The rect
+ * is a pure function of (maskSeed, cell), so every lane derives the same block
+ * the old single-thread `buildInpaintMask` wrote cell by cell.
+ */
+function emitInpaintMaskPar(d: PixelDiscDims): string {
+  const G = d.G;
+  return /* wgsl */ `
+  let bw = max(2u, u32(floor(f32(${G}u) * 0.5)));
+  let bh = max(2u, u32(floor(f32(${G}u) * 0.5)));
+  let mx0 = u32(floor(mulberry32(uni.maskSeed) * f32(${G}u - bw + 1u)));
+  let my0 = u32(floor(mulberry32(uni.maskSeed + 17u) * f32(${G}u - bh + 1u)));
+  for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
+    let cy = c / G;
+    let cx = c % G;
+    let inM = cy >= my0 && cy < my0 + bh && cx >= mx0 && cx < mx0 + bw;
+    set_auxB(c, select(0.0, 1.0, inM));
+    densPack[2u * N_CELL + c] = dens_at(c) * select(1.0, 0.0, inM);
+  }
+  ${BAR}
 `;
 }
 
@@ -424,27 +672,6 @@ fn bceGradLogit(logit : f32, tgt : f32) -> vec2f {
 }
 `;
 }
-
-function emitInpaintMask(d: PixelDiscDims): string {
-  const G = d.G;
-  return /* wgsl */ `
-fn buildInpaintMask() {
-  let bw = max(2u, u32(floor(f32(${G}u) * 0.5)));
-  let bh = max(2u, u32(floor(f32(${G}u) * 0.5)));
-  let r0 = mulberry32(uni.maskSeed);
-  let r1 = mulberry32(uni.maskSeed + 17u);
-  let x0 = u32(floor(r0 * f32(${G}u - bw + 1u)));
-  let y0 = u32(floor(r1 * f32(${G}u - bh + 1u)));
-  for (var i = 0u; i < N_CELL; i = i + 1u) { set_auxB(i, 0.0); }
-  for (var y = y0; y < y0 + bh; y = y + 1u) {
-    for (var x = x0; x < x0 + bw; x = x + 1u) {
-      set_auxB(y * ${G}u + x, 1.0);
-    }
-  }
-}
-`;
-}
-
 /**
  * Per-cell target field F(cell_center) for `vec-field`, ONE CELL PER INVOCATION.
  *
@@ -477,9 +704,15 @@ fn fillForceGrid(@builtin(global_invocation_id) gid : vec3u) {
 `;
 }
 
+/**
+ * criticDisc — cell-parallel forward + head, then WEIGHT-parallel gradients.
+ *
+ * `gD` is deliberately absent: the serial kernel computed it here and never
+ * read it (only criticGen turns ∂L/∂D into a generator signal), so the whole
+ * conv-input gradient is dead work on the disc side.
+ */
 function emitCriticDiscBody(d: PixelDiscDims, metaStats: number): string {
-  const { G, K } = d;
-  const nCell = G * G;
+  const { K } = d;
   const nW = pixelDiscWeightCount(d);
   const wl = pixelWeightLayout(d);
   const dens0 = "0u";
@@ -489,176 +722,178 @@ function emitCriticDiscBody(d: PixelDiscDims, metaStats: number): string {
     case "vec-field": {
       if (wl.kind !== "vec-field") throw new Error("layout mismatch");
       return /* wgsl */ `
-  ${emitBackboneForward(d, dens0)}
-  var discR = 0.0;
-  var nActive = 0.0;
-  var dSoft : array<f32, ${K * nCell}>;
-  for (var i = 0u; i < ${K * nCell}u; i = i + 1u) { dSoft[i] = 0.0; }
-  var gW : array<f32, ${nW}>;
-  for (var i = 0u; i < ${nW}u; i = i + 1u) { gW[i] = 0.0; }
-  var gD : array<f32, ${nCell}>;
-  for (var i = 0u; i < ${nCell}u; i = i + 1u) { gD[i] = 0.0; }
-  for (var c = 0u; c < ${nCell}u; c = c + 1u) {
-    if (dens_at(c) < ${fl(DENS_FLOOR)}) { continue; }
-    nActive = nActive + 1.0;
+  ${emitZeroGrads(nW)}
+  ${emitFwdPar(d, dens0)}
+  var lAct = 0.0;
+  var lR = 0.0;
+  var lBx = 0.0;
+  var lBy = 0.0;
+  for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
+    // !(dens < FLOOR), not dens >= FLOOR: the serial kernel skipped with
+    // "if (dens < FLOOR) { continue; }", and the two disagree on NaN.
+    let act = !(dens_at(c) < ${fl(DENS_FLOOR)});
     var vx = critW[${wl.headB}u];
     var vy = critW[${wl.headB}u + 1u];
     for (var k = 0u; k < ${K}u; k = k + 1u) {
-      vx = vx + critW[${wl.headW}u + k] * cSoft[k * ${nCell}u + c];
-      vy = vy + critW[${wl.headW}u + ${K}u + k] * cSoft[k * ${nCell}u + c];
+      let q = cSoftAt(k, c);
+      vx = vx + critW[${wl.headW}u + k] * q;
+      vy = vy + critW[${wl.headW}u + ${K}u + k] * q;
     }
-    let tx = auxA(c);
-    let ty = auxB(c);
-    let dx = vx - tx;
-    let dy = vy - ty;
-    let r = sqrt(dx * dx + dy * dy + SOFT_EPS2);
-    discR = discR + r;
+    let ex = vx - auxA(c);
+    let ey = vy - auxB(c);
+    let r = sqrt(ex * ex + ey * ey + SOFT_EPS2);
     let s = 1.0 / r;
-    let dvx = dx * s;
-    let dvy = dy * s;
-    gW[${wl.headB}u] = gW[${wl.headB}u] + dvx;
-    gW[${wl.headB}u + 1u] = gW[${wl.headB}u + 1u] + dvy;
+    let dvx = select(0.0, ex * s, act);
+    let dvy = select(0.0, ey * s, act);
+    lAct = lAct + select(0.0, 1.0, act);
+    lR = lR + select(0.0, r, act);
+    lBx = lBx + dvx;
+    lBy = lBy + dvy;
+    setHGrad(0u, c, dvx);
+    setHGrad(1u, c, dvy);
     for (var k = 0u; k < ${K}u; k = k + 1u) {
-      gW[${wl.headW}u + k] = gW[${wl.headW}u + k] + dvx * cSoft[k * ${nCell}u + c];
-      gW[${wl.headW}u + ${K}u + k] =
-        gW[${wl.headW}u + ${K}u + k] + dvy * cSoft[k * ${nCell}u + c];
-      dSoft[k * ${nCell}u + c] =
-        dSoft[k * ${nCell}u + c] +
-        dvx * critW[${wl.headW}u + k] + dvy * critW[${wl.headW}u + ${K}u + k];
+      setDSoft(k, c, dvx * critW[${wl.headW}u + k] + dvy * critW[${wl.headW}u + ${K}u + k]);
     }
   }
+  let nActive = wgSum(tid, lAct);
+  let sumR = wgSum(tid, lR);
+  let sumBx = wgSum(tid, lBx);
+  let sumBy = wgSum(tid, lBy);
   let activeN = max(nActive, 1.0);
-  discR = discR / activeN;
-  for (var i = ${wl.headW}u; i < ${wl.headW + 2 * K + 2}u; i = i + 1u) {
-    gW[i] = gW[i] / activeN;
+  if (tid == 0u) {
+    critMeta[${metaStats}u] = sumR / activeN;
+    critMeta[${metaStats}u + 2u] = auxA(0u);
+    critMeta[${metaStats}u + 3u] = auxB(0u);
+    critMeta[${wl.headB}u] = critMeta[${wl.headB}u] + sumBx / activeN;
+    critMeta[${wl.headB}u + 1u] = critMeta[${wl.headB}u + 1u] + sumBy / activeN;
   }
-  for (var k = 0u; k < ${K}u; k = k + 1u) {
-    for (var c = 0u; c < ${nCell}u; c = c + 1u) {
-      dSoft[k * ${nCell}u + c] = dSoft[k * ${nCell}u + c] / activeN;
+  for (var k = tid; k < ${K}u; k = k + ${PIXEL_DISC_WG}u) {
+    var sx = 0.0;
+    var sy = 0.0;
+    for (var c = 0u; c < N_CELL; c = c + 1u) {
+      let q = cSoftAt(k, c);
+      sx = sx + hGradAt(0u, c) * q;
+      sy = sy + hGradAt(1u, c) * q;
     }
+    critMeta[${wl.headW}u + k] = critMeta[${wl.headW}u + k] + sx / activeN;
+    critMeta[${wl.headW}u + ${K}u + k] =
+      critMeta[${wl.headW}u + ${K}u + k] + sy / activeN;
   }
-  critMeta[${metaStats}u] = discR;
-  critMeta[${metaStats}u + 2u] = auxA(0u);
-  critMeta[${metaStats}u + 3u] = auxB(0u);
-  ${emitBackboneBackward(d, dens0, nW)}
-  for (var i = 0u; i < ${nW}u; i = i + 1u) { critMeta[${0}u + i] = gW[i]; }
+  for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
+    for (var k = 0u; k < ${K}u; k = k + 1u) { setDSoft(k, c, dSoftAt(k, c) / activeN); }
+  }
+  ${BAR}
+  ${emitBwdActPar(d)}
+  ${emitBackboneWeightGrads(d, dens0)}
 `;
     }
     case "next-frame": {
       if (wl.kind !== "next-frame") throw new Error("layout mismatch");
       return /* wgsl */ `
-  ${emitBackboneForward(d, densAux)}
-  var discR = 0.0;
-  var dSoft : array<f32, ${K * nCell}>;
-  for (var i = 0u; i < ${K * nCell}u; i = i + 1u) { dSoft[i] = 0.0; }
-  var gW : array<f32, ${nW}>;
-  for (var i = 0u; i < ${nW}u; i = i + 1u) { gW[i] = 0.0; }
-  var gD : array<f32, ${nCell}>;
-  for (var i = 0u; i < ${nCell}u; i = i + 1u) { gD[i] = 0.0; }
-  for (var c = 0u; c < ${nCell}u; c = c + 1u) {
+  ${emitZeroGrads(nW)}
+  ${emitFwdPar(d, densAux)}
+  var lR = 0.0;
+  var lB = 0.0;
+  for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
     var pred = critW[${wl.headB}u];
     for (var k = 0u; k < ${K}u; k = k + 1u) {
-      pred = pred + critW[${wl.headW}u + k] * cSoft[k * ${nCell}u + c];
+      pred = pred + critW[${wl.headW}u + k] * cSoftAt(k, c);
     }
     let diff = pred - dens_at(c);
     let r = sqrt(diff * diff + SOFT_EPS2);
-    discR = discR + r;
+    lR = lR + r;
     let dPred = diff / r / f32(N_CELL);
-    gW[${wl.headB}u] = gW[${wl.headB}u] + dPred;
+    lB = lB + dPred;
+    setHGrad(0u, c, dPred);
     for (var k = 0u; k < ${K}u; k = k + 1u) {
-      gW[${wl.headW}u + k] = gW[${wl.headW}u + k] + dPred * cSoft[k * ${nCell}u + c];
-      dSoft[k * ${nCell}u + c] = dSoft[k * ${nCell}u + c] + dPred * critW[${wl.headW}u + k];
+      setDSoft(k, c, dPred * critW[${wl.headW}u + k]);
     }
   }
-  discR = discR / f32(N_CELL);
-  critMeta[${metaStats}u] = discR;
-  ${emitBackboneBackward(d, densAux, nW)}
-  for (var i = 0u; i < ${nW}u; i = i + 1u) { critMeta[${0}u + i] = gW[i]; }
+  let sumR = wgSum(tid, lR);
+  let sumB = wgSum(tid, lB);
+  if (tid == 0u) {
+    critMeta[${metaStats}u] = sumR / f32(N_CELL);
+    critMeta[${wl.headB}u] = critMeta[${wl.headB}u] + sumB;
+  }
+  for (var k = tid; k < ${K}u; k = k + ${PIXEL_DISC_WG}u) {
+    var s = 0.0;
+    for (var c = 0u; c < N_CELL; c = c + 1u) { s = s + hGradAt(0u, c) * cSoftAt(k, c); }
+    critMeta[${wl.headW}u + k] = critMeta[${wl.headW}u + k] + s;
+  }
+  ${BAR}
+  ${emitBwdActPar(d)}
+  ${emitBackboneWeightGrads(d, densAux)}
 `;
     }
     case "real-fake": {
       if (wl.kind !== "real-fake") throw new Error("layout mismatch");
       return /* wgsl */ `
-  var cZ : array<f32, ${d.K}>;
-  var cH : array<f32, ${d.hidden}>;
+  ${emitZeroGrads(nW)}
   var discLoss = 0.0;
-  var gW : array<f32, ${nW}>;
-  for (var i = 0u; i < ${nW}u; i = i + 1u) { gW[i] = 0.0; }
-  var dSoft : array<f32, ${K * nCell}>;
-  var gD : array<f32, ${nCell}>;
-  var logit = 0.0;
-
   {
-    for (var i = 0u; i < ${K * nCell}u; i = i + 1u) { dSoft[i] = 0.0; }
-    for (var i = 0u; i < ${nCell}u; i = i + 1u) { gD[i] = 0.0; }
-    ${emitBackboneForward(d, dens0)}
-    ${emitGapMlpForward(d)}
-    {
-      let bce = bceGradLogit(logit, 1.0);
-      discLoss = discLoss + bce.x;
-      ${emitGapMlpBackward(d, "bce.y")}
-    }
-    ${emitBackboneBackward(d, dens0, nW)}
+    ${emitFwdPar(d, dens0)}
+    ${emitGapMlpFwdPar(d)}
+    let bce = bceGradLogit(logit, 1.0);
+    discLoss = discLoss + bce.x;
+    ${emitGapMlpBwdPar(d, "bce.y", true)}
+    ${emitBwdActPar(d)}
+    ${emitBackboneWeightGrads(d, dens0)}
   }
-
   {
-    for (var i = 0u; i < ${K * nCell}u; i = i + 1u) { dSoft[i] = 0.0; }
-    for (var i = 0u; i < ${nCell}u; i = i + 1u) { gD[i] = 0.0; }
-    ${emitBackboneForward(d, densAux)}
-    ${emitGapMlpForward(d)}
-    {
-      let bce = bceGradLogit(logit, 0.0);
-      discLoss = discLoss + bce.x;
-      ${emitGapMlpBackward(d, "bce.y")}
-    }
-    ${emitBackboneBackward(d, densAux, nW)}
+    ${emitFwdPar(d, densAux)}
+    ${emitGapMlpFwdPar(d)}
+    let bce = bceGradLogit(logit, 0.0);
+    discLoss = discLoss + bce.x;
+    ${emitGapMlpBwdPar(d, "bce.y", true)}
+    ${emitBwdActPar(d)}
+    ${emitBackboneWeightGrads(d, densAux)}
   }
-
-  critMeta[${metaStats}u] = discLoss;
-  for (var i = 0u; i < ${nW}u; i = i + 1u) { critMeta[${0}u + i] = gW[i]; }
+  if (tid == 0u) { critMeta[${metaStats}u] = discLoss; }
 `;
     }
     case "inpaint": {
       if (wl.kind !== "inpaint") throw new Error("layout mismatch");
       return /* wgsl */ `
-  buildInpaintMask();
-  for (var c = 0u; c < ${nCell}u; c = c + 1u) {
-    let m = auxB(c);
-    densPack[${densAux} + c] = dens_at(c) * (1.0 - m);
+  ${emitZeroGrads(nW)}
+  ${emitInpaintMaskPar(d)}
+  ${emitFwdPar(d, densAux)}
+  var lM = 0.0;
+  for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
+    lM = lM + select(0.0, 1.0, auxB(c) > 0.5);
   }
-  ${emitBackboneForward(d, densAux)}
-  var nMask = 0.0;
-  for (var c = 0u; c < ${nCell}u; c = c + 1u) {
-    if (auxB(c) > 0.5) { nMask = nMask + 1.0; }
-  }
-  nMask = max(nMask, 1.0);
-  var discR = 0.0;
-  var dSoft : array<f32, ${K * nCell}>;
-  for (var i = 0u; i < ${K * nCell}u; i = i + 1u) { dSoft[i] = 0.0; }
-  var gW : array<f32, ${nW}>;
-  for (var i = 0u; i < ${nW}u; i = i + 1u) { gW[i] = 0.0; }
-  var gD : array<f32, ${nCell}>;
-  for (var i = 0u; i < ${nCell}u; i = i + 1u) { gD[i] = 0.0; }
-  for (var c = 0u; c < ${nCell}u; c = c + 1u) {
-    if (auxB(c) <= 0.5) { continue; }
+  let nMask = max(wgSum(tid, lM), 1.0);
+  var lR = 0.0;
+  var lB = 0.0;
+  for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
+    let m = auxB(c) > 0.5;
     var pred = critW[${wl.headB}u];
     for (var k = 0u; k < ${K}u; k = k + 1u) {
-      pred = pred + critW[${wl.headW}u + k] * cSoft[k * ${nCell}u + c];
+      pred = pred + critW[${wl.headW}u + k] * cSoftAt(k, c);
     }
     let diff = pred - dens_at(c);
     let r = sqrt(diff * diff + SOFT_EPS2);
-    discR = discR + r;
-    let dPred = (diff / r) / nMask;
-    gW[${wl.headB}u] = gW[${wl.headB}u] + dPred;
+    lR = lR + select(0.0, r, m);
+    let dPred = select(0.0, (diff / r) / nMask, m);
+    lB = lB + dPred;
+    setHGrad(0u, c, dPred);
     for (var k = 0u; k < ${K}u; k = k + 1u) {
-      gW[${wl.headW}u + k] = gW[${wl.headW}u + k] + dPred * cSoft[k * ${nCell}u + c];
-      dSoft[k * ${nCell}u + c] = dSoft[k * ${nCell}u + c] + dPred * critW[${wl.headW}u + k];
+      setDSoft(k, c, dPred * critW[${wl.headW}u + k]);
     }
   }
-  discR = discR / nMask;
-  critMeta[${metaStats}u] = discR;
-  ${emitBackboneBackward(d, densAux, nW)}
-  for (var i = 0u; i < ${nW}u; i = i + 1u) { critMeta[${0}u + i] = gW[i]; }
+  let sumR = wgSum(tid, lR);
+  let sumB = wgSum(tid, lB);
+  if (tid == 0u) {
+    critMeta[${metaStats}u] = sumR / nMask;
+    critMeta[${wl.headB}u] = critMeta[${wl.headB}u] + sumB;
+  }
+  for (var k = tid; k < ${K}u; k = k + ${PIXEL_DISC_WG}u) {
+    var s = 0.0;
+    for (var c = 0u; c < N_CELL; c = c + 1u) { s = s + hGradAt(0u, c) * cSoftAt(k, c); }
+    critMeta[${wl.headW}u + k] = critMeta[${wl.headW}u + k] + s;
+  }
+  ${BAR}
+  ${emitBwdActPar(d)}
+  ${emitBackboneWeightGrads(d, densAux)}
 `;
     }
     default: {
@@ -668,9 +903,15 @@ function emitCriticDiscBody(d: PixelDiscDims, metaStats: number): string {
   }
 }
 
+/**
+ * criticGen — cell-parallel forward + head, then ∂L/∂D into densPack's dDens.
+ *
+ * Mirror image of criticDisc: `gW` is deliberately absent because the serial
+ * kernel computed the critic weight gradient here and then discarded it (only
+ * criticDisc feeds discAdam).
+ */
 function emitCriticGenBody(d: PixelDiscDims, metaStats: number): string {
-  const { G, K } = d;
-  const nCell = G * G;
+  const { K } = d;
   const wl = pixelWeightLayout(d);
   const dens0 = "0u";
   const densAux = "2u * N_CELL";
@@ -679,137 +920,111 @@ function emitCriticGenBody(d: PixelDiscDims, metaStats: number): string {
     case "vec-field": {
       if (wl.kind !== "vec-field") throw new Error("layout mismatch");
       return /* wgsl */ `
-  ${emitBackboneForward(d, dens0)}
-  var genR = 0.0;
-  var nActive = 0.0;
-  var dSoft : array<f32, ${K * nCell}>;
-  for (var i = 0u; i < ${K * nCell}u; i = i + 1u) { dSoft[i] = 0.0; }
-  var gD : array<f32, ${nCell}>;
-  for (var i = 0u; i < ${nCell}u; i = i + 1u) { gD[i] = 0.0; }
-  for (var c = 0u; c < ${nCell}u; c = c + 1u) {
-    if (dens_at(c) < ${fl(DENS_FLOOR)}) { continue; }
-    nActive = nActive + 1.0;
+  ${emitFwdPar(d, dens0)}
+  var lAct = 0.0;
+  var lR = 0.0;
+  for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
+    let act = !(dens_at(c) < ${fl(DENS_FLOOR)});
     var vx = critW[${wl.headB}u];
     var vy = critW[${wl.headB}u + 1u];
     for (var k = 0u; k < ${K}u; k = k + 1u) {
-      vx = vx + critW[${wl.headW}u + k] * cSoft[k * ${nCell}u + c];
-      vy = vy + critW[${wl.headW}u + ${K}u + k] * cSoft[k * ${nCell}u + c];
+      let q = cSoftAt(k, c);
+      vx = vx + critW[${wl.headW}u + k] * q;
+      vy = vy + critW[${wl.headW}u + ${K}u + k] * q;
     }
-    let tx = auxA(c);
-    let ty = auxB(c);
-    let dx = vx - tx;
-    let dy = vy - ty;
-    let r = sqrt(dx * dx + dy * dy + SOFT_EPS2);
-    genR = genR + r;
+    let ex = vx - auxA(c);
+    let ey = vy - auxB(c);
+    let r = sqrt(ex * ex + ey * ey + SOFT_EPS2);
     let s = uni.genSign / r;
-    let dvx = dx * s;
-    let dvy = dy * s;
+    let dvx = select(0.0, ex * s, act);
+    let dvy = select(0.0, ey * s, act);
+    lAct = lAct + select(0.0, 1.0, act);
+    lR = lR + select(0.0, r, act);
     for (var k = 0u; k < ${K}u; k = k + 1u) {
-      dSoft[k * ${nCell}u + c] =
-        dSoft[k * ${nCell}u + c] +
-        dvx * critW[${wl.headW}u + k] + dvy * critW[${wl.headW}u + ${K}u + k];
+      setDSoft(k, c, dvx * critW[${wl.headW}u + k] + dvy * critW[${wl.headW}u + ${K}u + k]);
     }
   }
+  let nActive = wgSum(tid, lAct);
+  let sumR = wgSum(tid, lR);
   let activeN = max(nActive, 1.0);
-  genR = genR / activeN;
-  critMeta[${metaStats}u + 1u] = uni.genSign * genR;
-  for (var k = 0u; k < ${K}u; k = k + 1u) {
-    for (var c = 0u; c < ${nCell}u; c = c + 1u) {
-      dSoft[k * ${nCell}u + c] = dSoft[k * ${nCell}u + c] / activeN;
-    }
+  if (tid == 0u) { critMeta[${metaStats}u + 1u] = uni.genSign * (sumR / activeN); }
+  for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
+    for (var k = 0u; k < ${K}u; k = k + 1u) { setDSoft(k, c, dSoftAt(k, c) / activeN); }
   }
-  var gW : array<f32, ${pixelDiscWeightCount(d)}>;
-  for (var i = 0u; i < ${pixelDiscWeightCount(d)}u; i = i + 1u) { gW[i] = 0.0; }
-  ${emitBackboneBackward(d, dens0, pixelDiscWeightCount(d))}
-  for (var i = 0u; i < ${nCell}u; i = i + 1u) { set_d_dens(i, gD[i]); }
+  ${BAR}
+  ${emitBwdActPar(d)}
+  for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) { set_d_dens(c, gdAt(c)); }
 `;
     }
     case "next-frame": {
       if (wl.kind !== "next-frame") throw new Error("layout mismatch");
       return /* wgsl */ `
-  ${emitBackboneForward(d, densAux)}
-  var genR = 0.0;
-  for (var c = 0u; c < ${nCell}u; c = c + 1u) {
+  ${emitFwdPar(d, densAux)}
+  var lR = 0.0;
+  for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
     var pred = critW[${wl.headB}u];
     for (var k = 0u; k < ${K}u; k = k + 1u) {
-      pred = pred + critW[${wl.headW}u + k] * cSoft[k * ${nCell}u + c];
+      pred = pred + critW[${wl.headW}u + k] * cSoftAt(k, c);
     }
     let diff = pred - dens_at(c);
     let r = sqrt(diff * diff + SOFT_EPS2);
-    genR = genR + r;
+    lR = lR + r;
     add_d_dens(c, uni.genSign * (-diff / r) / f32(N_CELL));
   }
-  genR = genR / f32(N_CELL);
-  critMeta[${metaStats}u + 1u] = uni.genSign * genR;
+  let sumR = wgSum(tid, lR);
+  if (tid == 0u) { critMeta[${metaStats}u + 1u] = uni.genSign * (sumR / f32(N_CELL)); }
 `;
     }
     case "real-fake": {
       if (wl.kind !== "real-fake") throw new Error("layout mismatch");
-      const nW = pixelDiscWeightCount(d);
       return /* wgsl */ `
-  ${emitBackboneForward(d, dens0)}
-  var cZ : array<f32, ${d.K}>;
-  var cH : array<f32, ${d.hidden}>;
-  var logit = 0.0;
-  ${emitGapMlpForward(d)}
-  critMeta[${metaStats}u + 1u] = uni.genSign * (-logit);
-  var dSoft : array<f32, ${K * nCell}>;
-  for (var i = 0u; i < ${K * nCell}u; i = i + 1u) { dSoft[i] = 0.0; }
-  var gW : array<f32, ${nW}>;
-  for (var i = 0u; i < ${nW}u; i = i + 1u) { gW[i] = 0.0; }
-  var gD : array<f32, ${nCell}>;
-  for (var i = 0u; i < ${nCell}u; i = i + 1u) { gD[i] = 0.0; }
-  ${emitGapMlpBackward(d, "uni.genSign * -1.0")}
-  ${emitBackboneBackward(d, dens0, nW)}
-  for (var i = 0u; i < ${nCell}u; i = i + 1u) { set_d_dens(i, gD[i]); }
+  ${emitFwdPar(d, dens0)}
+  ${emitGapMlpFwdPar(d)}
+  if (tid == 0u) { critMeta[${metaStats}u + 1u] = uni.genSign * (-logit); }
+  ${emitGapMlpBwdPar(d, "uni.genSign * -1.0", false)}
+  ${emitBwdActPar(d)}
+  for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) { set_d_dens(c, gdAt(c)); }
 `;
     }
     case "inpaint": {
       if (wl.kind !== "inpaint") throw new Error("layout mismatch");
-      const nW = pixelDiscWeightCount(d);
       return /* wgsl */ `
-  var nMask = 0.0;
-  for (var c = 0u; c < ${nCell}u; c = c + 1u) {
-    if (auxB(c) > 0.5) { nMask = nMask + 1.0; }
+  var lM = 0.0;
+  for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
+    lM = lM + select(0.0, 1.0, auxB(c) > 0.5);
   }
-  nMask = max(nMask, 1.0);
-  for (var c = 0u; c < ${nCell}u; c = c + 1u) {
-    let m = auxB(c);
-    densPack[${densAux} + c] = dens_at(c) * (1.0 - m);
+  let nMask = max(wgSum(tid, lM), 1.0);
+  for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
+    densPack[${densAux} + c] = dens_at(c) * (1.0 - auxB(c));
   }
-  ${emitBackboneForward(d, densAux)}
-  var genR = 0.0;
-  var dSoft : array<f32, ${K * nCell}>;
-  for (var i = 0u; i < ${K * nCell}u; i = i + 1u) { dSoft[i] = 0.0; }
-  var dD2 : array<f32, ${nCell}>;
-  for (var i = 0u; i < ${nCell}u; i = i + 1u) { dD2[i] = 0.0; }
-  for (var c = 0u; c < ${nCell}u; c = c + 1u) {
-    if (auxB(c) <= 0.5) { continue; }
+  ${BAR}
+  ${emitFwdPar(d, densAux)}
+  var lR = 0.0;
+  for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
+    let m = auxB(c) > 0.5;
     var pred = critW[${wl.headB}u];
     for (var k = 0u; k < ${K}u; k = k + 1u) {
-      pred = pred + critW[${wl.headW}u + k] * cSoft[k * ${nCell}u + c];
+      pred = pred + critW[${wl.headW}u + k] * cSoftAt(k, c);
     }
     let diff = pred - dens_at(c);
     let r = sqrt(diff * diff + SOFT_EPS2);
-    genR = genR + r;
+    lR = lR + select(0.0, r, m);
     let scale = uni.genSign / r / nMask;
-    dD2[c] = dD2[c] - diff * scale;
-    let dPred = diff * scale;
+    set_d_dens(c, select(0.0, -diff * scale, m));
+    let dPred = select(0.0, diff * scale, m);
     for (var k = 0u; k < ${K}u; k = k + 1u) {
-      dSoft[k * ${nCell}u + c] = dSoft[k * ${nCell}u + c] + dPred * critW[${wl.headW}u + k];
+      setDSoft(k, c, dPred * critW[${wl.headW}u + k]);
     }
   }
-  genR = genR / nMask;
-  critMeta[${metaStats}u + 1u] = uni.genSign * genR;
-  var gW : array<f32, ${nW}>;
-  for (var i = 0u; i < ${nW}u; i = i + 1u) { gW[i] = 0.0; }
-  var gD : array<f32, ${nCell}>;
-  for (var i = 0u; i < ${nCell}u; i = i + 1u) { gD[i] = 0.0; }
-  ${emitBackboneBackward(d, densAux, nW)}
-  for (var c = 0u; c < ${nCell}u; c = c + 1u) {
-    if (auxB(c) <= 0.5) { dD2[c] = dD2[c] + gD[c]; }
+  let sumR = wgSum(tid, lR);
+  if (tid == 0u) { critMeta[${metaStats}u + 1u] = uni.genSign * (sumR / nMask); }
+  ${emitBwdActPar(d)}
+  // MASKED cells already took their gradient straight from the residual; only
+  // the CONTEXT cells reach D through the conv, because its input is D·(1−mask).
+  for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
+    let g = gdAt(c);
+    if (auxB(c) <= 0.5) { add_d_dens(c, g); }
   }
-  for (var i = 0u; i < ${nCell}u; i = i + 1u) { set_d_dens(i, dD2[i]); }
 `;
     }
     default: {
@@ -860,6 +1075,10 @@ export function pixelDiscShader(
   const critSiteStride = sl.encStore + sl.siteBlk;
   const critSite = `(${critWorkspace + 8}u + cell * ${critSiteStride}u)`;
   const critEncBase = critSite;
+  // Per-cell critic workspace lives right after the field-eval sites. Same
+  // pixelCritSites() the allocator uses — see pixelScratchBytes.
+  const critWorkBase =
+    critWorkspace + 8 + pixelCritSites(d) * critSiteStride;
   const critFieldBase = (h: number) =>
     `${critSite} + ${sl.encStore}u + ${h === 0 ? 0 : sl.headBlk[0]}u`;
 
@@ -949,11 +1168,32 @@ export function pixelDiscShader(
 
   const hashFns = emitHashRng();
   const bceFn = d.kind === "real-fake" ? emitBceGradLogit() : "";
-  const inpaintFn = d.kind === "inpaint" ? emitInpaintMask(d) : "";
   const forceGridFn =
     d.kind === "vec-field"
       ? emitVecFieldForceGrid(critFieldForward, critEncInit)
       : "";
+  const critAccessors = emitCritAccessors(d, critWorkBase);
+  const wgReduceFn = emitWgReduce();
+  // next-frame's generator gradient reaches D directly (its conv input is D₀,
+  // a constant w.r.t. the generated frame), so it is the one kind with no
+  // conv-backward gather.
+  const gdFn = d.kind === "next-frame" ? "" : emitGdGather(d);
+  // Cross-cell scalars only — everything that scales with G² stays in storage.
+  const gapWgVars =
+    d.kind === "real-fake"
+      ? /* wgsl */ `
+var<workgroup> wgZ : array<f32, ${d.K}>;
+var<workgroup> wgH : array<f32, ${d.hidden}>;
+var<workgroup> wgPre : array<f32, ${d.hidden}>;
+var<workgroup> wgDz : array<f32, ${d.K}>;
+`
+      : "";
+  const wgBytes = pixelCritWorkgroupBytes(d);
+  if (wgBytes > 16384) {
+    throw new Error(
+      `pixel_disc: ${wgBytes}B of workgroup storage exceeds the 16384B mobile limit`
+    );
+  }
 
   const criticDiscBody = emitCriticDiscBody(d, metaStats);
   const criticGenBody = emitCriticGenBody(d, metaStats);
@@ -1009,7 +1249,10 @@ fn set_auxA(i : u32, v : f32) { densPack[2u * N_CELL + i] = v; }
 fn auxB(i : u32) -> f32 { return densPack[3u * N_CELL + i]; }
 fn set_auxB(i : u32, v : f32) { densPack[3u * N_CELL + i] = v; }
 
-${inpaintFn}
+${critAccessors}
+${wgReduceFn}
+${gapWgVars}
+${gdFn}
 ${forceGridFn}
 
 @compute @workgroup_size(${PIXEL_DISC_WG})
@@ -1109,10 +1352,16 @@ fn densToFloatFake(@builtin(global_invocation_id) gid : vec3u) {
   set_auxA(i, f32(atomicLoad(&densI32[i])) / DENS_SCALE);
 }
 
-@compute @workgroup_size(1)
-fn criticDisc() {
-  var cFeat : array<f32, ${d.E * nCell}>;
-  var cSoft : array<f32, ${d.K * nCell}>;
+/**
+ * One workgroup, every cell — dispatched as ONE workgroup so the phases can be
+ * separated by workgroupBarrier/storageBarrier instead of extra dispatches.
+ *
+ * Every loop over cells is grid-strided rather than an out-of-range early
+ * return for a hard reason: the barriers below (and inside wgSum) must be
+ * reached by every invocation, so no lane may leave early.
+ */
+@compute @workgroup_size(${PIXEL_DISC_WG})
+fn criticDisc(@builtin(local_invocation_index) tid : u32) {
   ${criticDiscBody}
 }
 
@@ -1169,14 +1418,13 @@ fn virtualSplat(@builtin(global_invocation_id) gid : vec3u) {
   atomicAdd(&densI32[iy1 * G + ix1], i32(tx * ty * mass * DENS_SCALE));
 }
 
-@compute @workgroup_size(1)
-fn criticGen() {
-  for (var i = 0u; i < N_CELL; i = i + 1u) {
+@compute @workgroup_size(${PIXEL_DISC_WG})
+fn criticGen(@builtin(local_invocation_index) tid : u32) {
+  for (var i = tid; i < N_CELL; i = i + ${PIXEL_DISC_WG}u) {
     densPack[i] = f32(atomicLoad(&densI32[i])) / DENS_SCALE;
     densPack[N_CELL + i] = 0.0;
   }
-  var cFeat : array<f32, ${d.E * nCell}>;
-  var cSoft : array<f32, ${d.K * nCell}>;
+  ${BAR}
   ${criticGenBody}
 }
 

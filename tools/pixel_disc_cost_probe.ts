@@ -3,15 +3,22 @@
  *
  *   bun tools/pixel_disc_cost_probe.ts
  *
- * The four Pixel pieces run at ~0.3 FPS, which on a phone reads as "frozen on
- * the previous artwork". This times PixelDiscTrainer.encodeStep in isolation
- * across dims, so the blame lands on a specific kernel shape rather than on
- * "mobile".
+ * At the old G=16 gallery config the four Pixel pieces ran at 36.7 ms/frame
+ * (27 FPS) against a 16.1 ms control on the same field arch — slow enough on a
+ * phone that the canvas visibly held the PREVIOUS artwork. This times
+ * PixelDiscTrainer.encodeStep in isolation across dims, so the blame lands on a
+ * specific kernel shape rather than on "mobile".
  *
- * Suspect: criticDisc / criticGen are `@compute @workgroup_size(1)` — ONE GPU
- * thread walks all G² cells, and holds cFeat[E·G²] + cSoft[K·G²] (+ dSoft, gD,
- * gW in the gen pass) as function-scope private arrays. Cost grows with G²·(E+K)
- * in both work AND per-thread private memory, and none of it is parallel.
+ * Cause (FIXED): criticDisc / criticGen were `@compute @workgroup_size(1)` —
+ * ONE GPU thread walked all G² cells holding cFeat[E·G²] + cSoft[K·G²] as
+ * function-scope private arrays. They are now workgroup-parallel (cell-parallel
+ * activations, weight-parallel gradients, per-cell workspace in `scratch`), so
+ * G=16 costs 1.2-1.5 ms/step instead of 17-37. This probe stays as the gate
+ * that keeps it that way.
+ *
+ * Measure frame rate IN THE APP, not from a hidden browser tab: browsers pause
+ * requestAnimationFrame for hidden documents, and drawImage on a WebGPU canvas
+ * returns stale pixels. Both faked a "dead loop" during the 2026-08-17 hunt.
  */
 import { setupGlobals } from "bun-webgpu";
 
@@ -26,6 +33,7 @@ const GBU = (globalThis as any).GPUBufferUsage;
 import { layoutField } from "../src/render/webgpu/advect_wgsl";
 import { PixelDiscTrainer } from "../src/render/webgpu/pixel_disc_train";
 import type { PixelGanKind } from "../src/core/gan/pixel_disc";
+import { pixelCritWorkgroupBytes } from "../src/render/webgpu/pixel_disc_wgsl";
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -66,8 +74,8 @@ device.queue.writeBuffer(posBuf, 0, pos);
 const velBuf = device.createBuffer({ size: pos.byteLength, usage: GBU.STORAGE | GBU.COPY_DST });
 
 const CONFIGS = [
-  { label: "GALLERY  G=8  E=4 K=8  h=16", G: 8, E: 4, K: 8, hidden: 16, gate: true },
-  { label: "was      G=16 E=8 K=16 h=32", G: 16, E: 8, K: 16, hidden: 32, gate: false },
+  { label: "GALLERY  G=16 E=8 K=16 h=32", G: 16, E: 8, K: 16, hidden: 32, gate: true },
+  { label: "         G=8  E=4 K=8  h=16", G: 8, E: 4, K: 8, hidden: 16, gate: false },
   { label: "         G=12 E=8 K=16 h=32", G: 12, E: 8, K: 16, hidden: 32, gate: false },
 ];
 
@@ -81,7 +89,7 @@ let failures = 0;
 const KINDS: PixelGanKind[] = ["vec-field", "next-frame", "real-fake", "inpaint"];
 
 console.log(`particles=${N}  b=256  field=${layout.totalFloats} floats (dualFourier)\n`);
-console.log("config                        kind         ms/step   private KB");
+console.log("config                        kind         ms/step   workgroup B");
 console.log("-".repeat(72));
 
 for (const c of CONFIGS) {
@@ -113,12 +121,14 @@ for (const c of CONFIGS) {
     }
     times.sort((a, b) => a - b);
     const ms = times[Math.floor(times.length / 2)];
-    const privKB = ((c.E + c.K) * c.G * c.G * 4) / 1024;
+    // Workgroup storage the kernels actually declare. The old column reported
+    // per-invocation PRIVATE arrays, which the parallel rewrite deleted.
+    const wgB = pixelCritWorkgroupBytes({ kind, G: c.G, E: c.E, K: c.K, hidden: c.hidden, dt: 0.15 } as any);
     const bad = c.gate && ms > BUDGET_MS;
     if (bad) failures++;
     console.log(
       `${bad ? "FAIL" : c.gate ? " ok " : "    "} ${c.label}  ${kind.padEnd(11)}  ` +
-        `${ms.toFixed(1).padStart(7)}   ${privKB.toFixed(1).padStart(6)}`
+        `${ms.toFixed(1).padStart(7)}   ${String(wgB).padStart(8)}`
     );
     trainer.destroy();
   }

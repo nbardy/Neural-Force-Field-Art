@@ -141,41 +141,61 @@ Two corollaries worth remembering:
   no matter how the weight is set. Shape a piece with `weight`, not by
   reintroducing `W_ISO`.
 
-## The critic kernels are single-threaded — G is a frame-time dial
+## The critic kernels are workgroup-parallel (they were not, and it showed)
 
-`criticDisc` and `criticGen` are `@compute @workgroup_size(1)`. **One** GPU
-thread walks all G² cells, holding `cFeat[E·G²]` and `cSoft[K·G²]` (plus
-`dSoft`, `gD`, `gW` in the gen pass) as function-scope private arrays. Cost
-grows as G²·(E+K) in both work *and* per-thread private memory, with no
-parallelism, so G is the single biggest lever on frame time.
+`criticDisc` and `criticGen` used to be `@compute @workgroup_size(1)`: **one**
+GPU thread walked all G² cells, holding `cFeat[E·G²]` and `cSoft[K·G²]` (plus
+`dSoft`, `gD`, `gW` in the gen pass) as function-scope private arrays. Cost grew
+as G²·(E+K) in both work *and* per-thread private memory, with no parallelism.
 
-Measured on an M-series desktop GPU (`tools/pixel_disc_cost_probe.ts`,
-80k particles, b=256, dualFourier field):
+Advect + render alone are ~16 ms at 80k particles, so the G=16 gallery config
+put the whole piece at ~37 ms/frame — 27 FPS on a fast desktop GPU, and on a
+phone slow enough that the canvas visibly held the *previous* artwork. That is
+what "the pixel pieces freeze on mobile" was.
 
-| config | vec-field | next-frame | real-fake | inpaint | private/invocation |
-|---|---|---|---|---|---|
-| G=16 E=8 K=16 h=32 | 22 ms | 12 ms | 25 ms | 20 ms | 24 KB |
-| G=12 E=8 K=16 h=32 | 8.9 ms | 5.2 ms | 9.7 ms | 8.3 ms | 13.5 KB |
-| **G=8 E=4 K=8 h=16** (shipped) | **5.8 ms** | **2.5 ms** | **4.4 ms** | **2.4 ms** | **3 KB** |
+They are now parallel on two axes:
 
-Advect + render alone are ~16 ms at 80k particles, so the old G=16 config put
-the whole piece at ~37 ms/frame — 27 FPS on a fast desktop GPU, and on a phone
-slow enough that the canvas visibly held the *previous* artwork. That is what
-"the pixel pieces freeze on mobile" was.
+- **Activations are cell-parallel** — grid-strided, so G² may exceed the
+  workgroup. The per-cell workspace (`cFeat`, `cSoft`, `dSoft`, `gf`, per-cell
+  head grads) lives in the tail of `scratch`, sized by `pixelScratchBytes(field,
+  batchCap, dims)`. It is deliberately NOT workgroup memory — `cSoft` alone is
+  16 KB at G=16, which is the entire mobile `maxComputeWorkgroupStorageSize`.
+- **Gradients are weight-parallel** — one invocation owns one weight index and
+  sums over all cells. No atomics and no partials buffer are needed, because
+  every backbone weight gradient is already a sum over cells for a fixed weight;
+  inverting the loop nest gives each output a single owner. It also preserves
+  the old serial summation order, which is why most of `gW` is bit-exact.
 
-Two things follow:
+Measured on an M-series desktop GPU (`tools/pixel_disc_cost_probe.ts`, 80k
+particles, b=256, dualFourier field), median of 15:
 
-- **Raising G is a performance decision, not just an art one.** Until the
-  critic is parallelized across the workgroup, treat G as a frame-time budget.
-- **`fillForceGrid` is already parallel.** `vec-field` needs F(cell_center) at
-  every cell; that used to be an inline serial loop inside the single-thread
-  critic (the full field forward, ×G², on one lane). It is now its own
-  one-cell-per-invocation pass, which is why the trainer allocates `nCell`
-  critic scratch sites for that kind instead of one.
+| config | vec-field | next-frame | real-fake | inpaint |
+|---|---|---|---|---|
+| G=16 E=8 K=16 h=32 — **before** | 19.3 ms | 10.7 ms | 22.3 ms | 18.0 ms |
+| G=16 E=8 K=16 h=32 — **after (shipped)** | **1.5 ms** | **1.2 ms** | **1.4 ms** | **1.3 ms** |
 
-**Known follow-up:** parallelize `criticDisc`/`criticGen` across the workgroup
-(per-cell threads + workgroup reductions for the softmax normalizer and the
-`gW` weight-gradient accumulation). That is what would let G go back to 16.
+G is no longer a frame-time dial; the critic sits below per-dispatch overhead,
+and advect+render dominate completely.
+
+### Two traps this rewrite has to keep avoiding
+
+- **Workgroup storage is capped at 16 KB.** `pixelCritWorkgroupBytes()` reports
+  what the kernels declare (peak 1408 B, real-fake at K=16/h=32) and
+  `pixelDiscShader` **throws** above 16384, so the mobile limit cannot be
+  reintroduced silently. Never put anything that scales with G² there.
+- **Barriers must be `workgroupBarrier(); storageBarrier();`** — the workspace
+  is a *storage* buffer, so omitting the storage half fails silently: execution
+  still syncs and a lane merely reads a stale neighbour. Every cell loop is
+  grid-strided rather than early-returning, precisely so no lane skips a
+  barrier in divergent control flow.
+
+### Numerical equivalence is the bar, not speed
+
+`§3` of `pixel_disc_test.ts` only checks norms, and norms hide a lot. When
+changing these kernels, verify against a float64 reference, not against the
+previous GPU kernel — "differs from before" is not "wrong", and the rewrite is
+in fact *closer* to the float64 `gW` than the serial original was for
+`vec-field` and `next-frame`.
 
 ## Verify
 

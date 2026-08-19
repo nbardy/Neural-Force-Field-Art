@@ -125,11 +125,11 @@ export class PixelDiscTrainer {
 
     this.critWBuf = mk(this.nWeights * 4);
     const nCell = this.dims.G * this.dims.G;
-    // vec-field runs fillForceGrid one cell per invocation, so it needs nCell
-    // critic workspaces; the other kinds have no force grid and keep one.
-    this.scratchBuf = mk(
-      pixelScratchBytes(field, this.batchCap, this.kind === "vec-field" ? nCell : 1)
-    );
+    // scratch also carries the critic's per-cell workspace (cFeat/cSoft/dSoft/
+    // gf) now that criticDisc/criticGen are workgroup-parallel, plus one
+    // field-eval site per cell for vec-field's fillForceGrid. pixelScratchBytes
+    // derives both from dims so the sizes cannot drift from the shader's bases.
+    this.scratchBuf = mk(pixelScratchBytes(field, this.batchCap, this.dims));
     this.densI32 = mk(nCell * 4);
     this.densPack = mk(densPackFloats(this.dims.G) * 4);
     this.metaBuf = mk((this.nWeights * 3 + 8) * 4);
@@ -311,6 +311,17 @@ export class PixelDiscTrainer {
       pass.dispatchWorkgroups(Math.ceil(Math.max(n, 1) / PIXEL_DISC_WG));
       pass.end();
     };
+    /**
+     * EXACTLY ONE workgroup — load-bearing, not a leftover from when
+     * criticDisc/criticGen were `@workgroup_size(1)`.
+     *
+     * Both critics are now `@workgroup_size(PIXEL_DISC_WG)` and phase-separated
+     * by workgroupBarrier/storageBarrier plus workgroup reductions (softmax
+     * normalizers, active-cell counts, summed residuals). Those synchronise
+     * within a workgroup only, so dispatching 2+ would silently give each extra
+     * workgroup its own partial reductions and let them race on the shared
+     * per-cell scratch. The kernels grid-stride over G² instead.
+     */
     const dispatch1 = (pipe: GPUComputePipeline) => {
       const pass = encoder.beginComputePass(
         ts ? { timestampWrites: ts } : undefined
