@@ -90,6 +90,8 @@ import {
   trainScratchLayout,
   type TrainScratchLayout,
 } from "./train_wgsl";
+import { f32lit } from "./ad/emit_wgsl";
+import { wtaScalars, type GuessKind } from "../../core/gan/wta";
 
 export const ADV_WG = 128;
 export const ADV_WG_B = 64;
@@ -328,11 +330,15 @@ export interface FusedObjectiveDims {
 
 /** WGSL f32 literal — integers get a decimal point so `select(0.0, 1.0, …)`
  *  stays f32 (ε=0 made the relaxed weights emit as abstract-int and the
- *  shader failed to compile — caught by tools/train_wta_test.ts §2). */
-const flit = (v: number): string => {
-  if (!Number.isFinite(v)) throw new Error(`adversary: non-finite literal ${v}`);
-  return Number.isInteger(v) ? v.toFixed(1) : String(v);
-};
+ *  shader failed to compile — caught by tools/train_wta_test.ts §2).
+ *
+ *  Now just {@link f32lit} (ad/emit_wgsl.ts), which is the same fix PLUS the
+ *  mantissa/exponent split its docstring documents: the old body here reached
+ *  `String(v)` for non-integers, so a value that stringifies in exponential
+ *  form was at the mercy of whatever the AD emitter had already been hardened
+ *  against. `loserW = ε/(k−1)` is exactly the kind of small non-integer that
+ *  gets there. The name stays local so the ~40 call sites below are untouched. */
+const flit = (v: number): string => f32lit(v);
 
 /** δ: tuple tag → (m, du, dy) — mirrors adversary.ts encodingDims. */
 export function tupleDims(tag: TupleTag): { m: number; du: number; dy: number } {
@@ -1141,8 +1147,16 @@ export function adversaryPassAShader(
     );
   }
   const MOM = statsL.momentOff;
-  const loserW = k >= 2 ? relaxEps / (k - 1) : 0;
-  const winW = k >= 2 ? 1 - relaxEps : 1;
+  // The two relaxed-WTA weights. Same spec module as the tfjs reference and the
+  // AD IR (src/core/gan/wta.ts) — only their PROVENANCE changed. The emitted
+  // reduction is unchanged in shape and cost: same unrolled loop, same
+  // `select(loserW, winW, j == win)`, same instruction count. (The literal TEXT
+  // does change, but from the separate `flit` → `f32lit` consolidation above,
+  // not from here — same f32 values to 9 significant digits.) `k = 1` is the
+  // `single` variant, which is what keeps `ε/(k−1)` out of reach, rather than
+  // the old `k >= 2 ? … : 0` ternary having to remember the guard at each site.
+  const guessKind: GuessKind = k >= 2 ? { tag: "wta", k, relaxEps } : { tag: "single" };
+  const { winner: winW, loser: loserW } = wtaScalars(guessKind);
   const explicitObjective = loss.tag !== "legacy-adjusted";
   const legacyAngular = loss.tag === "legacy-adjusted";
   const softAngular =

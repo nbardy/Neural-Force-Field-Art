@@ -24,17 +24,35 @@ import {
   resolvePixelDims,
   validatePixelDiscFusion,
   pixelWeightLayout,
+  PIXEL_STATS,
+  pixelStatsFloats,
 } from "./pixel_disc_wgsl";
 
 const ADAM = { beta1: 0.9, beta2: 0.999, eps: 1e-7 } as const;
 
+/**
+ * Length of the stats tail of `critMeta`, in floats. 0 win counters today —
+ * there are no guesses yet. When PLAN_MULTI_GUESS_MODULARIZATION §3f lands this
+ * becomes `pixelStatsFloats(dims.guesses)` and every site below (buffer size,
+ * staging size, per-step clear, readback copy) follows automatically.
+ */
+const PIXEL_STATS_FLOATS = pixelStatsFloats();
+
+/**
+ * The 1 Hz readback of `critMeta`'s stats tail. One field per slot some kernel
+ * actually writes — see PIXEL_STATS in pixel_disc_wgsl.ts for the layout and
+ * for why `meanFx`/`meanFy` are gone (nothing ever wrote them).
+ */
 export interface PixelDiscStats {
   discLoss: number;
   genLoss: number;
-  predX: number;
-  predY: number;
-  meanFx: number;
-  meanFy: number;
+  /**
+   * vec-field ONLY: F(centre of cell 0), the TARGET the critic head is fitting.
+   * `null` for the three kinds that HAVE no such quantity — absence is the
+   * meaning here, so it is not stood in for by a 0 the caller could mistake for
+   * a measurement. Formerly `predX`/`predY`, which named it a prediction.
+   */
+  targetF: { x: number; y: number } | null;
 }
 
 export interface PixelDiscStepOpts {
@@ -132,7 +150,11 @@ export class PixelDiscTrainer {
     this.scratchBuf = mk(pixelScratchBytes(field, this.batchCap, this.dims));
     this.densI32 = mk(nCell * 4);
     this.densPack = mk(densPackFloats(this.dims.G) * 4);
-    this.metaBuf = mk((this.nWeights * 3 + 8) * 4);
+    // grads | adamM | adamV | stats. The stats tail is sized from the shared
+    // layout helper so host and shader cannot disagree about its length, and so
+    // the per-guess win counters of PLAN_MULTI_GUESS_MODULARIZATION §3f arrive
+    // as an argument to pixelStatsFloats rather than as a re-layout here.
+    this.metaBuf = mk((this.nWeights * 3 + PIXEL_STATS_FLOATS) * 4);
     this.extGradsBuf = mk(field.totalFloats * 4);
     this.uniBuf = device.createBuffer({
       size: 64,
@@ -140,7 +162,7 @@ export class PixelDiscTrainer {
     });
     this.partDummy = device.createBuffer({ size: 8, usage: GPUBufferUsage.STORAGE });
     this.statsStaging = device.createBuffer({
-      size: 8 * 4,
+      size: PIXEL_STATS_FLOATS * 4,
       usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
     });
 
@@ -271,6 +293,13 @@ export class PixelDiscTrainer {
     if (!Number.isInteger(o.b) || o.b <= 0 || o.b > this.batchCap) {
       throw new Error(`pixel_disc: bad b=${o.b}`);
     }
+    // Zero the stats tail EVERY step, before anything writes it. `genLoss` is
+    // written only when the generator pass runs and `targetFx/Fy` only by the
+    // vec-field kind, so without this a conditional slot keeps reporting the
+    // last step that happened to fill it as if it were current. The clear spans
+    // the whole region, so §3f's win counters inherit the same guarantee.
+    encoder.clearBuffer(this.metaBuf, this.nWeights * 3 * 4, PIXEL_STATS_FLOATS * 4);
+
     const b = Math.min(o.b, this.partCount);
     if (b === 0) {
       encoder.clearBuffer(this.extGradsBuf);
@@ -384,7 +413,7 @@ export class PixelDiscTrainer {
       this.nWeights * 3 * 4,
       this.statsStaging,
       0,
-      8 * 4
+      PIXEL_STATS_FLOATS * 4
     );
     return true;
   }
@@ -399,13 +428,16 @@ export class PixelDiscTrainer {
         const s = new Float32Array(this.statsStaging.getMappedRange().slice(0));
         this.statsStaging.unmap();
         this.statsPending = false;
+        // The one canonicalization point: raw f32 slots -> PixelDiscStats.
+        // `kind` is fixed at construction, so this decides once whether the
+        // vec-field target slots carry a measurement at all.
         this.lastStats = {
-          discLoss: s[0],
-          genLoss: s[1],
-          predX: s[2],
-          predY: s[3],
-          meanFx: s[4],
-          meanFy: s[5],
+          discLoss: s[PIXEL_STATS.discLoss],
+          genLoss: s[PIXEL_STATS.genLoss],
+          targetF:
+            this.kind === "vec-field"
+              ? { x: s[PIXEL_STATS.targetFx], y: s[PIXEL_STATS.targetFy] }
+              : null,
         };
       })
       .catch(() => {

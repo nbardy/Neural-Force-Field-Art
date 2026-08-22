@@ -1,4 +1,10 @@
 import * as tf from "@tensorflow/tfjs";
+import {
+  headCount,
+  validateGuessKind,
+  wtaScalars,
+  type GuessKind,
+} from "./wta";
 
 /**
  * ADVERSARY — a predictor that tries to guess what the field will do next, and a
@@ -103,16 +109,18 @@ import * as tf from "@tensorflow/tfjs";
    0. Canonical domain types.  D = ⊕ᵢ Dᵢ
    ══════════════════════════════════════════════════════════════════════════ */
 
-/** Which prediction game the adversary plays. */
-export type AdversaryKind =
-  /** One predictor, one guess. The frozen-generator realizability control. */
-  | { readonly tag: "single" }
-  /**
-   * K guesses, relaxed winner-take-all. Winner dominance requires
-   * `0 <= relaxEps < (k - 1) / k`; larger values give each loser more weight
-   * than the nominal winner and are rejected.
-   */
-  | { readonly tag: "wta"; readonly k: number; readonly relaxEps: number };
+/**
+ * Which prediction game the adversary plays.
+ *
+ * COMPATIBILITY SPELLING of {@link GuessKind}. The type itself now lives in
+ * src/core/gan/wta.ts, together with the ε bound, the two payoff scalars and
+ * the tie rule that three backends used to derive independently. It moved
+ * because the pixel critics take the same head-count policy and "Adversary" is
+ * then the wrong noun. Prefer `GuessKind` in new code; this alias exists so the
+ * existing call sites keep compiling.
+ */
+export type AdversaryKind = GuessKind;
+export type { GuessKind };
 
 /** What physical quantity the predictor is asked to predict. */
 export type AdversaryTarget =
@@ -396,17 +404,11 @@ function assertNever(x: never, what: string): never {
   throw new AdversaryConfigError(`${what}: unhandled variant ${JSON.stringify(x)}`);
 }
 
-/** δ: AdversaryKind → head count. */
-export function headCount(kind: AdversaryKind): number {
-  switch (kind.tag) {
-    case "single":
-      return 1;
-    case "wta":
-      return kind.k;
-    default:
-      return assertNever(kind, "headCount");
-  }
-}
+/**
+ * δ: AdversaryKind → head count. Defined in src/core/gan/wta.ts alongside the
+ * rest of the guess-count spec; re-exported here for the existing callers.
+ */
+export { headCount };
 
 /** δ: TupleEncoding → arity/widths. */
 export function encodingDims(encoding: TupleEncoding): EncodingDims {
@@ -1372,17 +1374,23 @@ function weightsSingle(resid: tf.Tensor2D): tf.Tensor2D {
  * HANDLER — `wta`, relaxed. Winner gets `1 − ε`; the `k − 1` losers SHARE `ε`,
  * i.e. `ε/(k−1)` each. ε = 0 is exact winner-take-all and is what collapses.
  *
+ * The two scalars come from {@link wtaScalars} (src/core/gan/wta.ts) rather than
+ * being derived here — the `ε/(k−1)` division used to sit inline and was safe
+ * only because `validate` had already rejected `k < 2`. Only the REDUCTION is
+ * local, and it stays local: this is the tensor representation of the spec.
+ *
  * The weights are CONSTANTS with respect to the gradient. `tf.argMin` returns
  * int32 and has no gradient, so `oneHot(argMin(...))` is a natural
- * stop-gradient — no detach op needed, and no hand-written argmax either. This
- * mirrors how the AD IR gets WTA for free by folding `g.min`
- * (`spiralTerm`, src/render/webgpu/ad/losses.ts:65): the min's reverse rule
- * routes the gradient to the winning branch on its own.
+ * stop-gradient — no detach op needed, and no hand-written argmax either. It
+ * also fixes the tie rule to the LOWEST head index, which is the invariant the
+ * other two backends match. This mirrors how the AD IR gets WTA for free by
+ * folding `g.min` (`spiralTerm`, src/render/webgpu/ad/losses.ts:65): the min's
+ * reverse rule routes the gradient to the winning branch on its own.
  */
 function weightsWta(k: number, relaxEps: number, resid: tf.Tensor2D): tf.Tensor2D {
+  const { winner, loser } = wtaScalars({ tag: "wta", k, relaxEps });
   const win = tf.oneHot(tf.argMin(resid, 1), k).toFloat() as tf.Tensor2D;
-  const loserShare = relaxEps / (k - 1);
-  return win.mul(1 - relaxEps - loserShare).add(loserShare) as tf.Tensor2D;
+  return win.mul(winner - loser).add(loser) as tf.Tensor2D;
 }
 
 /** δ: AdversaryKind → weighting handler. Trivial body; all work is in the handlers. */
@@ -1479,19 +1487,16 @@ function validate(cfg: AdversaryConfig): void {
     default:
       assertNever(cfg.loss, "validate loss");
   }
-  if (cfg.kind.tag === "wta") {
-    if (!Number.isInteger(cfg.kind.k) || cfg.kind.k < 2) {
-      throw new AdversaryConfigError(
-        `wta requires an integer k >= 2 (k = 1 IS variant "single"), got ${cfg.kind.k}`
-      );
-    }
-    const winnerDominanceLimit = (cfg.kind.k - 1) / cfg.kind.k;
-    if (!(cfg.kind.relaxEps >= 0 && cfg.kind.relaxEps < winnerDominanceLimit)) {
-      throw new AdversaryConfigError(
-        `relaxEps must be in [0, (k-1)/k) = [0, ${winnerDominanceLimit}) ` +
-          `so the winner remains individually dominant, got ${cfg.kind.relaxEps}`
-      );
-    }
+  // The k >= 2 rule and the winner-dominance bound on ε have ONE definition
+  // (src/core/gan/wta.ts) shared with the AD IR and the fused kernel. Rethrown
+  // as AdversaryConfigError so this module keeps exactly one typed error at its
+  // canonicalization boundary — callers (and tools/adversary_strict_test.ts §5)
+  // test `instanceof AdversaryConfigError`, not the sub-validator's class. The
+  // message is passed through verbatim.
+  try {
+    validateGuessKind(cfg.kind);
+  } catch (e) {
+    throw new AdversaryConfigError(e instanceof Error ? e.message : String(e));
   }
 }
 

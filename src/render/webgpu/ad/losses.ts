@@ -9,6 +9,11 @@
  */
 import { Graph, type Node } from "./ir";
 import { buildHead, type HeadDim } from "./head";
+import {
+  validateGuessKind,
+  wtaScalars,
+  type GuessKind,
+} from "../../../core/gan/wta";
 
 export type V2 = [Node, Node];
 
@@ -183,6 +188,15 @@ export interface WtaTerm {
 }
 
 /**
+ * κ — the loose `(k, relaxEps)` pair that `wtaTerm`/`wtaObjectiveTerm` inherit
+ * from their first ABI, lifted to the canonical {@link GuessKind}. k = 1 IS the
+ * `single` control (weight ≡ 1, relaxEps unused), which is what keeps `ε/(k−1)`
+ * structurally unreachable at k = 1. New code should pass a `GuessKind`.
+ */
+const guessKindOf = (k: number, relaxEps: number): GuessKind =>
+  k === 1 ? { tag: "single" } : { tag: "wta", k, relaxEps };
+
+/**
  * HANDLER — relaxed-WTA weighting (k ≥ 2). Winner takes 1−ε, the k−1 losers
  * share ε (ε/(k−1) each) — Rupprecht et al. relaxed-WTA, exactly
  * `weightsWta` in src/core/gan/adversary.ts.
@@ -191,11 +205,18 @@ export interface WtaTerm {
  * lowest-index tie rule:
  *   win_j = Π_{i<j} [resid_i > resid_j] · Π_{i>j} [resid_j ≤ resid_i]
  * built from `gt` nodes, whose reverse rule is ZERO (autodiff.ts:109).
+ *
+ * The two scalars come from {@link wtaScalars} (src/core/gan/wta.ts), which is
+ * also what the tfjs reference and the fused kernel read; only the IR-node
+ * CONSTRUCTION of the winner indicator is local to this backend. `wtaScalars`
+ * rejects k < 2, so the `ε/(k−1)` it performs cannot divide by zero — and both
+ * call sites (`wtaTerm`, `wtaObjectiveTerm`) already branch k = 1 away to the
+ * constant-1 weight before reaching here.
  */
 function relaxedWtaWeights(g: Graph, resid: Node[], relaxEps: number): Node[] {
   const k = resid.length;
-  const loserShare = relaxEps / (k - 1);
-  const winBonus = 1 - relaxEps - loserShare; // w_j = loserShare + win_j·winBonus
+  const { winner, loser: loserShare } = wtaScalars({ tag: "wta", k, relaxEps });
+  const winBonus = winner - loserShare; // w_j = loserShare + win_j·winBonus
   const weights: Node[] = [];
   for (let j = 0; j < k; j++) {
     let win: Node = g.const(1);
@@ -213,8 +234,14 @@ function relaxedWtaSum(g: Graph, resid: Node[], relaxEps: number): Node {
 
 /**
  * Relaxed winner-take-all multiple-choice term: k head-MLPs on a SHARED
- * context u, each guessing the target y; per-tuple surprise = min_j residual,
- * per-tuple discriminator objective = relaxed-weighted residual sum.
+ * context u, each guessing the target y; the per-tuple discriminator objective
+ * AND the per-tuple surprise are BOTH the relaxed-weighted residual sum — one
+ * scalar (`payoff === surprise === weighted`, see the return at the end of this
+ * function), which is what makes D and G a strict zero-sum game. The pure
+ * `min_j resid_j` fold is the separate `minResidual` DIAGNOSTIC field and is
+ * not the reward. (This summary said "surprise = min_j residual" until 2026-08;
+ * that stopped being true when the generator moved onto the relaxed payoff, and
+ * the stale line survived because nothing reads `minResidual` for the reward.)
  *
  * Weight leaves are `aw_{j}_{l}_{i}_{o}` / `ab_{j}_{l}_{o}` ({@link awName}).
  * All k heads share `dims` (the shape), never the leaves.
@@ -257,12 +284,12 @@ export function wtaTerm(
   if (!Number.isInteger(k) || k < 1) {
     throw new Error(`wtaTerm: k must be an integer >= 1, got ${k}`);
   }
-  const relaxUpper = k <= 1 ? 1 : (k - 1) / k;
-  if (!(relaxEps >= 0 && relaxEps < relaxUpper)) {
-    throw new Error(
-      `wtaTerm: relaxEps must be in [0, ${relaxUpper}) for k=${k}, got ${relaxEps}`
-    );
-  }
+  // The winner-dominance bound `0 <= ε < (k−1)/k` has ONE definition
+  // (src/core/gan/wta.ts), shared with the tfjs reference and the fused kernel.
+  // k = 1 canonicalizes to `single`, where relaxEps is genuinely unused, so
+  // there is no bound to enforce on it. (The old inline check invented an
+  // `upper = 1` for that case — a range check on an ignored argument.)
+  validateGuessKind(guessKindOf(k, relaxEps));
   if (dims.length === 0 || dims[0].inSize !== u.length) {
     throw new Error(
       `wtaTerm: dims[0].inSize ${dims[0]?.inSize} must equal du = ${u.length}`
@@ -433,12 +460,8 @@ export function wtaObjectiveTerm(
   if (!Number.isInteger(k) || k < 1) {
     throw new Error(`wtaObjectiveTerm: k must be an integer >=1, got ${k}`);
   }
-  const upper = k <= 1 ? 1 : (k - 1) / k;
-  if (!(relaxEps >= 0 && relaxEps < upper)) {
-    throw new Error(
-      `wtaObjectiveTerm: relaxEps must be in [0,${upper}), got ${relaxEps}`
-    );
-  }
+  // Same single definition of the winner-dominance bound as `wtaTerm`.
+  validateGuessKind(guessKindOf(k, relaxEps));
   const active = valid ?? g.const(1);
   const preds: Node[][] = [];
   const angleResid: Node[] = [];

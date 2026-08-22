@@ -190,6 +190,99 @@ become `headCount * (2K+2)`.
 
 ---
 
+### 3f. Collapse must be detectable, not silent (**pending**)
+
+This was missing from the first draft of this plan and is the most important
+omission, because it is the exact failure relaxed-WTA exists to prevent.
+
+`adversary.ts:76-84` states the hazard: a guess that never wins receives zero
+gradient, never moves, and keeps never winning. `K` silently degrades to 1
+while the loss looks fine and the model has stopped being a mixture. Relaxed
+epsilon makes that *less likely*; it does not make it *observable*. The
+relational adversary therefore records per-head win counts every `trainStep`
+and exposes `winStats()` (`:2104`), `collapsed()` (`:2117`), and
+`headSpread()` (`:2139`).
+
+Adding guesses to the pixel critics without the same telemetry ships a knob
+whose failure mode is invisible.
+
+The fused adversary already has the portable shape:
+
+```wgsl
+var<workgroup> winCnt : array<atomic<u32>, ${k}>;   // adversary_wgsl.ts:1763
+  if (tid < ${k}u) { atomicStore(&winCnt[tid], 0u); }        // :1769
+      atomicAdd(&winCnt[win], 1u);                           // :1947
+    stats[pb + 5u + j] = f32(atomicLoad(&winCnt[j]));        // :2012
+```
+
+The pixel port is **simpler**: `criticDisc` is `@compute @workgroup_size(1)`,
+so a plain `var winCnt : array<u32, guesses>` in private scope suffices — no
+atomics, no workgroup reduction.
+
+**This work item is coupled to the stats-buffer defect.** `PixelDiscStats`
+reads six floats (`pixel_disc_train.ts:391-398`) but the shader only ever
+writes `metaStats + 0..3`; slots 4 and 5 (`meanFx`/`meanFy`) are written by no
+kernel. Whoever fixes that should size the stats region to carry `guesses` win
+counters, rather than fixing it to six slots and re-widening it later.
+
+### 3g. Inactive cells must not be counted as wins (**pending**)
+
+`adversary.ts:737-741` names this invariant explicitly:
+
+> The exact per-row activity predicate used by both payoff masking and win
+> accounting. Keeping one handler prevents an inactive row from having zero
+> payoff/gradient yet still being reported as an argMin tie won by head 0.
+
+and `trainStep` excludes inactive rows from the histogram (`:2035-2037`).
+
+Every pixel kind has an activity predicate already, and they differ:
+
+| kind | predicate | site |
+|---|---|---|
+| `vec-field` | `D[c] >= 1e-3` (`densFloor`), gen path uses `D2[c]` | `pixel_disc.ts:487-489`, `:539` |
+| `inpaint` | `mask[c] == 1`, normalized by `nMask` | `pixel_disc.ts:811-825` |
+| `next-frame` | all cells, normalized by `nCell` | `pixel_disc.ts:599-613` |
+| `real-fake` | no per-cell term (GAP then MLP) | `pixel_disc.ts:680-725` |
+
+An inactive cell still has a mathematical argmin over guesses, and it routes to
+guess 0 under the first-argmin tie rule. Counting those wins would make guess 0
+look dominant on a mostly-empty density grid — the collapse detector from §3f
+would report collapse that is not happening, or mask collapse that is.
+
+So §3f's counter must be gated by the same predicate that already gates the
+residual, per kind. `real-fake` has no per-cell residual and therefore takes
+guesses at the MLP output, not per cell — worth deciding deliberately rather
+than by default (see §6).
+
+### 3h. Per-guess init symmetry is currently implicit (**pending**)
+
+`adversary.ts:1533-1537` makes symmetry-breaking explicit and documents it as
+load-bearing: identical heads produce identical residuals, every tie routes to
+head 0, and the mixture is dead on arrival. Its seeds are derived per head:
+`seedOf = cfg.seed * 7919 + j * 101 + layer`.
+
+`initPixelDiscWeights` (`pixel_disc.ts:119-158`) draws from a single sequential
+`mulberry32` stream, so replicating the head `guesses` times through the
+existing `fillHead` calls yields distinct draws **for free** — the stream
+advances.
+
+That is a correct outcome reached implicitly, which is the fragile kind. Record
+it in a comment at the init site: the per-guess loop must call `fillHead` once
+per guess, and must never be "optimized" into initializing one head and
+broadcasting it. Add an assertion in the §4 equivalence test that two guesses'
+head slices differ.
+
+### 3i. Adam is already per-parameter — no change needed (**verified**)
+
+Noting the non-issue so it is not re-litigated. `adversary.ts:2015-2027`
+warns that "shared Adam moments would couple the heads and undo the
+quantization," which reads like a constraint on the pixel port. It is not:
+`discAdam` (`pixel_disc_wgsl.ts:1369-1382`) is one thread per weight float with
+its own `critMeta[metaM + t]` / `critMeta[metaV + t]` slots, so moments are
+elementwise. Replicated guess heads occupy disjoint float ranges and are
+already decorrelated in exactly the way the adversary's per-head optimizers
+achieve.
+
 ## 4. The test gap that gates everything (**pending**, do first)
 
 `tools/pixel_disc_test.ts` §2 (`:114-187`) asserts only that `discLoss` fell
@@ -258,7 +351,14 @@ Each step is independently shippable and independently verifiable.
    byte-identical to today.
 4. **WGSL mirror with `winIdx` gating** (§3d-3e). Gate: step 2's test at
    `guesses.k > 1`, then `tools/pixel_disc_cost_probe.ts` picks the ceiling.
+4b. **Win counters + activity gating** (§3f-3g), landed with step 4, not after.
+   A guesses knob without collapse telemetry is a knob whose failure mode is
+   invisible. Sized into the stats-region fix, not bolted on later.
 5. **UI toggle**, reusing the existing "guesses K" control shape
    (`src/index.tsx:2133`).
 
 Steps 1 and 2 are worth landing regardless of whether steps 3-5 follow.
+
+The stats-buffer defect (slots 4/5 unwritten, `pixel_disc_train.ts:391-398`) is
+tracked separately but must be scheduled **before or with** step 4b, since 4b
+needs that region resized for `guesses` counters.
