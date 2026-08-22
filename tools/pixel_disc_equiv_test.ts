@@ -11,17 +11,32 @@
  * sites (plan §3e) and the multi-guess port adds a min-over-K fold to every one
  * of them, so this is the gate that has to exist first.
  *
- *   §1 shared-constant preconditions (no GPU needed)
+ *   §1 shared-constant preconditions (no GPU needed), incl. the multi-guess
+ *      head layout and the §3h per-guess init asymmetry
  *   §2 CPU ≡ GPU at the small test config  G=8  E=4  K=8  hidden=8
  *   §3 CPU ≡ GPU at the shipped gallery config G=16 E=8 K=16 hidden=32
  *       (src/main.ts:2403 et al. — PIXEL_DISC_DEFAULTS)
  *
- * Compared, per kind (vec-field, next-frame, real-fake, inpaint):
+ * Compared, per kind (vec-field, next-frame, real-fake, inpaint) × per guess
+ * setting (single, k=2 ε=0.05, k=4 ε=0.22):
  *   discLoss          CPU pixelDiscStep().discLoss   vs critMeta[3·nW + 0]
  *   genLoss           CPU pixelDiscStep().genLoss    vs critMeta[3·nW + 1]
  *   discGradPacked    CPU .discGradPacked[0..nW)     vs critMeta[0..nW)
  *   dF                CPU .dF[0..2B)                 vs scratch[pBase + 6..8)
+ *   winner            CPU .winIdx[c]                 vs scratch[winBase + c]
+ *   win counts        histogram of CPU .winIdx       vs critMeta[3·nW + 4 + j]
  * plus the density itself, as a diagnostic for the fixed-point splat.
+ *
+ * WHY THE WINNER IS COMPARED CELL BY CELL AND NOT ONLY THROUGH THE GRADIENT: a
+ * disagreement about which guess won swaps that cell's weights between `1−ε` and
+ * `ε/(k−1)`. On a near-tie the payoff barely moves and the two backends' summed
+ * gradients can stay inside tolerance while their SELECTIONS differ — which is
+ * the one thing the whole multi-guess port is about. The win-count row
+ * additionally gates §3g: for vec-field the counts must sum to the ACTIVE cell
+ * count, not to G², or inactive cells are being credited to guess 0.
+ *
+ * `real-fake` runs at `single` only, and §1 asserts that anything else is
+ * REFUSED rather than silently degraded — see `validatePixelDims`.
  *
  * HOW THE TWO SIDES ARE FORCED ONTO IDENTICAL INPUTS — every one of these is a
  * way this test would otherwise silently lie:
@@ -63,8 +78,9 @@
  *    construction (see the comment at WARM_STEPS), so a fresh-weights
  *    comparison of dF would be noise against noise.
  *
- * When guesses land (plan §3h), add here: assert that two guesses' head
- * slices differ, i.e. that `initPixelDiscWeights` never broadcasts one head.
+ *  - GUESS SETTING. `dims.guesses` is passed to BOTH sides, and the head is a
+ *    stride, so a k-mismatch would change `pixelDiscWeightCount` and be caught
+ *    by the critW byte-equality check before any number is compared.
  */
 import {
   PIXEL_DISC_SOFT_EPS,
@@ -76,14 +92,21 @@ import {
   pixelDiscStep,
   softSplatDensity,
   makeInpaintMask,
+  headFloats,
+  headFloatsPerGuess,
+  pixelGuessCount,
   type PixelDiscDims,
   type PixelGanKind,
 } from "../src/core/gan/pixel_disc";
+import { wtaScalars, type GuessKind } from "../src/core/gan/wta";
 import { layoutField } from "../src/render/webgpu/advect_wgsl";
 import {
   pixelDiscShader,
   pixelWeightLayout,
   pixelParticleScratchFloats,
+  pixelCritWinBase,
+  pixelWinCounters,
+  PIXEL_STATS_WIN_BASE,
 } from "../src/render/webgpu/pixel_disc_wgsl";
 
 console.log("=== pixel_disc CPU ↔ GPU equivalence ===");
@@ -134,6 +157,28 @@ const note = (msg: string) => console.log(`  ..    ${msg}`);
 const REL_LOSS_MAX = 5e-5;
 const REL_GRAD_MAX = 1e-4;
 const REL_DF_MAX = 2e-4;
+/**
+ * dF bound WHEN THERE IS MORE THAN ONE GUESS. A separate number, not a widened
+ * REL_DF_MAX, because a specific floor moves and it is worth naming rather than
+ * absorbing — measured 2026-08-22, `min_c min_j r` after 60 warm steps:
+ *
+ *   config   k=1       k=2       k=4       cells within 10·SOFT_EPS of the knee
+ *   G=8      4.95e-2   2.11e-3   2.35e-4   0 → 0 → 8/64
+ *   G=16     1.67e-3   1.26e-3   1.77e-4   0 → 0 → 7/256
+ *
+ * Taking a MINIMUM over k guesses drives the winning residual toward the
+ * soft-L1 knee at `r = SOFT_EPS = 1e-4` — that is what a min-distance loss is
+ * FOR. But `d(diff/r)/d(diff) = SOFT_EPS²/r³`, which is ~1 out at r = 5e-2 and
+ * ~1e4 at r ≈ SOFT_EPS. So on the handful of cells that reach the knee, the f32
+ * vs f64 gap in `pred` is amplified four orders of magnitude before it ever
+ * reaches the density VJP, whose four bilinear taps then cancel on top of it.
+ *
+ * Worst observed under this bound: 3.5e-4 (next-frame k=4 ε=0.22, G=8) — 3x
+ * headroom. The COSINE bound is NOT relaxed: the structural check still holds at
+ * 1-3.6e-9 against COS_MIN, which is what would actually catch a mirrored site
+ * drifting.
+ */
+const REL_DF_MAX_WTA = 1e-3;
 const COS_MIN = 1 - 1e-7;
 const ABS_DENS_MAX = 1e-4;
 
@@ -145,6 +190,26 @@ const ABS_DENS_MAX = 1e-4;
 const DF_SCALE_MIN = 1e-6;
 
 const KINDS: PixelGanKind[] = ["vec-field", "next-frame", "real-fake", "inpaint"];
+
+/**
+ * The guess settings every kind is compared under.
+ *
+ * `single` FIRST and always: it is the compatibility checkpoint — at that
+ * setting every number below must equal what the pre-guesses code produced, and
+ * it does (the whole file's output was diffed against HEAD).
+ *
+ * Two relaxation levels, deliberately far apart. ε=0.05 is nearly hard WTA, so
+ * the winner carries the gradient and a selection disagreement between the two
+ * backends shows up as a large gradient error. ε=0.22 at k=4 gives each of the
+ * three losers 0.0733 against the winner's 0.78 — still winner-dominant (the
+ * bound is 0.75), but now every guess receives real gradient, which is the
+ * regime where a WRONG loser weight would otherwise hide inside tolerance.
+ */
+const GUESS_CASES: { label: string; guesses: GuessKind }[] = [
+  { label: "", guesses: { tag: "single" } },
+  { label: " k2ε.05", guesses: { tag: "wta", k: 2, relaxEps: 0.05 } },
+  { label: " k4ε.22", guesses: { tag: "wta", k: 4, relaxEps: 0.22 } },
+];
 
 const SEED = 1234567;
 const WARM_LR = 0.02;
@@ -166,6 +231,30 @@ const WARM_STEPS: Record<PixelGanKind, number> = {
   "real-fake": 10,
   inpaint: 60,
 };
+
+/**
+ * MULTI-GUESS vec-field warms for half as long, for the same reason real-fake
+ * warms for a sixth: past a point the critic is a degenerate place to compare
+ * two implementations. Here the degeneracy is a DEAD CONV TRUNK, and more head
+ * parameters reach it sooner. Measured at G=8 E=4 (live post-ReLU units out of
+ * E·G² = 256, and the resulting max|dF| on the GPU):
+ *
+ *   warm   k=1              k=2              k=4
+ *   10     47 live, 3.2e-4  132 live, 7.9e-4  29 live, 9.1e-4
+ *   30      3 live, 2.2e-4   76 live, 2.8e-4   4 live, 3.9e-4
+ *   60      3 live, 6.7e-5   78 live, 4.6e-4   1 live, 0.0
+ *
+ * At k=4/warm=60 exactly one conv unit is still alive and dF is IDENTICALLY
+ * ZERO on both sides — they agree perfectly and the comparison proves nothing,
+ * which is what DF_SCALE_MIN exists to make loud. Note the trunk is already
+ * dying at k=1 (3 live units): this is a property of a 4-channel conv on a 64
+ * cell grid under Adam, not of the guess fold. Single-guess keeps 60 so its rows
+ * stay byte-comparable against pre-guesses HEAD.
+ */
+function warmSteps(kind: PixelGanKind, guesses: number): number {
+  if (kind === "vec-field" && guesses > 1) return 30;
+  return WARM_STEPS[kind];
+}
 
 /** CPU oracle's RNG (pixel_disc.ts:108) — a STREAM, state carried between draws. */
 function mulberry32(seed: number): () => number {
@@ -314,10 +403,97 @@ const fmt = (x: number) => x.toExponential(2);
   }
 
   for (const kind of KINDS) {
-    const dd: PixelDiscDims = { ...d, kind };
+    for (const gc of GUESS_CASES) {
+      if (kind === "real-fake" && gc.guesses.tag !== "single") continue;
+      const dd: PixelDiscDims = { ...d, kind, guesses: gc.guesses };
+      const P = pixelGuessCount(dd);
+      const wl = pixelWeightLayout(dd);
+      ok(
+        wl.total === pixelDiscWeightCount(dd) &&
+          wl.headStride === headFloatsPerGuess(dd) &&
+          wl.guesses === P &&
+          headFloats(dd) === P * headFloatsPerGuess(dd),
+        `${kind}${gc.label} layout.total ≡ weightCount = ${pixelDiscWeightCount(dd)}, ` +
+          `head = ${P} × ${headFloatsPerGuess(dd)} (guesses are a STRIDE, §3a)`
+      );
+    }
+  }
+
+  // §3h — per-guess init asymmetry. `initPixelDiscWeights` draws from ONE
+  // sequential mulberry32 stream, so calling its per-guess filler once per guess
+  // yields distinct heads for free. That is a correct outcome reached
+  // IMPLICITLY, which is the fragile kind: an "optimization" that initialises
+  // one head and broadcasts it produces identical residuals on every cell, every
+  // comparison is then an exact tie, the first-argmin rule routes ALL of them to
+  // guess 0, and the mixture is dead on arrival with a completely normal loss.
+  for (const kind of KINDS) {
+    if (kind === "real-fake") continue;
+    const dd: PixelDiscDims = { ...d, kind, guesses: { tag: "wta", k: 4, relaxEps: 0.1 } };
+    const w = initPixelDiscWeights(dd, SEED);
+    const stride = headFloatsPerGuess(dd);
+    let minPairDiff = Infinity;
+    for (let a = 0; a < 4; a++) {
+      for (let b = a + 1; b < 4; b++) {
+        let same = 0;
+        let diff = 0;
+        for (let i = 0; i < stride; i++) {
+          const x = w.head[a * stride + i];
+          const y = w.head[b * stride + i];
+          if (x === y) same++;
+          diff = Math.max(diff, Math.abs(x - y));
+        }
+        // The bias tail is zero in every guess by design, so "identical floats"
+        // is expected there and only the weight rows must differ.
+        minPairDiff = Math.min(minPairDiff, diff);
+        if (same === stride) minPairDiff = 0;
+      }
+    }
     ok(
-      pixelWeightLayout(dd).total === pixelDiscWeightCount(dd),
-      `${kind} pixelWeightLayout.total ≡ pixelDiscWeightCount = ${pixelDiscWeightCount(dd)}`
+      minPairDiff > 1e-6,
+      `${kind} §3h init: every pair of the 4 guesses' head slices differs ` +
+        `(closest pair max|Δ| ${fmt(minPairDiff)}) — no broadcast`
+    );
+  }
+
+  // real-fake refuses guesses LOUDLY. A silently-clamped headCount would leave a
+  // UI knob that appears to do something and does not — see validatePixelDims
+  // for the three reasons (label BCE has one right answer; the generator pass
+  // has no winner; no per-cell predicate to gate a §3g counter with).
+  {
+    const dd: PixelDiscDims = {
+      ...d,
+      kind: "real-fake",
+      guesses: { tag: "wta", k: 2, relaxEps: 0.1 },
+    };
+    let threw = "";
+    try {
+      pixelDiscShader(layout, { dims: dd, batchCap: 64, fieldLane: "blend" });
+    } catch (e) {
+      threw = (e as Error).message;
+    }
+    ok(
+      threw.includes("real-fake"),
+      `real-fake + guesses>1 is REFUSED, not degraded: ${threw.slice(0, 90) || "<no throw>"}`
+    );
+  }
+
+  // The two WTA scalars reach the shader from src/core/gan/wta.ts and are not
+  // re-derived there. `ε=0` would emit as an abstract int and fail to compile —
+  // the bug `f32lit` was hardened against — so check the literal, not the value.
+  for (const gc of GUESS_CASES) {
+    if (gc.guesses.tag === "single") continue;
+    const dd: PixelDiscDims = { ...d, kind: "vec-field", guesses: gc.guesses };
+    const src2 = pixelDiscShader(layout, { dims: dd, batchCap: 64, fieldLane: "blend" });
+    const s = wtaScalars(gc.guesses);
+    const m2 = /select\(([0-9eE.+-]+), ([0-9eE.+-]+), j == win\)/.exec(src2);
+    ok(
+      // f32lit prints ~10 significant digits, so compare at f32 precision, not
+      // at f64 exactness — the shader constant IS an f32.
+      m2 !== null &&
+        Math.abs(Number(m2[1]) - s.loser) < 1e-7 * Math.max(s.loser, 1e-3) &&
+        Math.abs(Number(m2[2]) - s.winner) < 1e-7 * s.winner,
+      `${gc.label.trim()} shader emits select(loser=${m2 ? m2[1] : "?"}, ` +
+        `winner=${m2 ? m2[2] : "?"}) ≡ wtaScalars = (${s.loser}, ${s.winner})`
     );
   }
 }
@@ -390,17 +566,22 @@ async function compareKind(
   const nCell = dims.G * dims.G;
   const nW = pixelDiscWeightCount(dims);
   const partStride = pixelParticleScratchFloats(layout);
+  const P = pixelGuessCount(dims);
+  // One label for every line of this comparison, so a failure names the guess
+  // setting it happened under and not just the kind.
+  const kl = `${kind}${P === 1 ? "" : ` k${P}ε${(dims.guesses as any).relaxEps}`}`;
+  const winBase = pixelCritWinBase(layout, B, dims);
 
   let maskSeed = 4242;
   if (kind === "inpaint") {
     const s = pickInpaintSeed(dims.G);
     if (s === null) {
-      ok(false, `${kind} no maskSeed makes CPU/WGSL masks agree — cannot compare`);
+      ok(false, `${kl} no maskSeed makes CPU/WGSL masks agree — cannot compare`);
       return;
     }
     maskSeed = s;
     note(
-      `${kind} maskSeed=${maskSeed} searched, not chosen: makeInpaintMask and ` +
+      `${kl} maskSeed=${maskSeed} searched, not chosen: makeInpaintMask and ` +
         `emitInpaintMaskPar use different RNG streams (see wgslMulberry32)`
     );
   }
@@ -414,7 +595,7 @@ async function compareKind(
   });
   const shaderErr = await dev.popErrorScope();
   if (shaderErr) {
-    ok(false, `${kind} shader: ${String(shaderErr.message).slice(0, 160)}`);
+    ok(false, `${kl} shader: ${String(shaderErr.message).slice(0, 160)}`);
     trainer.destroy();
     return;
   }
@@ -431,7 +612,7 @@ async function compareKind(
   const expectW = packPixelDiscWeights(initPixelDiscWeights(dims, SEED), dims);
   let wSame = critW0.length === expectW.length;
   for (let i = 0; wSame && i < expectW.length; i++) wSame = critW0[i] === expectW[i];
-  ok(wSame, `${kind} GPU critW ≡ initPixelDiscWeights(dims, ${SEED}) (${nW} floats)`);
+  ok(wSame, `${kl} GPU critW ≡ initPixelDiscWeights(dims, ${SEED}) (${nW} floats)`);
 
   /**
    * Warm the critic on the GPU before comparing, then adopt ITS weights as the
@@ -450,8 +631,8 @@ async function compareKind(
    * CPU, is what keeps the two sides bit-identical without the CPU oracle
    * needing an optimizer it does not have (it applies plain SGD).
    */
-  const warmSteps = WARM_STEPS[kind];
-  for (let t = 0; t < warmSteps; t++) {
+  const warm = warmSteps(kind, P);
+  for (let t = 0; t < warm; t++) {
     const encW = dev.createCommandEncoder();
     trainer.encodeStep(encW, {
       b: B,
@@ -475,7 +656,7 @@ async function compareKind(
   }
   ok(
     wFinite && moved > 0,
-    `${kind} warmed ${warmSteps} Adam steps @ lr=${WARM_LR} (max |Δw| ${fmt(moved)}), finite`
+    `${kl} warmed ${warm} Adam steps @ lr=${WARM_LR} (max |Δw| ${fmt(moved)}), finite`
   );
   const w = unpackPixelDiscWeights(critW, dims);
 
@@ -497,7 +678,7 @@ async function compareKind(
   await dev.queue.onSubmittedWorkDone();
   const errA = await dev.popErrorScope();
   if (errA) {
-    ok(false, `${kind} disc pass: ${String(errA.message).slice(0, 160)}`);
+    ok(false, `${kl} disc pass: ${String(errA.message).slice(0, 160)}`);
     trainer.destroy();
     return;
   }
@@ -506,7 +687,7 @@ async function compareKind(
   const densA = await readFloats(dev, priv.densPack, 4 * nCell);
   const metaA = await readFloats(dev, priv.metaBuf, 3 * nW + 16);
   if (metaA.length < 3 * nW + 2) {
-    ok(false, `${kind} metaBuf holds ${metaA.length} f32 — no room for discLoss/genLoss stats`);
+    ok(false, `${kl} metaBuf holds ${metaA.length} f32 — no room for discLoss/genLoss stats`);
     trainer.destroy();
     return;
   }
@@ -543,7 +724,7 @@ async function compareKind(
     for (let c = 0; c < nCell; c++) worst = Math.max(worst, Math.abs(dFakeCpu[c] - auxA[c]));
     ok(
       worst < ABS_DENS_MAX,
-      `${kind} injected fakePos reproduces GPU fake cloud (worst |ΔD| ${fmt(worst)})`
+      `${kl} injected fakePos reproduces GPU fake cloud (worst |ΔD| ${fmt(worst)})`
     );
   }
 
@@ -558,7 +739,7 @@ async function compareKind(
     }
     ok(
       bad === 0,
-      `${kind} CPU mask ≡ GPU mask at maskSeed=${maskSeed} (${nMask}/${nCell} cells, ${bad} disagree)`
+      `${kl} CPU mask ≡ GPU mask at maskSeed=${maskSeed} (${nMask}/${nCell} cells, ${bad} disagree)`
     );
   }
 
@@ -589,7 +770,7 @@ async function compareKind(
     for (let c = 0; c < nCell; c++) worst = Math.max(worst, Math.abs(cpuD[c] - densA[c]));
     ok(
       worst < ABS_DENS_MAX,
-      `${kind} density: worst |ΔD| ${fmt(worst)} (i32 splat @ DENS_SCALE=1e6 truncates)`
+      `${kl} density: worst |ΔD| ${fmt(worst)} (i32 splat @ DENS_SCALE=1e6 truncates)`
     );
     if (kind === "vec-field") {
       // If the two sides ever straddle the floor on some cell the gradients
@@ -606,7 +787,7 @@ async function compareKind(
       }
       ok(
         disagree === 0,
-        `${kind} activity: ${act}/${nCell} active, ${disagree} cells straddle the floor` +
+        `${kl} activity: ${act}/${nCell} active, ${disagree} cells straddle the floor` +
           ` (closest non-empty cell is ${fmt(nearest)} from it)`
       );
     }
@@ -615,16 +796,58 @@ async function compareKind(
   const gpuDiscLoss = metaA[3 * nW];
   ok(
     relScalar(rDisc.discLoss, gpuDiscLoss) < REL_LOSS_MAX,
-    `${kind} discLoss cpu ${rDisc.discLoss.toFixed(6)} gpu ${gpuDiscLoss.toFixed(6)} ` +
+    `${kl} discLoss cpu ${rDisc.discLoss.toFixed(6)} gpu ${gpuDiscLoss.toFixed(6)} ` +
       `rel ${fmt(relScalar(rDisc.discLoss, gpuDiscLoss))}`
   );
 
   const gc = compareVec(rDisc.discGradPacked, metaA, nW);
   ok(
     gc.finite && gc.worstRel < REL_GRAD_MAX && gc.cos > COS_MIN,
-    `${kind} discGrad (${nW} floats, worst rel ${fmt(gc.worstRel)} of scale ${fmt(gc.scale)}, ` +
+    `${kl} discGrad (${nW} floats, worst rel ${fmt(gc.worstRel)} of scale ${fmt(gc.scale)}, ` +
       `elementwise ${fmt(gc.worstElem)}, cos 1-${fmt(1 - gc.cos)})`
   );
+
+  // ── the SELECTION, not just the sum ──────────────────────────────────────
+  // A winner disagreement swaps that cell's weights between (1−ε) and ε/(k−1);
+  // on a near-tie the summed gradient barely moves, so the sum alone cannot see
+  // it. Compared only where the CPU says the cell was ACTIVE (winIdx >= 0) —
+  // §3g: an inactive cell has a mathematical argmin that nothing may credit.
+  const cpuWin = rDisc.winIdx;
+  if (cpuWin && winBase !== null) {
+    const winF = await readFloats(dev, priv.scratchBuf, winBase + nCell);
+    let bad = 0;
+    let counted = 0;
+    const hist = new Array<number>(P).fill(0);
+    for (let c = 0; c < nCell; c++) {
+      if (cpuWin[c] < 0) continue;
+      counted++;
+      hist[cpuWin[c]]++;
+      if (Math.round(winF[winBase + c]) !== cpuWin[c]) bad++;
+    }
+    ok(
+      bad === 0 && counted > 0,
+      `${kl} winner: ${counted} active cells, ${bad} disagree; ` +
+        `CPU histogram [${hist.join(", ")}]`
+    );
+
+    // The GPU's own §3f counters. Equality with the CPU histogram gates BOTH the
+    // counting and its §3g gating in one number: if inactive cells were being
+    // credited, the GPU's total would be nCell (${nCell}) rather than `counted`.
+    const nWin = pixelWinCounters(dims);
+    const gpuHist: number[] = [];
+    for (let j = 0; j < nWin; j++) gpuHist.push(metaA[3 * nW + PIXEL_STATS_WIN_BASE + j]);
+    let sum = 0;
+    let same = nWin === P;
+    for (let j = 0; j < nWin; j++) {
+      sum += gpuHist[j];
+      if (gpuHist[j] !== hist[j]) same = false;
+    }
+    ok(
+      same && sum === counted,
+      `${kl} §3f win counters [${gpuHist.join(", ")}] ≡ CPU histogram, ` +
+        `Σ=${sum} = active cells (not ${nCell})`
+    );
+  }
 
   // ── pass B: disc + generator ─────────────────────────────────────────────
   // Idempotent w.r.t. pass A: applyDisc=false leaves critW/Adam untouched and
@@ -636,7 +859,7 @@ async function compareKind(
   await dev.queue.onSubmittedWorkDone();
   const errB = await dev.popErrorScope();
   if (errB) {
-    ok(false, `${kind} gen pass: ${String(errB.message).slice(0, 160)}`);
+    ok(false, `${kl} gen pass: ${String(errB.message).slice(0, 160)}`);
     trainer.destroy();
     return;
   }
@@ -656,7 +879,7 @@ async function compareKind(
   const gpuGenLoss = metaB[3 * nW + 1];
   ok(
     relScalar(rGen.genLoss, gpuGenLoss) < REL_LOSS_MAX,
-    `${kind} genLoss  cpu ${rGen.genLoss.toFixed(6)} gpu ${gpuGenLoss.toFixed(6)} ` +
+    `${kl} genLoss  cpu ${rGen.genLoss.toFixed(6)} gpu ${gpuGenLoss.toFixed(6)} ` +
       `rel ${fmt(relScalar(rGen.genLoss, gpuGenLoss))}`
   );
 
@@ -666,9 +889,12 @@ async function compareKind(
     gpuDF[s * 2 + 1] = scratchB[s * partStride + 7];
   }
   const dc = compareVec(rGen.dF, gpuDF, B * 2);
+  // The multi-guess bound is a NAMED separate floor, not a widened one — see
+  // REL_DF_MAX_WTA for the residual-knee measurement that sets it.
+  const dfBound = P === 1 ? REL_DF_MAX : REL_DF_MAX_WTA;
   ok(
-    dc.finite && dc.scale > DF_SCALE_MIN && dc.worstRel < REL_DF_MAX && dc.cos > COS_MIN,
-    `${kind} dF (${B * 2} floats, worst rel ${fmt(dc.worstRel)} of scale ${fmt(dc.scale)}, ` +
+    dc.finite && dc.scale > DF_SCALE_MIN && dc.worstRel < dfBound && dc.cos > COS_MIN,
+    `${kl} dF (${B * 2} floats, worst rel ${fmt(dc.worstRel)} of scale ${fmt(dc.scale)}, ` +
       `elementwise ${fmt(dc.worstElem)}, cos 1-${fmt(1 - dc.cos)})`
   );
 
@@ -719,7 +945,20 @@ async function runConfig(dev: GPUDevice, label: string, base: Omit<PixelDiscDims
   });
 
   for (const kind of KINDS) {
-    await compareKind(dev, layout, fwBuf, { ...base, kind }, B, posBuf, velBuf);
+    for (const g of GUESS_CASES) {
+      // real-fake takes `single` only — §1 asserts the refusal; running it here
+      // would just re-assert the throw at 20x the cost.
+      if (kind === "real-fake" && g.guesses.tag !== "single") continue;
+      await compareKind(
+        dev,
+        layout,
+        fwBuf,
+        { ...base, kind, guesses: g.guesses },
+        B,
+        posBuf,
+        velBuf
+      );
+    }
   }
 
   fwBuf.destroy();

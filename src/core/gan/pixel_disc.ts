@@ -8,7 +8,30 @@
  *
  * Shared trunk: soft splat → 3×3 conv → soft codebook. Reverse-mode only.
  * Spec: docs/PIXEL_DISC.md
+ *
+ * ## Multi-guess heads (docs/PLAN_MULTI_GUESS_MODULARIZATION.md §3)
+ *
+ * Three of the four kinds give the head `headCount(guesses)` GUESSES and score
+ * it on a relaxed winner-take-all min: per cell the guess with the smallest
+ * residual takes weight `1−ε`, the losers share ε. The spec — the two scalars,
+ * the ε bound, the first-argmin tie rule — is `src/core/gan/wta.ts`; this file
+ * imports it and never re-derives it.
+ *
+ * Guesses are a head STRIDE, not a fifth kind (§3a): the four `step*` handlers
+ * stay four handlers and each gains an inner fold over guesses, which is a loop
+ * inside a fixed kind. The TRUNK IS SHARED — conv and codebook run once per cell
+ * into `cache.feat`/`cache.soft` and every guess reads the same features, which
+ * is what keeps the GPU mirror inside its frame budget.
  */
+
+import {
+  type GuessKind,
+  headCount,
+  validateGuessKind,
+  wtaScalars,
+} from "./wta";
+
+export type { GuessKind } from "./wta";
 
 export type PixelGanKind = "vec-field" | "next-frame" | "real-fake" | "inpaint";
 
@@ -26,23 +49,98 @@ export const PIXEL_DISC_DEFAULTS = {
 export interface PixelDiscDims {
   G: number;
   E: number;
+  /**
+   * SOFT-CODEBOOK size — the number of logits the per-cell softmax runs over
+   * (see backboneForward). NOT the guess count: that is {@link PixelDiscDims.guesses},
+   * and it is deliberately never spelled `K` anywhere in this port, because a
+   * second `K` in this struct is the single most likely way the hand-mirrored
+   * WGSL goes wrong (plan §3b — every index over there is a baked literal).
+   */
   K: number;
   hidden: number;
   dt: number;
   kind: PixelGanKind;
+  /**
+   * How many guesses the head gets, and how they are weighted (`src/core/gan/wta.ts`).
+   *
+   * OPTIONAL, and the optionality is NAMED rather than accidental: absence means
+   * "this caller predates the knob", which canonicalizes to {@link SINGLE_GUESS}
+   * at exactly one place ({@link guessesOf}). Nothing downstream reads the field
+   * directly.
+   */
+  guesses?: GuessKind;
+}
+
+/** The default: one head, one guess, weight 1. */
+export const SINGLE_GUESS: GuessKind = { tag: "single" };
+
+/** κ — the ONE place an absent `guesses` becomes a canonical {@link GuessKind}. */
+export function guessesOf(d: Pick<PixelDiscDims, "guesses">): GuessKind {
+  return d.guesses ?? SINGLE_GUESS;
+}
+
+/**
+ * κ — canonicality of the (kind, guesses) PAIR, which the two types cannot
+ * express separately. Throws; never repairs.
+ *
+ * ## Why `real-fake` refuses guesses (plan §3g, decided rather than defaulted)
+ *
+ * The other three kinds score a per-cell PREDICTION against a target, and WTA is
+ * exactly the tool for "the target may be one of several things; score the
+ * predictor on its best guess". `real-fake` has no per-cell prediction at all:
+ * it global-average-pools, runs an MLP, and takes BCE against a LABEL. Three
+ * separate things break if guesses are bolted onto that MLP output:
+ *
+ *  1. BCE against a label has ONE correct answer. `min_j BCE(logit_j, target)`
+ *     does not select the best-covering mode, it selects the most CONFIDENT
+ *     critic and hands it (1−ε) of the gradient — the rich-get-richer dynamic
+ *     §3f exists to detect, with none of the mode-coverage benefit that pays for
+ *     it elsewhere.
+ *  2. The generator pass has no label, so the winner is UNDEFINED there. Its
+ *     payoff is `genSign · (−logit)` and `genSign` is negative, so "min over
+ *     guesses" flips meaning with the sign. Any pick (min, mean, guess 0) is
+ *     arbitrary, and disc and gen would then train different heads.
+ *  3. §3g requires the win counter to be gated by the same predicate that gates
+ *     the residual. `real-fake` has no per-cell predicate — its whole step is
+ *     TWO samples (real, fake) — so its win histogram would be 2 counts/step
+ *     against 256 cells/step for every other kind, and the collapse threshold
+ *     would mean something different for this kind alone.
+ *
+ * So the answer is "not at all", and it is enforced LOUDLY here rather than by
+ * silently clamping `headCount` to 1, which would leave a UI knob that appears
+ * to do something and does not.
+ */
+export function validatePixelDims(d: PixelDiscDims): void {
+  const g = guessesOf(d);
+  validateGuessKind(g);
+  if (d.kind === "real-fake" && g.tag !== "single") {
+    throw new Error(
+      `pixel_disc: kind "real-fake" scores a LABEL through BCE, not a per-cell ` +
+        `residual, so it has no winner to take all — it accepts only ` +
+        `guesses {tag:"single"}, got ${JSON.stringify(g)}`
+    );
+  }
 }
 
 export function resolvePixelDims(
   partial?: Partial<PixelDiscDims> & { kind?: PixelGanKind }
 ): PixelDiscDims {
-  return {
+  const d: PixelDiscDims = {
     G: partial?.G ?? PIXEL_DISC_DEFAULTS.G,
     E: partial?.E ?? PIXEL_DISC_DEFAULTS.E,
     K: partial?.K ?? PIXEL_DISC_DEFAULTS.K,
     hidden: partial?.hidden ?? PIXEL_DISC_DEFAULTS.hidden,
     dt: partial?.dt ?? PIXEL_DISC_DEFAULTS.dt,
     kind: partial?.kind ?? "vec-field",
+    guesses: guessesOf(partial ?? {}),
   };
+  validatePixelDims(d);
+  return d;
+}
+
+/** Guesses this head is replicated across. 1 unless `guesses` says otherwise. */
+export function pixelGuessCount(d: PixelDiscDims): number {
+  return headCount(guessesOf(d));
 }
 
 /** Packed critic weights — layout depends on kind (see pixelDiscWeightCount). */
@@ -54,7 +152,13 @@ export interface PixelDiscWeights {
   head: Float64Array;
 }
 
-export function headFloats(d: PixelDiscDims): number {
+/**
+ * Floats in ONE guess's head — the STRIDE between consecutive guesses in the
+ * packed head slice. The head is guess-major: guess `j` owns
+ * `[j·headFloatsPerGuess, (j+1)·headFloatsPerGuess)`, so `pixelWeightLayout`'s
+ * GPU offsets are the guess-0 offsets plus `j · headStride`.
+ */
+export function headFloatsPerGuess(d: PixelDiscDims): number {
   switch (d.kind) {
     case "vec-field":
       return d.K * 2 + 2; // linear soft→2
@@ -68,6 +172,11 @@ export function headFloats(d: PixelDiscDims): number {
       throw new Error(`pixel_disc: bad kind ${_e}`);
     }
   }
+}
+
+/** Total head floats: guesses are a head STRIDE, not a fifth kind (plan §3a). */
+export function headFloats(d: PixelDiscDims): number {
+  return pixelGuessCount(d) * headFloatsPerGuess(d);
 }
 
 export function pixelDiscWeightCount(d: PixelDiscDims): number {
@@ -135,23 +244,50 @@ export function initPixelDiscWeights(d: PixelDiscDims, seed: number): PixelDiscW
     const std = Math.sqrt(2 / (fanIn + fanOut));
     for (let i = 0; i < n; i++) head[o++] = gauss() * std;
   };
-  switch (d.kind) {
-    case "vec-field":
-      fillHead(d.K * 2, d.K, 2);
-      o += 2; // bias zero
-      break;
-    case "next-frame":
-    case "inpaint":
-      fillHead(d.K, d.K, 1);
-      o += 1;
-      break;
-    case "real-fake":
-      fillHead(d.hidden * d.K, d.K, d.hidden);
-      o += d.hidden; // bias0
-      fillHead(d.hidden, d.hidden, 1);
-      o += 1; // bias1
-      break;
-  }
+  /** δ: kind → the filler for ONE guess's head slice. */
+  const fillOneGuess = (): void => {
+    switch (d.kind) {
+      case "vec-field":
+        fillHead(d.K * 2, d.K, 2);
+        o += 2; // bias zero
+        return;
+      case "next-frame":
+      case "inpaint":
+        fillHead(d.K, d.K, 1);
+        o += 1;
+        return;
+      case "real-fake":
+        fillHead(d.hidden * d.K, d.K, d.hidden);
+        o += d.hidden; // bias0
+        fillHead(d.hidden, d.hidden, 1);
+        o += 1; // bias1
+        return;
+      default: {
+        const _e: never = d.kind;
+        throw new Error(`pixel_disc: bad kind ${_e}`);
+      }
+    }
+  };
+  /**
+   * PER-GUESS SYMMETRY BREAKING — load-bearing, and currently IMPLICIT, which is
+   * the fragile kind (plan §3h).
+   *
+   * `gauss()` draws from ONE sequential mulberry32 stream whose state advances
+   * across calls, so calling `fillOneGuess()` once per guess yields distinct
+   * draws for free. That is the whole mechanism: there is no per-guess seed here
+   * the way `adversary.ts` derives `cfg.seed·7919 + j·101 + layer`.
+   *
+   * DO NOT "optimize" this loop into initialize-one-head-and-broadcast, and do
+   * not hoist the fill out of the loop. Identical heads produce identical
+   * residuals on every cell; every comparison is then an exact tie; the
+   * first-argmin tie rule routes ALL of them to guess 0; guesses 1..K−1 receive
+   * only the ε loser share of a payoff they never influence, and the mixture is
+   * dead on arrival while the loss looks completely normal.
+   *
+   * `tools/pixel_disc_equiv_test.ts` asserts two guesses' head slices differ.
+   */
+  const guesses = pixelGuessCount(d);
+  for (let j = 0; j < guesses; j++) fillOneGuess();
   return {
     convW: fill(d.E * 9, 9, d.E),
     convB: new Float64Array(d.E),
@@ -396,6 +532,61 @@ export interface PixelDiscStepResult {
   genLoss: number;
   dF: Float64Array;
   discGradPacked: Float32Array;
+  /**
+   * DISC-pass winning guess per cell, `-1` where the cell was INACTIVE for this
+   * kind (plan §3g: an inactive cell still has a mathematical argmin, and
+   * counting it would make guess 0 look dominant on a mostly-empty grid and turn
+   * §3f's collapse detector into a liar). `null` for `real-fake`, which has no
+   * per-cell residual and therefore no winner — absence is the meaning, so it is
+   * not stood in for by an array of zeros.
+   *
+   * Exists so `tools/pixel_disc_equiv_test.ts` can compare the SELECTION against
+   * the GPU's, not merely the summed gradient: two backends can disagree about
+   * which guess won on a handful of cells and still land within tolerance on the
+   * sum, because winner/loser weight swaps partially cancel.
+   */
+  winIdx: Int32Array | null;
+}
+
+/** The compile-time-ish constants of one step's WTA fold. See src/core/gan/wta.ts. */
+interface GuessPlan {
+  /** Guess count. */
+  readonly P: number;
+  /** Weight of the winning guess (`1−ε`). */
+  readonly winner: number;
+  /** Weight of EACH losing guess (`ε/(P−1)`, `0` for `single`). */
+  readonly loser: number;
+  /** Floats between consecutive guesses' head slices. */
+  readonly stride: number;
+}
+
+function guessPlan(d: PixelDiscDims): GuessPlan {
+  const g = guessesOf(d);
+  const { winner, loser } = wtaScalars(g);
+  return {
+    P: headCount(g),
+    winner,
+    loser,
+    stride: headFloatsPerGuess(d),
+  };
+}
+
+/**
+ * First-argmin over `r[0..P)`. STRICT `<` scanning ascending, so an equal later
+ * residual does NOT displace the incumbent — the tie rule all four backends
+ * honor (src/core/gan/wta.ts). Exact ties are not hypothetical: identical heads
+ * (plan §3h) tie on every cell.
+ */
+function argMinFirst(r: Float64Array, P: number): number {
+  let win = 0;
+  let best = r[0];
+  for (let j = 1; j < P; j++) {
+    if (r[j] < best) {
+      best = r[j];
+      win = j;
+    }
+  }
+  return win;
 }
 
 function applyDiscGrads(
@@ -441,6 +632,9 @@ export function pixelDiscStep(
     fakePos?: Float64Array;
   }
 ): PixelDiscStepResult {
+  // κ once, at the entry to the core: after this the four handlers may assume
+  // (kind, guesses) is canonical and never re-check it.
+  validatePixelDims(d);
   switch (d.kind) {
     case "vec-field":
       return stepVecField(pos, forces, w, d, opts);
@@ -479,37 +673,56 @@ function stepVecField(
   const cache = makeBackboneCache(d);
   backboneForward(D, w, d, cache);
 
-  // head layout: W[2,K] row-major then bias[2]
+  // head layout, PER GUESS: W[2,K] row-major then bias[2]; guess j starts at
+  // j·stride. The trunk above ran ONCE — every guess reads the same cache.soft.
+  const { P, winner, loser, stride } = guessPlan(d);
   let discR = 0;
   let nActive = 0;
   const dSoft = new Float64Array(K * nCell);
   const g = zeroCriticGrads(d);
   const densFloor = 1e-3;
+  const winIdx = new Int32Array(nCell).fill(-1);
+  const rr = new Float64Array(P);
+  const ex = new Float64Array(P);
+  const ey = new Float64Array(P);
   for (let c = 0; c < nCell; c++) {
     if (D[c] < densFloor) continue;
     nActive++;
-    let vx = w.head[2 * K];
-    let vy = w.head[2 * K + 1];
-    for (let k = 0; k < K; k++) {
-      vx += w.head[0 * K + k] * cache.soft[k * nCell + c];
-      vy += w.head[1 * K + k] * cache.soft[k * nCell + c];
-    }
     const tx = opts.forceGrid[c * 2];
     const ty = opts.forceGrid[c * 2 + 1];
-    const dx = vx - tx;
-    const dy = vy - ty;
-    const r = Math.sqrt(dx * dx + dy * dy + PIXEL_DISC_SOFT_EPS * PIXEL_DISC_SOFT_EPS);
-    discR += r;
-    const s = 1 / r;
-    const dvx = dx * s;
-    const dvy = dy * s;
-    g.head[2 * K] += dvx;
-    g.head[2 * K + 1] += dvy;
-    for (let k = 0; k < K; k++) {
-      g.head[0 * K + k] += dvx * cache.soft[k * nCell + c];
-      g.head[1 * K + k] += dvy * cache.soft[k * nCell + c];
-      dSoft[k * nCell + c] +=
-        dvx * w.head[0 * K + k] + dvy * w.head[1 * K + k];
+    for (let j = 0; j < P; j++) {
+      const h = j * stride;
+      let vx = w.head[h + 2 * K];
+      let vy = w.head[h + 2 * K + 1];
+      for (let k = 0; k < K; k++) {
+        vx += w.head[h + 0 * K + k] * cache.soft[k * nCell + c];
+        vy += w.head[h + 1 * K + k] * cache.soft[k * nCell + c];
+      }
+      const dx = vx - tx;
+      const dy = vy - ty;
+      ex[j] = dx;
+      ey[j] = dy;
+      rr[j] = Math.sqrt(dx * dx + dy * dy + PIXEL_DISC_SOFT_EPS * PIXEL_DISC_SOFT_EPS);
+    }
+    // Selection is OFF-TAPE: `win` and the two weights are constants w.r.t. the
+    // gradient, exactly as in the other three backends.
+    const win = argMinFirst(rr, P);
+    winIdx[c] = win;
+    for (let j = 0; j < P; j++) {
+      const wj = j === win ? winner : loser;
+      const h = j * stride;
+      discR += wj * rr[j];
+      const s = 1 / rr[j];
+      const dvx = ex[j] * s * wj;
+      const dvy = ey[j] * s * wj;
+      g.head[h + 2 * K] += dvx;
+      g.head[h + 2 * K + 1] += dvy;
+      for (let k = 0; k < K; k++) {
+        g.head[h + 0 * K + k] += dvx * cache.soft[k * nCell + c];
+        g.head[h + 1 * K + k] += dvy * cache.soft[k * nCell + c];
+        dSoft[k * nCell + c] +=
+          dvx * w.head[h + 0 * K + k] + dvy * w.head[h + 1 * K + k];
+      }
     }
   }
   const active = Math.max(nActive, 1);
@@ -538,26 +751,38 @@ function stepVecField(
     for (let c = 0; c < nCell; c++) {
       if (D2[c] < densFloor) continue;
       n2++;
-      let vx = 0;
-      let vy = 0;
-      for (let k = 0; k < K; k++) {
-        vx += w.head[0 * K + k] * cache2.soft[k * nCell + c];
-        vy += w.head[1 * K + k] * cache2.soft[k * nCell + c];
-      }
-      vx += w.head[2 * K];
-      vy += w.head[2 * K + 1];
       const tx = opts.forceGrid[c * 2];
       const ty = opts.forceGrid[c * 2 + 1];
-      const dx = vx - tx;
-      const dy = vy - ty;
-      const r = Math.sqrt(dx * dx + dy * dy + PIXEL_DISC_SOFT_EPS * PIXEL_DISC_SOFT_EPS);
-      genR += r;
-      const s = opts.genSign / r;
-      const dvx = dx * s;
-      const dvy = dy * s;
-      for (let k = 0; k < K; k++) {
-        dSoft2[k * nCell + c] +=
-          dvx * w.head[0 * K + k] + dvy * w.head[1 * K + k];
+      for (let j = 0; j < P; j++) {
+        const h = j * stride;
+        let vx = 0;
+        let vy = 0;
+        for (let k = 0; k < K; k++) {
+          vx += w.head[h + 0 * K + k] * cache2.soft[k * nCell + c];
+          vy += w.head[h + 1 * K + k] * cache2.soft[k * nCell + c];
+        }
+        vx += w.head[h + 2 * K];
+        vy += w.head[h + 2 * K + 1];
+        const dx = vx - tx;
+        const dy = vy - ty;
+        ex[j] = dx;
+        ey[j] = dy;
+        rr[j] = Math.sqrt(dx * dx + dy * dy + PIXEL_DISC_SOFT_EPS * PIXEL_DISC_SOFT_EPS);
+      }
+      // The gen pass re-selects on ITS OWN density (D2), the same way the GPU's
+      // criticGen does — the disc pass's winner is not carried over.
+      const win = argMinFirst(rr, P);
+      for (let j = 0; j < P; j++) {
+        const wj = j === win ? winner : loser;
+        const h = j * stride;
+        genR += wj * rr[j];
+        const s = opts.genSign / rr[j];
+        const dvx = ex[j] * s * wj;
+        const dvy = ey[j] * s * wj;
+        for (let k = 0; k < K; k++) {
+          dSoft2[k * nCell + c] +=
+            dvx * w.head[h + 0 * K + k] + dvy * w.head[h + 1 * K + k];
+        }
       }
     }
     const a2 = Math.max(n2, 1);
@@ -570,7 +795,7 @@ function stepVecField(
     for (let i = 0; i < B * 2; i++) dF[i] = d.dt * dPos[i];
   }
 
-  return { discLoss: discR, genLoss, dF, discGradPacked };
+  return { discLoss: discR, genLoss, dF, discGradPacked, winIdx };
 }
 
 function stepNextFrame(
@@ -595,34 +820,63 @@ function stepNextFrame(
   backboneForward(D0, w, d, cache);
   const g = zeroCriticGrads(d);
   const dSoft = new Float64Array(K * nCell);
+  // Guesses are a head stride; the trunk above ran once and is shared (§3a).
+  const { P, winner, loser, stride } = guessPlan(d);
+  const rr = new Float64Array(P);
+  const dd = new Float64Array(P);
+  // EVERY cell is active for next-frame, so every cell's winner counts (§3g).
+  const winIdx = new Int32Array(nCell);
   let discR = 0;
   for (let c = 0; c < nCell; c++) {
-    let pred = w.head[K];
-    for (let k = 0; k < K; k++) pred += w.head[k] * cache.soft[k * nCell + c];
-    const diff = pred - D1[c];
-    const r = Math.sqrt(diff * diff + PIXEL_DISC_SOFT_EPS * PIXEL_DISC_SOFT_EPS);
-    discR += r;
-    const dPred = diff / r;
-    g.head[K] += dPred;
-    for (let k = 0; k < K; k++) {
-      g.head[k] += dPred * cache.soft[k * nCell + c];
-      dSoft[k * nCell + c] += dPred * w.head[k];
+    for (let j = 0; j < P; j++) {
+      const h = j * stride;
+      let pred = w.head[h + K];
+      for (let k = 0; k < K; k++) pred += w.head[h + k] * cache.soft[k * nCell + c];
+      const diff = pred - D1[c];
+      dd[j] = diff;
+      rr[j] = Math.sqrt(diff * diff + PIXEL_DISC_SOFT_EPS * PIXEL_DISC_SOFT_EPS);
+    }
+    const win = argMinFirst(rr, P);
+    winIdx[c] = win;
+    for (let j = 0; j < P; j++) {
+      const wj = j === win ? winner : loser;
+      const h = j * stride;
+      discR += wj * rr[j];
+      const dPred = (dd[j] / rr[j]) * wj;
+      g.head[h + K] += dPred;
+      for (let k = 0; k < K; k++) {
+        g.head[h + k] += dPred * cache.soft[k * nCell + c];
+        dSoft[k * nCell + c] += dPred * w.head[h + k];
+      }
     }
   }
   discR /= nCell;
   for (let i = 0; i < g.head.length; i++) g.head[i] /= nCell;
   for (let i = 0; i < dSoft.length; i++) dSoft[i] /= nCell;
   backboneBackwardFromDSoft(dSoft, D0, w, d, cache, g);
-  // Also path through D1 target: dR/dD1 = -dPred/nCell — for gen via splat(pos')
+  // Also path through D1 target: dR/dD1 = -Σ_j w_j·dPred_j/nCell — for gen via
+  // splat(pos'). NOTE: nothing reads dD1 today (the generator block below
+  // recomputes the same quantity into `gD`); it is kept in step with the guess
+  // fold rather than left as a stale single-guess expression.
   const dD1 = new Float64Array(nCell);
   {
     // recompute dPred for target side
     for (let c = 0; c < nCell; c++) {
-      let pred = w.head[K];
-      for (let k = 0; k < K; k++) pred += w.head[k] * cache.soft[k * nCell + c];
-      const diff = pred - D1[c];
-      const r = Math.sqrt(diff * diff + PIXEL_DISC_SOFT_EPS * PIXEL_DISC_SOFT_EPS);
-      dD1[c] = (-diff / r) / nCell;
+      for (let j = 0; j < P; j++) {
+        const h = j * stride;
+        let pred = w.head[h + K];
+        for (let k = 0; k < K; k++) pred += w.head[h + k] * cache.soft[k * nCell + c];
+        const diff = pred - D1[c];
+        dd[j] = diff;
+        rr[j] = Math.sqrt(diff * diff + PIXEL_DISC_SOFT_EPS * PIXEL_DISC_SOFT_EPS);
+      }
+      const win = argMinFirst(rr, P);
+      let acc = 0;
+      for (let j = 0; j < P; j++) {
+        const wj = j === win ? winner : loser;
+        acc += (-dd[j] / rr[j]) * wj;
+      }
+      dD1[c] = acc / nCell;
     }
   }
   const discGradPacked = applyDiscGrads(w, d, g, opts.applyDisc ? opts.lr : 0);
@@ -637,12 +891,22 @@ function stepNextFrame(
     const cache2 = makeBackboneCache(d);
     backboneForward(D0, w, d, cache2); // frozen critic on D0
     for (let c = 0; c < nCell; c++) {
-      let pred = w.head[K];
-      for (let k = 0; k < K; k++) pred += w.head[k] * cache2.soft[k * nCell + c];
-      const diff = pred - D1[c];
-      const r = Math.sqrt(diff * diff + PIXEL_DISC_SOFT_EPS * PIXEL_DISC_SOFT_EPS);
-      genR += r;
-      gD[c] = opts.genSign * (-diff / r) / nCell;
+      for (let j = 0; j < P; j++) {
+        const h = j * stride;
+        let pred = w.head[h + K];
+        for (let k = 0; k < K; k++) pred += w.head[h + k] * cache2.soft[k * nCell + c];
+        const diff = pred - D1[c];
+        dd[j] = diff;
+        rr[j] = Math.sqrt(diff * diff + PIXEL_DISC_SOFT_EPS * PIXEL_DISC_SOFT_EPS);
+      }
+      const win = argMinFirst(rr, P);
+      let acc = 0;
+      for (let j = 0; j < P; j++) {
+        const wj = j === win ? winner : loser;
+        genR += wj * rr[j];
+        acc += opts.genSign * (-dd[j] / rr[j]) * wj;
+      }
+      gD[c] = acc / nCell;
     }
     genR /= nCell;
     genLoss = opts.genSign * genR;
@@ -650,7 +914,7 @@ function stepNextFrame(
     softSplatVjp(pos2, gD, B, G, dPos);
     for (let i = 0; i < B * 2; i++) dF[i] = d.dt * dPos[i];
   }
-  return { discLoss: discR, genLoss, dF, discGradPacked };
+  return { discLoss: discR, genLoss, dF, discGradPacked, winIdx };
 }
 
 function stepRealFake(
@@ -665,6 +929,10 @@ function stepRealFake(
     fakePos?: Float64Array;
   }
 ): PixelDiscStepResult {
+  // NO GUESS FOLD, deliberately — see validatePixelDims for the three reasons
+  // (BCE against a label has one right answer; the gen pass has no winner; there
+  // is no per-cell activity predicate to gate a win counter with). `guesses` is
+  // canonicalized to "single" for this kind, so the head below is one head.
   const B = pos.length / 2;
   const { G, K, hidden } = d;
   const nCell = G * G;
@@ -780,7 +1048,7 @@ function stepRealFake(
     softSplatVjp(pos2, g2.dD, B, G, dPos);
     for (let i = 0; i < B * 2; i++) dF[i] = d.dt * dPos[i];
   }
-  return { discLoss, genLoss, dF, discGradPacked };
+  return { discLoss, genLoss, dF, discGradPacked, winIdx: null };
 }
 
 function stepInpaint(
@@ -807,19 +1075,36 @@ function stepInpaint(
   backboneForward(Din, w, d, cache);
   const g = zeroCriticGrads(d);
   const dSoft = new Float64Array(K * nCell);
+  const { P, winner, loser, stride } = guessPlan(d);
+  const rr = new Float64Array(P);
+  const dd = new Float64Array(P);
+  // -1 on UNMASKED cells: they carry no residual, so they have no winner to
+  // count (§3g). Counting their argmin would report guess 0 as dominant on the
+  // 75% of the grid the loss never looks at.
+  const winIdx = new Int32Array(nCell).fill(-1);
   let discR = 0;
   for (let c = 0; c < nCell; c++) {
     if (!mask[c]) continue;
-    let pred = w.head[K];
-    for (let k = 0; k < K; k++) pred += w.head[k] * cache.soft[k * nCell + c];
-    const diff = pred - D[c];
-    const r = Math.sqrt(diff * diff + PIXEL_DISC_SOFT_EPS * PIXEL_DISC_SOFT_EPS);
-    discR += r;
-    const dPred = (diff / r) / nMask;
-    g.head[K] += dPred;
-    for (let k = 0; k < K; k++) {
-      g.head[k] += dPred * cache.soft[k * nCell + c];
-      dSoft[k * nCell + c] += dPred * w.head[k];
+    for (let j = 0; j < P; j++) {
+      const h = j * stride;
+      let pred = w.head[h + K];
+      for (let k = 0; k < K; k++) pred += w.head[h + k] * cache.soft[k * nCell + c];
+      const diff = pred - D[c];
+      dd[j] = diff;
+      rr[j] = Math.sqrt(diff * diff + PIXEL_DISC_SOFT_EPS * PIXEL_DISC_SOFT_EPS);
+    }
+    const win = argMinFirst(rr, P);
+    winIdx[c] = win;
+    for (let j = 0; j < P; j++) {
+      const wj = j === win ? winner : loser;
+      const h = j * stride;
+      discR += wj * rr[j];
+      const dPred = ((dd[j] / rr[j]) * wj) / nMask;
+      g.head[h + K] += dPred;
+      for (let k = 0; k < K; k++) {
+        g.head[h + k] += dPred * cache.soft[k * nCell + c];
+        dSoft[k * nCell + c] += dPred * w.head[h + k];
+      }
     }
   }
   discR /= nMask;
@@ -846,17 +1131,26 @@ function stepInpaint(
     const dD2 = new Float64Array(nCell);
     for (let c = 0; c < nCell; c++) {
       if (!mask[c]) continue;
-      let pred = w.head[K];
-      for (let k = 0; k < K; k++) pred += w.head[k] * cache2.soft[k * nCell + c];
-      const diff = pred - D2[c];
-      const r = Math.sqrt(diff * diff + PIXEL_DISC_SOFT_EPS * PIXEL_DISC_SOFT_EPS);
-      genR += r;
-      const scale = opts.genSign / r / nMask;
-      // through target D2
-      dD2[c] += -diff * scale;
-      // through pred ← Din2 (masked input)
-      const dPred = diff * scale;
-      for (let k = 0; k < K; k++) dSoft2[k * nCell + c] += dPred * w.head[k];
+      for (let j = 0; j < P; j++) {
+        const h = j * stride;
+        let pred = w.head[h + K];
+        for (let k = 0; k < K; k++) pred += w.head[h + k] * cache2.soft[k * nCell + c];
+        const diff = pred - D2[c];
+        dd[j] = diff;
+        rr[j] = Math.sqrt(diff * diff + PIXEL_DISC_SOFT_EPS * PIXEL_DISC_SOFT_EPS);
+      }
+      const win = argMinFirst(rr, P);
+      for (let j = 0; j < P; j++) {
+        const wj = j === win ? winner : loser;
+        const h = j * stride;
+        genR += wj * rr[j];
+        const scale = (opts.genSign / rr[j] / nMask) * wj;
+        // through target D2
+        dD2[c] += -dd[j] * scale;
+        // through pred ← Din2 (masked input)
+        const dPred = dd[j] * scale;
+        for (let k = 0; k < K; k++) dSoft2[k * nCell + c] += dPred * w.head[h + k];
+      }
     }
     genR /= nMask;
     genLoss = opts.genSign * genR;
@@ -869,7 +1163,7 @@ function stepInpaint(
     softSplatVjp(pos2, dD2, B, G, dPos);
     for (let i = 0; i < B * 2; i++) dF[i] = d.dt * dPos[i];
   }
-  return { discLoss: discR, genLoss, dF, discGradPacked };
+  return { discLoss: discR, genLoss, dF, discGradPacked, winIdx };
 }
 
 /** Cell-center coordinates in normalized [0,1]² for vec-field targets. */

@@ -134,43 +134,58 @@ as a per-cell softmax over K logits at `:286-303`). A second `K` in the same
 struct is the single most likely way this port goes wrong, because every index
 in `pixel_disc_wgsl.ts` is a baked literal interpolated from those dims.
 
-### 3c. Cost budget
+### 3c. Cost budget (**verified** 2026-08-22 — supersedes the original estimate)
 
-Per cell at the shipped `G=8 E=4 K=8` (`src/main.ts:2403` et al.), the trunk is
-roughly `9E + K*E = 36 + 32 = 68` MACs and the vec-field head is `2K = 16`. The
-head is ~19% of per-cell work, and guesses multiply only that fraction.
+The original version of this section modelled the critic as
+`@compute @workgroup_size(1)` and predicted 5.8 ms at one guess, with 8
+guesses failing the 12 ms gate at ~13.5 ms. **That model was already obsolete
+when written**: commit `fe7834d` ("Parallelize the pixel critic") had made
+`criticDisc`/`criticGen` `@workgroup_size(${PIXEL_DISC_WG})` = 256, one cell
+per lane, with the workspace moved out of private memory into `scratch`.
 
-| guesses | per-cell | ratio | vec-field est. | vs `BUDGET_MS = 12` |
-|---|---|---|---|---|
-| 1 (today) | 84 | 1.00x | 5.8 ms **measured** | passes |
-| 2 | 100 | 1.19x | ~7 ms | passes |
-| 4 | 132 | 1.57x | ~9 ms | passes, little room |
-| 8 | 196 | 2.33x | ~13.5 ms | **fails** |
+Measured on this machine (median of 21 steps, 80k particles, b=256, two
+agreeing runs, `tools/pixel_disc_cost_probe.ts`, `BUDGET_MS = 12`):
 
-Estimates from MAC counts, not measurements — `tools/pixel_disc_cost_probe.ts`
-(`BUDGET_MS = 12`, `:84`) is the arbiter and must run before a default is
-chosen. The shape is the load-bearing part: 2-4 guesses fit, 8 does not. The
-relational adversary's shipped `guesses K 8` is **not** transferable here.
+| config | kind | g=1 | g=2 | g=4 | g=8 |
+|---|---|---|---|---|---|
+| gallery `G=16 E=8 K=16 h=32` | vec-field | 1.8 | 1.8 | 1.8 | 1.8-1.9 |
+| | next-frame | 1.2-1.3 | 1.2-1.3 | 1.3 | 1.3-1.4 |
+| | real-fake | 1.4-1.5 | n/a | n/a | n/a |
+| | inpaint | 1.2-1.3 | 1.3 | 1.3-1.4 | 1.3-1.4 |
+| stress `G=32 E=8 K=32 h=32` | vec-field | 2.7 | 2.7 | 2.7 | 3.2 |
+| | inpaint | 2.3 | 2.4 | 2.4 | 2.7 |
 
-### 3d. Store the winner index, not the residuals
+**Cost is no longer the binding constraint.** The step is dominated by fixed
+per-dispatch overhead; the head fold is one lane-iteration at `G^2 = 256`.
+Guesses of 2, 4 and 8 all fit with roughly 6x headroom. The probe is noisy on
+this machine — one stress-config cell reported k=4 *below* k=1, which is noise,
+not speedup. All figures are medians.
 
-The `@compute @workgroup_size(1)` critics already hold `cFeat[E*nCell]`,
-`cSoft[K*nCell]`, and `dSoft[K*nCell]` as function-scope private arrays
-(`pixel_disc_wgsl.ts:1114-1115`, `:495`). A naive `resid[guesses][nCell]` adds
-another `guesses * nCell`.
+Consequence for §5 of this plan: whichever default the UI eventually selects
+should be argued from the §3f collapse telemetry, not from milliseconds.
 
-Do not do that. Fold the min online in the forward and retain only:
+### 3d. Store the winner index, not the residuals (**verified**, premise corrected)
 
-```wgsl
-var winIdx : array<u32, ${nCell}>;   // 256 entries at G=8
-```
+The conclusion stands; the reason given originally does not. This section
+argued from private-memory pressure in a `@workgroup_size(1)` kernel. Since
+`fe7834d` the critics are cell-parallel and the workspace lives in `scratch`,
+so the winner never outlives its own cell iteration and the math needs no
+`array<u32, nCell>` at all.
 
-O(1) per cell instead of O(guesses). The backward then gates each
-`gW[...] +=` and `dSoft[...] +=` on `j == winIdx[c]`, which reproduces the
-stop-gradient-through-selection the other three backends already guarantee.
+What was implemented: the min is folded **online** during the forward, and a
+per-cell winner slot is written purely so `tools/pixel_disc_equiv_test.ts` can
+compare the CPU and GPU *selection* rather than only the summed gradient. That
+distinction matters — a winner mismatch can partially cancel inside the sum and
+pass a gradient-only comparison. Measured: 0 disagreeing cells across every
+kind at k=2 and k=4.
 
-This is the difference between fitting and not fitting the private-memory
-budget, which the cost probe reports per invocation alongside milliseconds.
+The backward gates each `gW[...] +=` and `dSoft[...] +=` on the recorded
+winner, reproducing the stop-gradient-through-selection the other three
+backends guarantee.
+
+Win counters likewise need no atomics — but because each lane keeps a private
+`array<f32, guesses>` reduced through the existing `wgSum`, **not** because the
+kernel is single-threaded.
 
 ### 3e. Sites that must change together
 

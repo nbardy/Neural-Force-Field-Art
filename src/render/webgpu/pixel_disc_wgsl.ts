@@ -37,11 +37,16 @@ import {
 import { f32lit } from "./ad/emit_wgsl";
 import {
   PIXEL_DISC_SOFT_EPS,
-  PIXEL_DISC_DEFAULTS,
   pixelDiscWeightCount,
+  headFloatsPerGuess,
+  pixelGuessCount,
+  guessesOf,
+  resolvePixelDims as resolvePixelDimsCore,
+  validatePixelDims,
   type PixelDiscDims,
   type PixelGanKind,
 } from "../../core/gan/pixel_disc";
+import { wtaScalars } from "../../core/gan/wta";
 
 export const PIXEL_DISC_WG = 256;
 export const PIXEL_DISC_MAX_BATCH = 512;
@@ -93,11 +98,27 @@ export const PIXEL_STATS = {
 export const PIXEL_STATS_WIN_BASE = Object.keys(PIXEL_STATS).length;
 
 /**
- * Floats in the stats region. `winCounters` is 0 today — there are no guesses
- * yet — and becomes `dims.guesses` when §3f lands, with no other layout change.
+ * Floats in the stats region: the named scalars plus one WIN COUNTER per guess.
  */
 export function pixelStatsFloats(winCounters = 0): number {
   return PIXEL_STATS_WIN_BASE + winCounters;
+}
+
+/**
+ * Win counters this kind's `criticDisc` actually writes — plan §3f, the reason
+ * the stats region was built with a parameter.
+ *
+ * A guesses knob without this ships a feature whose failure mode is INVISIBLE:
+ * a starved guess receives only the ε loser share, never moves, never wins, and
+ * K silently degrades to 1 while the loss looks fine. The counter is the only
+ * thing that distinguishes "a mixture" from "one head and K−1 passengers".
+ *
+ * `real-fake` gets ZERO counters, not a counter that is always 1: it has no
+ * per-cell residual and therefore no winner (see `validatePixelDims`), and a
+ * stats slot no kernel writes is precisely the defect PIXEL_STATS documents.
+ */
+export function pixelWinCounters(d: PixelDiscDims): number {
+  return d.kind === "real-fake" ? 0 : pixelGuessCount(d);
 }
 
 export interface PixelDiscShaderOpts {
@@ -135,18 +156,16 @@ export const PIXEL_DISC_KIND_PASSES: Record<PixelGanKind, string> = {
  */
 const fl = f32lit;
 
-export function resolvePixelDims(
+/**
+ * ALIAS of the oracle's κ, not a second one. This used to be a hand-copied
+ * duplicate of `resolvePixelDims` from src/core/gan/pixel_disc.ts; with guesses
+ * in `PixelDiscDims` that copy would be a second place to forget
+ * {@link validatePixelDims}, i.e. a way for the GPU trainer to build a shader
+ * for a (kind, guesses) pair the CPU oracle refuses.
+ */
+export const resolvePixelDims: (
   partial?: Partial<PixelDiscDims> & { kind?: PixelGanKind }
-): PixelDiscDims {
-  return {
-    G: partial?.G ?? PIXEL_DISC_DEFAULTS.G,
-    E: partial?.E ?? PIXEL_DISC_DEFAULTS.E,
-    K: partial?.K ?? PIXEL_DISC_DEFAULTS.K,
-    hidden: partial?.hidden ?? PIXEL_DISC_DEFAULTS.hidden,
-    dt: partial?.dt ?? PIXEL_DISC_DEFAULTS.dt,
-    kind: partial?.kind ?? "vec-field",
-  };
-}
+) => PixelDiscDims = resolvePixelDimsCore;
 
 /**
  * Whether this field shape has a fused pixel-critic codegen — as DATA, so the
@@ -224,45 +243,53 @@ export function pixelScratchBytes(
   batchCap: number,
   dims: PixelDiscDims
 ): number {
-  const partStride = pixelParticleScratchFloats(field);
-  return (
-    batchCap * partStride +
-    8 +
-    pixelCritSites(dims) * pixelCritSiteStride(field) +
-    pixelCritWorkFloats(dims)
-  ) * 4;
+  return (pixelCritWorkBase(field, batchCap, dims) + pixelCritWorkFloats(dims)) * 4;
 }
 
-export type PixelWeightLayout =
-  | {
-      kind: "vec-field";
-      convW: number;
-      convB: number;
-      code: number;
-      headW: number;
-      headB: number;
-      total: number;
-    }
-  | {
-      kind: "next-frame" | "inpaint";
-      convW: number;
-      convB: number;
-      code: number;
-      headW: number;
-      headB: number;
-      total: number;
-    }
-  | {
-      kind: "real-fake";
-      convW: number;
-      convB: number;
-      code: number;
-      mlp0W: number;
-      mlp0B: number;
-      mlp1W: number;
-      mlp1B: number;
-      total: number;
-    };
+/**
+ * Every head offset below is GUESS 0's. Guess `j` lives at `offset + j·headStride`
+ * — the head is guess-major and the `convW | convB | code | head` packing is
+ * otherwise unchanged (plan §3a).
+ */
+interface PixelHeadStride {
+  /** Floats between consecutive guesses' head slices. */
+  headStride: number;
+  /** Guess count. `1` unless `dims.guesses` says otherwise. */
+  guesses: number;
+}
+
+export type PixelWeightLayout = PixelHeadStride &
+  (
+    | {
+        kind: "vec-field";
+        convW: number;
+        convB: number;
+        code: number;
+        headW: number;
+        headB: number;
+        total: number;
+      }
+    | {
+        kind: "next-frame" | "inpaint";
+        convW: number;
+        convB: number;
+        code: number;
+        headW: number;
+        headB: number;
+        total: number;
+      }
+    | {
+        kind: "real-fake";
+        convW: number;
+        convB: number;
+        code: number;
+        mlp0W: number;
+        mlp0B: number;
+        mlp1W: number;
+        mlp1B: number;
+        total: number;
+      }
+  );
 
 /** Packed critic weight offsets — matches packPixelDiscWeights / headFloats(kind). */
 export function pixelWeightLayout(d: PixelDiscDims): PixelWeightLayout {
@@ -273,21 +300,23 @@ export function pixelWeightLayout(d: PixelDiscDims): PixelWeightLayout {
   o += d.E;
   const code = o;
   o += d.K * d.E;
+  const guesses = pixelGuessCount(d);
+  const headStride = headFloatsPerGuess(d);
+  const total = o + guesses * headStride;
+  const stride = { headStride, guesses };
   switch (d.kind) {
     case "vec-field": {
       const headW = o;
       o += 2 * d.K;
       const headB = o;
-      o += 2;
-      return { kind: "vec-field", convW, convB, code, headW, headB, total: o };
+      return { kind: "vec-field", convW, convB, code, headW, headB, total, ...stride };
     }
     case "next-frame":
     case "inpaint": {
       const headW = o;
       o += d.K;
       const headB = o;
-      o += 1;
-      return { kind: d.kind, convW, convB, code, headW, headB, total: o };
+      return { kind: d.kind, convW, convB, code, headW, headB, total, ...stride };
     }
     case "real-fake": {
       const mlp0W = o;
@@ -297,14 +326,78 @@ export function pixelWeightLayout(d: PixelDiscDims): PixelWeightLayout {
       const mlp1W = o;
       o += d.hidden;
       const mlp1B = o;
-      o += 1;
-      return { kind: "real-fake", convW, convB, code, mlp0W, mlp0B, mlp1W, mlp1B, total: o };
+      return {
+        kind: "real-fake",
+        convW,
+        convB,
+        code,
+        mlp0W,
+        mlp0B,
+        mlp1W,
+        mlp1B,
+        total,
+        ...stride,
+      };
     }
     default: {
       const _e: never = d.kind;
       throw new Error(`pixel_disc: bad kind ${_e}`);
     }
   }
+}
+
+/**
+ * The relaxed-WTA fold's compile-time constants, as WGSL literals.
+ *
+ * The two scalars come from {@link wtaScalars} — this emitter does NOT re-derive
+ * `ε/(k−1)`, which is the whole point of src/core/gan/wta.ts existing. `single`
+ * yields `{winner: 1, loser: 0}` as CONSTANTS, so the emitted fold collapses to
+ * exactly today's single-head arithmetic (`w·r` with `w = 1.0`) rather than to a
+ * division by `k−1 = 0`.
+ */
+interface GuessEmit {
+  /**
+   * Guess count, baked as a loop bound.
+   *
+   * AT P = 1 THE EMITTED ARITHMETIC IS THE PRE-GUESSES ARITHMETIC, term for
+   * term: `winner = 1`, `loser = 0`, the fold runs once, and every extra
+   * operation is a multiply by an exact 1.0 or an add of an exact 0.0. Measured
+   * 2026-08-22 against HEAD's emitter, one step at a fresh critic, comparing
+   * `critMeta[0..nW)` float by float:
+   *
+   *   G=16 E=8 K=16 (the SHIPPED config)  vec-field / next-frame / inpaint:
+   *     0 floats differ — bit-identical.
+   *   G=8 E=4 K=8 (the small test config):
+   *     inpaint    0 floats differ
+   *     next-frame 20/81 differ, ≤ 4 ulp
+   *     vec-field  36/90 differ, ≤ 27 ulp, max |Δ| 1.5e-8 against a scale of 0.88
+   *
+   * The small-config deltas are the Metal compiler contracting and reassociating
+   * an ARITHMETICALLY IDENTICAL expression differently once the K and E loops are
+   * short enough to fully unroll — not a semantic change; the shipped config is
+   * exact. They matter only because 60 warm Adam steps amplify a 1-ulp gradient
+   * difference into the sixth decimal of the equivalence test's printed numbers.
+   * Do not chase them by special-casing P === 1 into a second emission path: that
+   * would leave the single-guess path unexercised by every multi-guess test.
+   */
+  P: number;
+  /** Head stride in floats, as a WGSL u32 literal suffixless number. */
+  stride: number;
+  /** `1 − ε` as an f32 literal. */
+  winW: string;
+  /** `ε/(P−1)` as an f32 literal. */
+  loserW: string;
+}
+
+function guessEmit(d: PixelDiscDims): GuessEmit {
+  const g = guessesOf(d);
+  const { winner, loser } = wtaScalars(g);
+  return {
+    P: pixelGuessCount(d),
+    stride: headFloatsPerGuess(d),
+    winW: fl(winner),
+    loserW: fl(loser),
+  };
 }
 
 /** mulberry32 — matches CPU oracle (one sample, state = seed). */
@@ -356,9 +449,39 @@ interface CritWorkLayout {
   dsoft: number;
   /** dFeat[E·nCell], stored already masked by the ReLU (i.e. `gf`). */
   dfeat: number;
-  /** 2·nCell per-cell head grads (dvx,dvy for vec-field; dPred otherwise). */
+  /**
+   * Per-cell head grads, ALREADY multiplied by the guess's WTA weight:
+   * `hGradSlots(d)·nCell` floats — 2 per guess for vec-field (dvx,dvy), 1 per
+   * guess otherwise (dPred), none for real-fake (its head grads reduce through
+   * the MLP, not per cell).
+   */
   hg: number;
+  /** winIdx[nCell] as f32, or 0 slots where the kind has no per-cell winner. */
+  win: number;
   total: number;
+}
+
+/** Per-cell head-gradient slots, one set per guess. */
+function hGradSlots(d: PixelDiscDims): number {
+  const P = pixelGuessCount(d);
+  switch (d.kind) {
+    case "vec-field":
+      return 2 * P;
+    case "next-frame":
+    case "inpaint":
+      return P;
+    case "real-fake":
+      return 0;
+    default: {
+      const _e: never = d.kind;
+      throw new Error(`pixel_disc: bad kind ${_e}`);
+    }
+  }
+}
+
+/** 1 winner slot per cell, except for the kind that has no per-cell winner. */
+function winSlots(d: PixelDiscDims): number {
+  return d.kind === "real-fake" ? 0 : 1;
 }
 
 function critWorkLayout(d: PixelDiscDims): CritWorkLayout {
@@ -368,12 +491,52 @@ function critWorkLayout(d: PixelDiscDims): CritWorkLayout {
   const dsoft = soft + d.K * n;
   const dfeat = dsoft + d.K * n;
   const hg = dfeat + d.E * n;
-  return { feat, soft, dsoft, dfeat, hg, total: hg + 2 * n };
+  const win = hg + hGradSlots(d) * n;
+  return { feat, soft, dsoft, dfeat, hg, win, total: win + winSlots(d) * n };
 }
 
 /** f32s of per-cell critic workspace appended to `scratch`. */
 export function pixelCritWorkFloats(d: PixelDiscDims): number {
   return critWorkLayout(d).total;
+}
+
+/**
+ * Float index of `criticDisc`'s per-cell winning-guess array inside `scratch`,
+ * absolute. `null` for real-fake, which has no per-cell winner.
+ *
+ * §3d wanted `var winIdx : array<u32, nCell>` because the critics were
+ * `@workgroup_size(1)` and private memory was the binding constraint. They are
+ * cell-PARALLEL now, so the winner never has to outlive the cell iteration that
+ * computes it and the math needs no array at all. It is still written, for one
+ * reason: `tools/pixel_disc_equiv_test.ts` compares the SELECTION cell by cell
+ * against the CPU oracle, and a winner mismatch can partially cancel in the
+ * summed gradient. nCell f32 of observability.
+ */
+export function pixelCritWinBase(
+  field: FieldLayout,
+  batchCap: number,
+  d: PixelDiscDims
+): number | null {
+  if (d.kind === "real-fake") return null;
+  return pixelCritWorkBase(field, batchCap, d) + critWorkLayout(d).win;
+}
+
+/**
+ * Float index where the per-cell critic workspace starts inside `scratch`:
+ * after the per-particle blocks, the 8-float pad, and the field-eval sites.
+ * ONE definition, used by both {@link pixelScratchBytes} and the shader's baked
+ * accessors, so the allocation and the indexing cannot drift.
+ */
+export function pixelCritWorkBase(
+  field: FieldLayout,
+  batchCap: number,
+  d: PixelDiscDims
+): number {
+  return (
+    batchCap * pixelParticleScratchFloats(field) +
+    8 +
+    pixelCritSites(d) * pixelCritSiteStride(field)
+  );
 }
 
 /**
@@ -412,6 +575,11 @@ fn gFeatAt(e : u32, c : u32) -> f32 { return scratch[${at(cw.dfeat)} + e * N_CEL
 fn setGFeat(e : u32, c : u32, v : f32) { scratch[${at(cw.dfeat)} + e * N_CELL + c] = v; }
 fn hGradAt(j : u32, c : u32) -> f32 { return scratch[${at(cw.hg)} + j * N_CELL + c]; }
 fn setHGrad(j : u32, c : u32, v : f32) { scratch[${at(cw.hg)} + j * N_CELL + c] = v; }
+${
+    winSlots(d) === 0
+      ? ""
+      : `fn setWinIdx(c : u32, j : u32) { scratch[${at(cw.win)} + c] = f32(j); }`
+  }
 `;
 }
 
@@ -769,6 +937,8 @@ function emitCriticDiscBody(d: PixelDiscDims, metaStats: number): string {
   const { K } = d;
   const nW = pixelDiscWeightCount(d);
   const wl = pixelWeightLayout(d);
+  const g = guessEmit(d);
+  const winBase = metaStats + PIXEL_STATS_WIN_BASE;
   const dens0 = "0u";
   const densAux = "2u * N_CELL";
 
@@ -780,39 +950,87 @@ function emitCriticDiscBody(d: PixelDiscDims, metaStats: number): string {
   ${emitFwdPar(d, dens0)}
   var lAct = 0.0;
   var lR = 0.0;
-  var lBx = 0.0;
-  var lBy = 0.0;
+  var lBx : array<f32, ${g.P}>;
+  var lBy : array<f32, ${g.P}>;
+  var lWin : array<f32, ${g.P}>;
+  for (var j = 0u; j < ${g.P}u; j = j + 1u) { lBx[j] = 0.0; lBy[j] = 0.0; lWin[j] = 0.0; }
   for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
     // !(dens < FLOOR), not dens >= FLOOR: the serial kernel skipped with
     // "if (dens < FLOOR) { continue; }", and the two disagree on NaN.
     let act = !(dens_at(c) < ${fl(DENS_FLOOR)});
-    var vx = critW[${wl.headB}u];
-    var vy = critW[${wl.headB}u + 1u];
-    for (var k = 0u; k < ${K}u; k = k + 1u) {
-      let q = cSoftAt(k, c);
-      vx = vx + critW[${wl.headW}u + k] * q;
-      vy = vy + critW[${wl.headW}u + ${K}u + k] * q;
+    let tgx = auxA(c);
+    let tgy = auxB(c);
+    // The TRUNK above ran once; every guess reads the same cSoft (plan §3a).
+    var ex : array<f32, ${g.P}>;
+    var ey : array<f32, ${g.P}>;
+    var rr : array<f32, ${g.P}>;
+    var win = 0u;
+    var best = 0.0;
+    for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+      let hw = ${wl.headW}u + j * ${g.stride}u;
+      let hb = ${wl.headB}u + j * ${g.stride}u;
+      var vx = critW[hb];
+      var vy = critW[hb + 1u];
+      for (var k = 0u; k < ${K}u; k = k + 1u) {
+        let q = cSoftAt(k, c);
+        vx = vx + critW[hw + k] * q;
+        vy = vy + critW[hw + ${K}u + k] * q;
+      }
+      let dx = vx - tgx;
+      let dy = vy - tgy;
+      let r = sqrt(dx * dx + dy * dy + SOFT_EPS2);
+      ex[j] = dx;
+      ey[j] = dy;
+      rr[j] = r;
+      // STRICT <, ascending: a later equal residual does not displace the
+      // incumbent, i.e. ties route to the LOWEST guess index (wta.ts).
+      if (j == 0u || r < best) { best = r; win = j; }
     }
-    let ex = vx - auxA(c);
-    let ey = vy - auxB(c);
-    let r = sqrt(ex * ex + ey * ey + SOFT_EPS2);
-    let s = 1.0 / r;
-    let dvx = select(0.0, ex * s, act);
-    let dvy = select(0.0, ey * s, act);
+    setWinIdx(c, win);
+    // §3g: gated by the SAME predicate that gates the residual. An inactive cell
+    // still has a mathematical argmin, and counting it would make guess 0 look
+    // dominant on a mostly-empty density grid — the collapse detector would lie.
+    lWin[win] = lWin[win] + select(0.0, 1.0, act);
+    var payoff = 0.0;
+    var dvx : array<f32, ${g.P}>;
+    var dvy : array<f32, ${g.P}>;
+    for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+      // CONSTANT w.r.t. the gradient — selection is off-tape.
+      let wj = select(${g.loserW}, ${g.winW}, j == win);
+      payoff = payoff + wj * rr[j];
+      let s = 1.0 / rr[j];
+      let gx = select(0.0, wj * (ex[j] * s), act);
+      let gy = select(0.0, wj * (ey[j] * s), act);
+      dvx[j] = gx;
+      dvy[j] = gy;
+      setHGrad(2u * j, c, gx);
+      setHGrad(2u * j + 1u, c, gy);
+      lBx[j] = lBx[j] + gx;
+      lBy[j] = lBy[j] + gy;
+    }
     lAct = lAct + select(0.0, 1.0, act);
-    lR = lR + select(0.0, r, act);
-    lBx = lBx + dvx;
-    lBy = lBy + dvy;
-    setHGrad(0u, c, dvx);
-    setHGrad(1u, c, dvy);
+    lR = lR + select(0.0, payoff, act);
     for (var k = 0u; k < ${K}u; k = k + 1u) {
-      setDSoft(k, c, dvx * critW[${wl.headW}u + k] + dvy * critW[${wl.headW}u + ${K}u + k]);
+      var acc = 0.0;
+      for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+        let hw = ${wl.headW}u + j * ${g.stride}u;
+        acc = acc + dvx[j] * critW[hw + k] + dvy[j] * critW[hw + ${K}u + k];
+      }
+      setDSoft(k, c, acc);
     }
   }
   let nActive = wgSum(tid, lAct);
   let sumR = wgSum(tid, lR);
-  let sumBx = wgSum(tid, lBx);
-  let sumBy = wgSum(tid, lBy);
+  // wgSum contains barriers, so these loops must stay UNIFORM — the bound is a
+  // baked literal and no lane leaves early, which is what makes that safe.
+  var sumBx : array<f32, ${g.P}>;
+  var sumBy : array<f32, ${g.P}>;
+  var winTot : array<f32, ${g.P}>;
+  for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+    sumBx[j] = wgSum(tid, lBx[j]);
+    sumBy[j] = wgSum(tid, lBy[j]);
+    winTot[j] = wgSum(tid, lWin[j]);
+  }
   let activeN = max(nActive, 1.0);
   if (tid == 0u) {
     critMeta[${metaStats + PIXEL_STATS.discLoss}u] = sumR / activeN;
@@ -820,20 +1038,26 @@ function emitCriticDiscBody(d: PixelDiscDims, metaStats: number): string {
     // these two are F(cell 0), not a prediction — see PIXEL_STATS.targetFx.
     critMeta[${metaStats + PIXEL_STATS.targetFx}u] = auxA(0u);
     critMeta[${metaStats + PIXEL_STATS.targetFy}u] = auxB(0u);
-    critMeta[${wl.headB}u] = critMeta[${wl.headB}u] + sumBx / activeN;
-    critMeta[${wl.headB}u + 1u] = critMeta[${wl.headB}u + 1u] + sumBy / activeN;
+    for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+      let hb = ${wl.headB}u + j * ${g.stride}u;
+      critMeta[hb] = critMeta[hb] + sumBx[j] / activeN;
+      critMeta[hb + 1u] = critMeta[hb + 1u] + sumBy[j] / activeN;
+      critMeta[${winBase}u + j] = winTot[j];
+    }
   }
-  for (var k = tid; k < ${K}u; k = k + ${PIXEL_DISC_WG}u) {
+  for (var t = tid; t < ${g.P * K}u; t = t + ${PIXEL_DISC_WG}u) {
+    let j = t / ${K}u;
+    let k = t % ${K}u;
+    let hw = ${wl.headW}u + j * ${g.stride}u;
     var sx = 0.0;
     var sy = 0.0;
     for (var c = 0u; c < N_CELL; c = c + 1u) {
       let q = cSoftAt(k, c);
-      sx = sx + hGradAt(0u, c) * q;
-      sy = sy + hGradAt(1u, c) * q;
+      sx = sx + hGradAt(2u * j, c) * q;
+      sy = sy + hGradAt(2u * j + 1u, c) * q;
     }
-    critMeta[${wl.headW}u + k] = critMeta[${wl.headW}u + k] + sx / activeN;
-    critMeta[${wl.headW}u + ${K}u + k] =
-      critMeta[${wl.headW}u + ${K}u + k] + sy / activeN;
+    critMeta[hw + k] = critMeta[hw + k] + sx / activeN;
+    critMeta[hw + ${K}u + k] = critMeta[hw + ${K}u + k] + sy / activeN;
   }
   for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
     for (var k = 0u; k < ${K}u; k = k + 1u) { setDSoft(k, c, dSoftAt(k, c) / activeN); }
@@ -849,32 +1073,71 @@ function emitCriticDiscBody(d: PixelDiscDims, metaStats: number): string {
   ${emitZeroGrads(nW)}
   ${emitFwdPar(d, densAux)}
   var lR = 0.0;
-  var lB = 0.0;
+  var lB : array<f32, ${g.P}>;
+  var lWin : array<f32, ${g.P}>;
+  for (var j = 0u; j < ${g.P}u; j = j + 1u) { lB[j] = 0.0; lWin[j] = 0.0; }
   for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
-    var pred = critW[${wl.headB}u];
-    for (var k = 0u; k < ${K}u; k = k + 1u) {
-      pred = pred + critW[${wl.headW}u + k] * cSoftAt(k, c);
+    let tgt = dens_at(c);
+    var dd : array<f32, ${g.P}>;
+    var rr : array<f32, ${g.P}>;
+    var win = 0u;
+    var best = 0.0;
+    for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+      let hw = ${wl.headW}u + j * ${g.stride}u;
+      var pred = critW[${wl.headB}u + j * ${g.stride}u];
+      for (var k = 0u; k < ${K}u; k = k + 1u) {
+        pred = pred + critW[hw + k] * cSoftAt(k, c);
+      }
+      let diff = pred - tgt;
+      let r = sqrt(diff * diff + SOFT_EPS2);
+      dd[j] = diff;
+      rr[j] = r;
+      if (j == 0u || r < best) { best = r; win = j; }
     }
-    let diff = pred - dens_at(c);
-    let r = sqrt(diff * diff + SOFT_EPS2);
-    lR = lR + r;
-    let dPred = diff / r / f32(N_CELL);
-    lB = lB + dPred;
-    setHGrad(0u, c, dPred);
+    setWinIdx(c, win);
+    // §3g: next-frame's activity predicate is "all cells", so every winner counts.
+    lWin[win] = lWin[win] + 1.0;
+    var payoff = 0.0;
+    var dp : array<f32, ${g.P}>;
+    for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+      let wj = select(${g.loserW}, ${g.winW}, j == win);
+      payoff = payoff + wj * rr[j];
+      let dPred = wj * (dd[j] / rr[j] / f32(N_CELL));
+      dp[j] = dPred;
+      setHGrad(j, c, dPred);
+      lB[j] = lB[j] + dPred;
+    }
+    lR = lR + payoff;
     for (var k = 0u; k < ${K}u; k = k + 1u) {
-      setDSoft(k, c, dPred * critW[${wl.headW}u + k]);
+      var acc = 0.0;
+      for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+        acc = acc + dp[j] * critW[${wl.headW}u + j * ${g.stride}u + k];
+      }
+      setDSoft(k, c, acc);
     }
   }
   let sumR = wgSum(tid, lR);
-  let sumB = wgSum(tid, lB);
+  var sumB : array<f32, ${g.P}>;
+  var winTot : array<f32, ${g.P}>;
+  for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+    sumB[j] = wgSum(tid, lB[j]);
+    winTot[j] = wgSum(tid, lWin[j]);
+  }
   if (tid == 0u) {
     critMeta[${metaStats + PIXEL_STATS.discLoss}u] = sumR / f32(N_CELL);
-    critMeta[${wl.headB}u] = critMeta[${wl.headB}u] + sumB;
+    for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+      let hb = ${wl.headB}u + j * ${g.stride}u;
+      critMeta[hb] = critMeta[hb] + sumB[j];
+      critMeta[${winBase}u + j] = winTot[j];
+    }
   }
-  for (var k = tid; k < ${K}u; k = k + ${PIXEL_DISC_WG}u) {
+  for (var t = tid; t < ${g.P * K}u; t = t + ${PIXEL_DISC_WG}u) {
+    let j = t / ${K}u;
+    let k = t % ${K}u;
     var s = 0.0;
-    for (var c = 0u; c < N_CELL; c = c + 1u) { s = s + hGradAt(0u, c) * cSoftAt(k, c); }
-    critMeta[${wl.headW}u + k] = critMeta[${wl.headW}u + k] + s;
+    for (var c = 0u; c < N_CELL; c = c + 1u) { s = s + hGradAt(j, c) * cSoftAt(k, c); }
+    let wi = ${wl.headW}u + j * ${g.stride}u + k;
+    critMeta[wi] = critMeta[wi] + s;
   }
   ${BAR}
   ${emitBwdActPar(d)}
@@ -883,6 +1146,12 @@ function emitCriticDiscBody(d: PixelDiscDims, metaStats: number): string {
     }
     case "real-fake": {
       if (wl.kind !== "real-fake") throw new Error("layout mismatch");
+      // NO GUESS FOLD and no win counters, by decision rather than by omission:
+      // `validatePixelDims` (src/core/gan/pixel_disc.ts) rejects guesses > 1 for
+      // this kind, so `wl.guesses` is 1 here and the head below is one head. The
+      // reasoning — BCE against a LABEL has one right answer, the generator pass
+      // has no winner to inherit, and there is no per-cell predicate to gate a
+      // §3g counter with — is written out at that validator.
       return /* wgsl */ `
   ${emitZeroGrads(nW)}
   var discLoss = 0.0;
@@ -919,33 +1188,74 @@ function emitCriticDiscBody(d: PixelDiscDims, metaStats: number): string {
   }
   let nMask = max(wgSum(tid, lM), 1.0);
   var lR = 0.0;
-  var lB = 0.0;
+  var lB : array<f32, ${g.P}>;
+  var lWin : array<f32, ${g.P}>;
+  for (var j = 0u; j < ${g.P}u; j = j + 1u) { lB[j] = 0.0; lWin[j] = 0.0; }
   for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
     let m = auxB(c) > 0.5;
-    var pred = critW[${wl.headB}u];
-    for (var k = 0u; k < ${K}u; k = k + 1u) {
-      pred = pred + critW[${wl.headW}u + k] * cSoftAt(k, c);
+    let tgt = dens_at(c);
+    var dd : array<f32, ${g.P}>;
+    var rr : array<f32, ${g.P}>;
+    var win = 0u;
+    var best = 0.0;
+    for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+      let hw = ${wl.headW}u + j * ${g.stride}u;
+      var pred = critW[${wl.headB}u + j * ${g.stride}u];
+      for (var k = 0u; k < ${K}u; k = k + 1u) {
+        pred = pred + critW[hw + k] * cSoftAt(k, c);
+      }
+      let diff = pred - tgt;
+      let r = sqrt(diff * diff + SOFT_EPS2);
+      dd[j] = diff;
+      rr[j] = r;
+      if (j == 0u || r < best) { best = r; win = j; }
     }
-    let diff = pred - dens_at(c);
-    let r = sqrt(diff * diff + SOFT_EPS2);
-    lR = lR + select(0.0, r, m);
-    let dPred = select(0.0, (diff / r) / nMask, m);
-    lB = lB + dPred;
-    setHGrad(0u, c, dPred);
+    setWinIdx(c, win);
+    // §3g: inpaint's activity predicate is the MASK — the same one that gates
+    // the residual below. An unmasked cell contributes no loss, so its argmin is
+    // not a win.
+    lWin[win] = lWin[win] + select(0.0, 1.0, m);
+    var payoff = 0.0;
+    var dp : array<f32, ${g.P}>;
+    for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+      let wj = select(${g.loserW}, ${g.winW}, j == win);
+      payoff = payoff + wj * rr[j];
+      let dPred = select(0.0, wj * ((dd[j] / rr[j]) / nMask), m);
+      dp[j] = dPred;
+      setHGrad(j, c, dPred);
+      lB[j] = lB[j] + dPred;
+    }
+    lR = lR + select(0.0, payoff, m);
     for (var k = 0u; k < ${K}u; k = k + 1u) {
-      setDSoft(k, c, dPred * critW[${wl.headW}u + k]);
+      var acc = 0.0;
+      for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+        acc = acc + dp[j] * critW[${wl.headW}u + j * ${g.stride}u + k];
+      }
+      setDSoft(k, c, acc);
     }
   }
   let sumR = wgSum(tid, lR);
-  let sumB = wgSum(tid, lB);
+  var sumB : array<f32, ${g.P}>;
+  var winTot : array<f32, ${g.P}>;
+  for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+    sumB[j] = wgSum(tid, lB[j]);
+    winTot[j] = wgSum(tid, lWin[j]);
+  }
   if (tid == 0u) {
     critMeta[${metaStats + PIXEL_STATS.discLoss}u] = sumR / nMask;
-    critMeta[${wl.headB}u] = critMeta[${wl.headB}u] + sumB;
+    for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+      let hb = ${wl.headB}u + j * ${g.stride}u;
+      critMeta[hb] = critMeta[hb] + sumB[j];
+      critMeta[${winBase}u + j] = winTot[j];
+    }
   }
-  for (var k = tid; k < ${K}u; k = k + ${PIXEL_DISC_WG}u) {
+  for (var t = tid; t < ${g.P * K}u; t = t + ${PIXEL_DISC_WG}u) {
+    let j = t / ${K}u;
+    let k = t % ${K}u;
     var s = 0.0;
-    for (var c = 0u; c < N_CELL; c = c + 1u) { s = s + hGradAt(0u, c) * cSoftAt(k, c); }
-    critMeta[${wl.headW}u + k] = critMeta[${wl.headW}u + k] + s;
+    for (var c = 0u; c < N_CELL; c = c + 1u) { s = s + hGradAt(j, c) * cSoftAt(k, c); }
+    let wi = ${wl.headW}u + j * ${g.stride}u + k;
+    critMeta[wi] = critMeta[wi] + s;
   }
   ${BAR}
   ${emitBwdActPar(d)}
@@ -969,35 +1279,66 @@ function emitCriticDiscBody(d: PixelDiscDims, metaStats: number): string {
 function emitCriticGenBody(d: PixelDiscDims, metaStats: number): string {
   const { K } = d;
   const wl = pixelWeightLayout(d);
+  const g = guessEmit(d);
   const dens0 = "0u";
   const densAux = "2u * N_CELL";
 
   switch (d.kind) {
     case "vec-field": {
       if (wl.kind !== "vec-field") throw new Error("layout mismatch");
+      // The gen pass RE-SELECTS on its own density (the virtual splat), exactly
+      // as the CPU oracle's gen block does; the disc pass's winner is not
+      // carried over — the two passes see different grids.
       return /* wgsl */ `
   ${emitFwdPar(d, dens0)}
   var lAct = 0.0;
   var lR = 0.0;
   for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
     let act = !(dens_at(c) < ${fl(DENS_FLOOR)});
-    var vx = critW[${wl.headB}u];
-    var vy = critW[${wl.headB}u + 1u];
-    for (var k = 0u; k < ${K}u; k = k + 1u) {
-      let q = cSoftAt(k, c);
-      vx = vx + critW[${wl.headW}u + k] * q;
-      vy = vy + critW[${wl.headW}u + ${K}u + k] * q;
+    let tgx = auxA(c);
+    let tgy = auxB(c);
+    var ex : array<f32, ${g.P}>;
+    var ey : array<f32, ${g.P}>;
+    var rr : array<f32, ${g.P}>;
+    var win = 0u;
+    var best = 0.0;
+    for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+      let hw = ${wl.headW}u + j * ${g.stride}u;
+      let hb = ${wl.headB}u + j * ${g.stride}u;
+      var vx = critW[hb];
+      var vy = critW[hb + 1u];
+      for (var k = 0u; k < ${K}u; k = k + 1u) {
+        let q = cSoftAt(k, c);
+        vx = vx + critW[hw + k] * q;
+        vy = vy + critW[hw + ${K}u + k] * q;
+      }
+      let dx = vx - tgx;
+      let dy = vy - tgy;
+      let r = sqrt(dx * dx + dy * dy + SOFT_EPS2);
+      ex[j] = dx;
+      ey[j] = dy;
+      rr[j] = r;
+      if (j == 0u || r < best) { best = r; win = j; }
     }
-    let ex = vx - auxA(c);
-    let ey = vy - auxB(c);
-    let r = sqrt(ex * ex + ey * ey + SOFT_EPS2);
-    let s = uni.genSign / r;
-    let dvx = select(0.0, ex * s, act);
-    let dvy = select(0.0, ey * s, act);
+    var payoff = 0.0;
+    var dvx : array<f32, ${g.P}>;
+    var dvy : array<f32, ${g.P}>;
+    for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+      let wj = select(${g.loserW}, ${g.winW}, j == win);
+      payoff = payoff + wj * rr[j];
+      let s = uni.genSign / rr[j];
+      dvx[j] = select(0.0, wj * (ex[j] * s), act);
+      dvy[j] = select(0.0, wj * (ey[j] * s), act);
+    }
     lAct = lAct + select(0.0, 1.0, act);
-    lR = lR + select(0.0, r, act);
+    lR = lR + select(0.0, payoff, act);
     for (var k = 0u; k < ${K}u; k = k + 1u) {
-      setDSoft(k, c, dvx * critW[${wl.headW}u + k] + dvy * critW[${wl.headW}u + ${K}u + k]);
+      var acc = 0.0;
+      for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+        let hw = ${wl.headW}u + j * ${g.stride}u;
+        acc = acc + dvx[j] * critW[hw + k] + dvy[j] * critW[hw + ${K}u + k];
+      }
+      setDSoft(k, c, acc);
     }
   }
   let nActive = wgSum(tid, lAct);
@@ -1018,14 +1359,32 @@ function emitCriticGenBody(d: PixelDiscDims, metaStats: number): string {
   ${emitFwdPar(d, densAux)}
   var lR = 0.0;
   for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
-    var pred = critW[${wl.headB}u];
-    for (var k = 0u; k < ${K}u; k = k + 1u) {
-      pred = pred + critW[${wl.headW}u + k] * cSoftAt(k, c);
+    let tgt = dens_at(c);
+    var dd : array<f32, ${g.P}>;
+    var rr : array<f32, ${g.P}>;
+    var win = 0u;
+    var best = 0.0;
+    for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+      let hw = ${wl.headW}u + j * ${g.stride}u;
+      var pred = critW[${wl.headB}u + j * ${g.stride}u];
+      for (var k = 0u; k < ${K}u; k = k + 1u) {
+        pred = pred + critW[hw + k] * cSoftAt(k, c);
+      }
+      let diff = pred - tgt;
+      let r = sqrt(diff * diff + SOFT_EPS2);
+      dd[j] = diff;
+      rr[j] = r;
+      if (j == 0u || r < best) { best = r; win = j; }
     }
-    let diff = pred - dens_at(c);
-    let r = sqrt(diff * diff + SOFT_EPS2);
-    lR = lR + r;
-    add_d_dens(c, uni.genSign * (-diff / r) / f32(N_CELL));
+    var payoff = 0.0;
+    var gd = 0.0;
+    for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+      let wj = select(${g.loserW}, ${g.winW}, j == win);
+      payoff = payoff + wj * rr[j];
+      gd = gd + wj * (uni.genSign * (-dd[j] / rr[j]) / f32(N_CELL));
+    }
+    lR = lR + payoff;
+    add_d_dens(c, gd);
   }
   let sumR = wgSum(tid, lR);
   if (tid == 0u) { critMeta[${metaStats + PIXEL_STATS.genLoss}u] = uni.genSign * (sumR / f32(N_CELL)); }
@@ -1058,18 +1417,41 @@ function emitCriticGenBody(d: PixelDiscDims, metaStats: number): string {
   var lR = 0.0;
   for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
     let m = auxB(c) > 0.5;
-    var pred = critW[${wl.headB}u];
-    for (var k = 0u; k < ${K}u; k = k + 1u) {
-      pred = pred + critW[${wl.headW}u + k] * cSoftAt(k, c);
+    let tgt = dens_at(c);
+    var dd : array<f32, ${g.P}>;
+    var rr : array<f32, ${g.P}>;
+    var win = 0u;
+    var best = 0.0;
+    for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+      let hw = ${wl.headW}u + j * ${g.stride}u;
+      var pred = critW[${wl.headB}u + j * ${g.stride}u];
+      for (var k = 0u; k < ${K}u; k = k + 1u) {
+        pred = pred + critW[hw + k] * cSoftAt(k, c);
+      }
+      let diff = pred - tgt;
+      let r = sqrt(diff * diff + SOFT_EPS2);
+      dd[j] = diff;
+      rr[j] = r;
+      if (j == 0u || r < best) { best = r; win = j; }
     }
-    let diff = pred - dens_at(c);
-    let r = sqrt(diff * diff + SOFT_EPS2);
-    lR = lR + select(0.0, r, m);
-    let scale = uni.genSign / r / nMask;
-    set_d_dens(c, select(0.0, -diff * scale, m));
-    let dPred = select(0.0, diff * scale, m);
+    var payoff = 0.0;
+    var gd = 0.0;
+    var dp : array<f32, ${g.P}>;
+    for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+      let wj = select(${g.loserW}, ${g.winW}, j == win);
+      payoff = payoff + wj * rr[j];
+      let scale = wj * (uni.genSign / rr[j] / nMask);
+      gd = gd + select(0.0, -dd[j] * scale, m);
+      dp[j] = select(0.0, dd[j] * scale, m);
+    }
+    lR = lR + select(0.0, payoff, m);
+    set_d_dens(c, gd);
     for (var k = 0u; k < ${K}u; k = k + 1u) {
-      setDSoft(k, c, dPred * critW[${wl.headW}u + k]);
+      var acc = 0.0;
+      for (var j = 0u; j < ${g.P}u; j = j + 1u) {
+        acc = acc + dp[j] * critW[${wl.headW}u + j * ${g.stride}u + k];
+      }
+      setDSoft(k, c, acc);
     }
   }
   let sumR = wgSum(tid, lR);
@@ -1103,6 +1485,11 @@ export function pixelDiscShader(
 ): string {
   validatePixelDiscFusion(field);
   const d = opts.dims;
+  // κ for the (kind, guesses) pair, before a single index is baked. A shader
+  // built for a pair the CPU oracle refuses would be unverifiable by
+  // construction — tools/pixel_disc_equiv_test.ts could not produce the other
+  // side of the comparison.
+  validatePixelDims(d);
   const batchCap = Math.min(opts.batchCap, PIXEL_DISC_MAX_BATCH);
   const fieldLane = opts.fieldLane ?? "blend";
   const sl = trainScratchLayout(field, 1);
@@ -1132,9 +1519,8 @@ export function pixelDiscShader(
   const critSite = `(${critWorkspace + 8}u + cell * ${critSiteStride}u)`;
   const critEncBase = critSite;
   // Per-cell critic workspace lives right after the field-eval sites. Same
-  // pixelCritSites() the allocator uses — see pixelScratchBytes.
-  const critWorkBase =
-    critWorkspace + 8 + pixelCritSites(d) * critSiteStride;
+  // helper the allocator uses — see pixelScratchBytes.
+  const critWorkBase = pixelCritWorkBase(field, batchCap, d);
   const critFieldBase = (h: number) =>
     `${critSite} + ${sl.encStore}u + ${h === 0 ? 0 : sl.headBlk[0]}u`;
 
