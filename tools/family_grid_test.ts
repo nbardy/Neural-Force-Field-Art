@@ -36,6 +36,7 @@ import {
   layoutField,
   familyRoute,
   advectShader,
+  fieldProbeShader,
   CLASS_SALT,
   type Encoding,
   type LayerDims,
@@ -51,6 +52,8 @@ import {
 } from "../src/render/webgpu/train_wgsl";
 import { AdversaryTrainer } from "../src/render/webgpu/adversary_train";
 import { FusedTrainer } from "../src/render/webgpu/train";
+import { HelmholtzField } from "../src/core/field/helmholtz";
+import * as tf from "@tensorflow/tfjs";
 
 setupGlobals();
 (globalThis as any).GPUBufferUsage ??= {
@@ -86,6 +89,67 @@ function pcg(v: number): number {
   return ((t >>> 22) ^ t) >>> 0;
 }
 const familyOf = (index: number): number => pcg(index ^ CLASS_SALT) % C;
+
+async function readFloats(buf: any, floats: number): Promise<Float32Array> {
+  const staging = device.createBuffer({ size: floats * 4, usage: 1 | 8 });
+  const e = device.createCommandEncoder();
+  e.copyBufferToBuffer(buf, 0, staging, 0, floats * 4);
+  device.queue.submit([e.finish()]);
+  await staging.mapAsync(1);
+  const out = new Float32Array(staging.getMappedRange().slice(0));
+  staging.unmap();
+  staging.destroy();
+  return out;
+}
+const readVec2 = (buf: any, n: number) => readFloats(buf, n * 2);
+
+/**
+ * Run the field-probe entry of a compiled advect layout over `points`
+ * (normalized, xy interleaved). The probe derives each site's family from its
+ * index with the SAME salt the kernel uses per particle, which is exactly what
+ * lets ONE coordinate be sampled under all C families.
+ */
+async function probeForces(
+  layout: any,
+  weightsBuffer: any,
+  points: Float32Array,
+  n: number
+): Promise<Float32Array> {
+  const module = device.createShaderModule({
+    code: fieldProbeShader(layout),
+  });
+  // Pipeline creation IS the compile check here — bun-webgpu does not
+  // implement getCompilationInfo, and a bad module makes this throw.
+  const pipeline = device.createComputePipeline({
+    layout: "auto",
+    compute: { module, entryPoint: "probe" },
+  });
+  const ptsBuf = mkStorage(points.byteLength);
+  device.queue.writeBuffer(ptsBuf, 0, points);
+  const outBuf = mkStorage(n * 8);
+  const uni = device.createBuffer({ size: 16, usage: 64 | 8 });
+  const uniData = new ArrayBuffer(16);
+  new Float32Array(uniData, 0, 1)[0] = 0.7;
+  new Uint32Array(uniData, 4, 1)[0] = n;
+  device.queue.writeBuffer(uni, 0, uniData);
+  const bind = device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: uni } },
+      { binding: 1, resource: { buffer: weightsBuffer } },
+      { binding: 2, resource: { buffer: ptsBuf } },
+      { binding: 3, resource: { buffer: outBuf } },
+    ],
+  });
+  const e = device.createCommandEncoder();
+  const pass = e.beginComputePass();
+  pass.setPipeline(pipeline);
+  pass.setBindGroup(0, bind);
+  pass.dispatchWorkgroups(Math.ceil(n / 256));
+  pass.end();
+  device.queue.submit([e.finish()]);
+  return readFloats(outBuf, n * 2);
+}
 
 let failures = 0;
 function check(name: string, ok: boolean, detail = ""): void {
@@ -559,6 +623,129 @@ console.log("\n§5 end to end — the shipped piece's arch through the real seam
         `(counts ${fam.count.join("/")}), global ${stats.surprise.toFixed(3)}`
     );
   }
+}
+
+// ===========================================================================
+console.log("\n§6 the ADVECT hot path — the one shader the trainers never build");
+// ===========================================================================
+{
+  // The trainers compile their own pass A/B, so §3–§5 never touched the kernel
+  // that actually MOVES the particles. A WGSL error in its planed grid lookup
+  // would take the page down at load, and no other gate here would notice.
+  // This drives the REAL entry point main.ts uses: HelmholtzField →
+  // AdvectKernel.fromField (which is also what asserts the packed segments line
+  // up with the field's variable list, planes included).
+  const field = new HelmholtzField({
+    alpha: 0.7,
+    hiddenUnits: [16, 16],
+    modelType: "hashgrid",
+    gridSize: 16,
+    gridFeatures: 6,
+    classes: C,
+  });
+  check(
+    "HelmholtzField allocates C stacked planes",
+    field.gridPlanes === C && field.grid!.shape[0] === C * 16 * 16,
+    `planes ${field.gridPlanes}, grid ${field.grid!.shape.join("x")}`
+  );
+
+  // The packed layout main.ts builds from this field, WITHOUT tfjs's webgpu
+  // device (bun has none) — `AdvectKernel.fromField` would only add that
+  // device lookup on top of exactly this.
+  // MUST mirror the HelmholtzField above (hiddenUnits [16, 16]) — this pairing
+  // is the thing under test.
+  const dims16 = (inDim: number): LayerDims[] => [
+    { inSize: inDim, outSize: 16, activation: "selu" },
+    { inSize: 16, outSize: 16, activation: "selu" },
+    { inSize: 16, outSize: 2, activation: "tanh" },
+  ];
+  const kLayout = layoutField("helmholtz", [dims16(6), dims16(6)], {
+    classes: C,
+    encoding: { kind: "hashgrid", gridSize: 16, features: 6, planes: C },
+  });
+  check("advect layout took the grid-plane route", kLayout.family.tag === "grid-plane");
+  // The field's variables must pair 1:1 with the packed segments — the check
+  // AdvectKernel.fromField performs at upload. A plane count that disagreed
+  // between the tf.Variable and the layout would fail here, not silently.
+  const varSizes = field.trainableWeights.map((w) => w.shape.reduce((a, b) => a * b, 1));
+  const segSizes = kLayout.segments.map((sg) => sg.floatLength);
+  check(
+    "field variables pair 1:1 with the packed segments (grid plane count included)",
+    varSizes.length === segSizes.length &&
+      varSizes.every((v, i) => v === segSizes[i]),
+    `${varSizes.join(",")} vs ${segSizes.join(",")}`
+  );
+
+  // THE COMPILE. Nothing else in this suite builds the advect kernel's WGSL,
+  // and a syntax error in its planed grid lookup takes the page down at load.
+  {
+    let built = "";
+    try {
+      device.createComputePipeline({
+        layout: "auto",
+        compute: {
+          module: device.createShaderModule({
+            code: advectShader(kLayout, { stageWeights: false }),
+          }),
+          entryPoint: "main",
+        },
+      });
+    } catch (e) {
+      built = String((e as Error).message ?? e);
+    }
+    check("advect WGSL COMPILES on a planed layout", built === "", built);
+  }
+
+  // THE BEHAVIOURAL CLAIM. Same coordinate, three families → three DIFFERENT
+  // forces. The probe hashes its family from the site index with the same salt
+  // the advect kernel uses per particle, so feeding ONE position at many
+  // indices samples all three. Collapse the plane offset and this returns one
+  // value three times.
+  const wBuf = mkStorage(kLayout.totalFloats * 4);
+  {
+    const w = new Float32Array(kLayout.totalFloats);
+    const r = mulberry32(24601);
+    for (const sg of kLayout.segments) {
+      const scale = sg.role === "grid" ? 0.35 : sg.role === "kernel" ? 0.5 : 0;
+      for (let i = 0; i < sg.floatLength; i++) {
+        w[sg.floatOffset + i] = scale === 0 ? 0 : (r() * 2 - 1) * scale;
+      }
+    }
+    device.queue.writeBuffer(wBuf, 0, w);
+  }
+  const probeN = 512;
+  const pts = new Float32Array(probeN * 2);
+  for (let i = 0; i < probeN; i++) {
+    pts[2 * i] = 0.371;
+    pts[2 * i + 1] = 0.624;
+  }
+  const forces = await probeForces(kLayout, wBuf, pts, probeN);
+  check(
+    "probe forces are finite",
+    forces.every(Number.isFinite),
+    `${forces.filter((x) => !Number.isFinite(x)).length} nonfinite`
+  );
+  const byFamily = new Map<number, [number, number]>();
+  for (let i = 0; i < probeN; i++) {
+    byFamily.set(familyOf(i), [forces[2 * i], forces[2 * i + 1]]);
+  }
+  check(
+    "the probe sampled all C families at one coordinate",
+    byFamily.size === C,
+    `${byFamily.size} distinct families`
+  );
+  const fs = [...byFamily.entries()].sort((a, b) => a[0] - b[0]).map((e) => e[1]);
+  const sep = (a: [number, number], b: [number, number]) =>
+    Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const minSep = Math.min(sep(fs[0], fs[1]), sep(fs[0], fs[2]), sep(fs[1], fs[2]));
+  check(
+    "the three families feel DIFFERENT forces at the SAME coordinate",
+    minSep > 1e-4,
+    `min pairwise |ΔF| ${minSep.toExponential(2)} — ` +
+      fs.map((f) => `(${f[0].toFixed(4)}, ${f[1].toFixed(4)})`).join(" ")
+  );
+
+  field.dispose();
 }
 
 console.log(
