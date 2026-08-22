@@ -25,18 +25,12 @@ import {
   validatePixelDiscFusion,
   pixelWeightLayout,
   PIXEL_STATS,
+  PIXEL_STATS_WIN_BASE,
   pixelStatsFloats,
+  pixelWinCounters,
 } from "./pixel_disc_wgsl";
 
 const ADAM = { beta1: 0.9, beta2: 0.999, eps: 1e-7 } as const;
-
-/**
- * Length of the stats tail of `critMeta`, in floats. 0 win counters today —
- * there are no guesses yet. When PLAN_MULTI_GUESS_MODULARIZATION §3f lands this
- * becomes `pixelStatsFloats(dims.guesses)` and every site below (buffer size,
- * staging size, per-step clear, readback copy) follows automatically.
- */
-const PIXEL_STATS_FLOATS = pixelStatsFloats();
 
 /**
  * The 1 Hz readback of `critMeta`'s stats tail. One field per slot some kernel
@@ -53,6 +47,16 @@ export interface PixelDiscStats {
    * a measurement. Formerly `predX`/`predY`, which named it a prediction.
    */
   targetF: { x: number; y: number } | null;
+  /**
+   * ACTIVE cells won by each guess this step (plan §3f) — the collapse detector.
+   * `winCounts[j] === 0` while the others are large means guess `j` is receiving
+   * only the ε loser share, will never move, and will never win: K has silently
+   * degraded and the loss will not say so. Inactive cells are excluded (§3g).
+   *
+   * `null` for `real-fake`, which has no per-cell winner to count — absence is
+   * the meaning, not "zero wins".
+   */
+  winCounts: number[] | null;
 }
 
 export interface PixelDiscStepOpts {
@@ -84,6 +88,13 @@ export class PixelDiscTrainer {
   private readonly densPack: GPUBuffer;
   private readonly metaBuf: GPUBuffer;
   private readonly uniBuf: GPUBuffer;
+  /**
+   * Floats in `critMeta`'s stats tail: the named scalars plus one §3f win
+   * counter per guess. An INSTANCE value, not a module constant, because the
+   * counter count is a property of `dims` — buffer size, staging size, per-step
+   * clear and readback all read it, so they cannot disagree about the length.
+   */
+  private readonly statsFloats: number;
   private readonly uniData = new ArrayBuffer(64);
   private partPos: GPUBuffer | null = null;
   private partDummy: GPUBuffer;
@@ -154,7 +165,8 @@ export class PixelDiscTrainer {
     // layout helper so host and shader cannot disagree about its length, and so
     // the per-guess win counters of PLAN_MULTI_GUESS_MODULARIZATION §3f arrive
     // as an argument to pixelStatsFloats rather than as a re-layout here.
-    this.metaBuf = mk((this.nWeights * 3 + PIXEL_STATS_FLOATS) * 4);
+    this.statsFloats = pixelStatsFloats(pixelWinCounters(this.dims));
+    this.metaBuf = mk((this.nWeights * 3 + this.statsFloats) * 4);
     this.extGradsBuf = mk(field.totalFloats * 4);
     this.uniBuf = device.createBuffer({
       size: 64,
@@ -162,7 +174,7 @@ export class PixelDiscTrainer {
     });
     this.partDummy = device.createBuffer({ size: 8, usage: GPUBufferUsage.STORAGE });
     this.statsStaging = device.createBuffer({
-      size: PIXEL_STATS_FLOATS * 4,
+      size: this.statsFloats * 4,
       usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
     });
 
@@ -298,7 +310,7 @@ export class PixelDiscTrainer {
     // vec-field kind, so without this a conditional slot keeps reporting the
     // last step that happened to fill it as if it were current. The clear spans
     // the whole region, so §3f's win counters inherit the same guarantee.
-    encoder.clearBuffer(this.metaBuf, this.nWeights * 3 * 4, PIXEL_STATS_FLOATS * 4);
+    encoder.clearBuffer(this.metaBuf, this.nWeights * 3 * 4, this.statsFloats * 4);
 
     const b = Math.min(o.b, this.partCount);
     if (b === 0) {
@@ -413,7 +425,7 @@ export class PixelDiscTrainer {
       this.nWeights * 3 * 4,
       this.statsStaging,
       0,
-      PIXEL_STATS_FLOATS * 4
+      this.statsFloats * 4
     );
     return true;
   }
@@ -431,6 +443,7 @@ export class PixelDiscTrainer {
         // The one canonicalization point: raw f32 slots -> PixelDiscStats.
         // `kind` is fixed at construction, so this decides once whether the
         // vec-field target slots carry a measurement at all.
+        const nWin = pixelWinCounters(this.dims);
         this.lastStats = {
           discLoss: s[PIXEL_STATS.discLoss],
           genLoss: s[PIXEL_STATS.genLoss],
@@ -438,6 +451,10 @@ export class PixelDiscTrainer {
             this.kind === "vec-field"
               ? { x: s[PIXEL_STATS.targetFx], y: s[PIXEL_STATS.targetFy] }
               : null,
+          winCounts:
+            nWin === 0
+              ? null
+              : Array.from(s.subarray(PIXEL_STATS_WIN_BASE, PIXEL_STATS_WIN_BASE + nWin)),
         };
       })
       .catch(() => {
