@@ -153,6 +153,15 @@ which `advStatsLayout` asserts (it already throws on overlap).
   `Σ familyMean·count / B ≡ surprise` to 1e-4 — the chart and the headline
   number are one quantity, bucketed.
 
+- §6 the ADVECT hot path — added after the first pass, which had a real hole:
+  the trainers compile their own pass A/B, so **nothing had ever compiled the
+  kernel that moves the particles** with a planed grid. A WGSL error there takes
+  the page down at load and no other gate would have seen it. Now compiled via
+  a real pipeline (bun-webgpu has no `getCompilationInfo`, so pipeline creation
+  IS the check), plus the behavioural claim: **one coordinate, three families,
+  three different forces** (min pairwise |ΔF| 5.7e-2) and the field's
+  `trainableWeights` pair 1:1 with the packed segments, plane count included.
+
 Existing suites re-run and green with these changes:
 `train_wta_hashgrid_test`, `train_wta_pressure_test`, `train_wta_test`,
 `kernel_test`, `ad_wta_test`. `yarn build` (parcel, --no-scope-hoist) succeeds.
@@ -190,8 +199,25 @@ to configure).
   `adapter: null` (no SwiftShader-WebGPU), so `tools/smoke.mjs` can only confirm
   the app shows its WebGPU notice — the known caveat in AGENTS.md. Everything
   above was verified on real Metal through `bun-webgpu` against the same code
-  paths, but nobody has WATCHED the piece yet. First live run should check:
-  do the three colours separate visually, and does the per-family row move?
+  paths, but nobody has WATCHED the piece yet. What §6 does NOT cover, because
+  it needs tfjs's webgpu device (bun has none) and a real canvas:
+    - `AdvectKernel.fromField` itself (§6 builds the same layout and compiles
+      the same WGSL, but the constructor's device lookup and weight upload are
+      only exercised in the browser);
+    - the RENDER path — the `rgb-families` palette branch is patched into both
+      splat variants and points.ts but has never executed, so "are the three
+      families actually red/green/blue on screen" is unverified;
+    - the HUD row appearing and moving;
+    - frame budget at 90k particles with a ~3.4 ms/step trainer.
+
+- **A latent landmine for the NEXT family piece.** `applyArchDockPreset`
+  (arch.ts) deliberately preserves `classes` across a preset swap. On a piece
+  with `archEditable: true`, swapping a family-planed hashgrid to a raw preset
+  would carry `classes: 3` onto the raw encoding → the `onehot` route → the
+  fused adversary refuses it and the game silently turns OFF (console warn
+  only). The shipped piece is NOT `archEditable`, so this is unreachable today;
+  anyone making a family piece editable must make the preset swap carry the
+  family route, not just the count.
 - **K=2 is a guess, not a measurement.** The reasoning (K < C is the only regime
   where family conditioning changes the game) is sound but untested against the
   actual dynamics. Sweep `?advK=1..4` with the per-family row open; that sweep
