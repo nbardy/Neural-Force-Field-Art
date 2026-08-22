@@ -34,6 +34,7 @@ import {
   trainScratchLayout,
   COMMON,
 } from "./train_wgsl";
+import { f32lit } from "./ad/emit_wgsl";
 import {
   PIXEL_DISC_SOFT_EPS,
   PIXEL_DISC_DEFAULTS,
@@ -48,6 +49,56 @@ export const PIXEL_DISC_MAX_BATCH = 512;
 export const PIXEL_DISC_DENS_SCALE = 1e6;
 
 const DENS_FLOOR = 1e-3;
+
+/**
+ * `critMeta` stats region — the tail after grads|m|v, based at 3·nWeights.
+ *
+ * Every named slot here is written by SOME kernel. That invariant is the whole
+ * point: the readback used to parse SIX floats (`discLoss, genLoss, predX,
+ * predY, meanFx, meanFy`) while no kernel ever wrote slots 4-5, so `meanFx`/
+ * `meanFy` reported whatever the buffer happened to hold. Slots are added here
+ * only together with the kernel write that fills them.
+ *
+ * Two slots are CONDITIONAL — `genLoss` is written only when the generator pass
+ * runs, and `targetFx/targetFy` only by the vec-field kind — so the trainer
+ * clears this whole region every step ({@link pixelStatsFloats} bytes). A
+ * conditional slot must never be able to report a previous step's value as the
+ * current one; that was the second half of the same defect.
+ *
+ * FORWARD COMPATIBILITY — docs/PLAN_MULTI_GUESS_MODULARIZATION.md §3f wants
+ * per-guess win counters in this region so multi-guess collapse is detectable
+ * rather than silent. They go at {@link PIXEL_STATS_WIN_BASE} and up, which
+ * makes adding them a PARAMETER change (`pixelStatsFloats(guesses)`) instead of
+ * a re-layout. Keep the named slots CONTIGUOUS from 0 — PIXEL_STATS_WIN_BASE is
+ * derived from this object's size, so a gap would alias a counter onto a scalar.
+ */
+export const PIXEL_STATS = {
+  /** Critic loss. Written by criticDisc, every kind, every step. */
+  discLoss: 0,
+  /** Generator loss. Written by criticGen — only when the gen pass runs. */
+  genLoss: 1,
+  /**
+   * vec-field ONLY: F(centre of cell 0) — the TARGET force the head is fitting,
+   * read straight out of auxA/auxB. It is NOT the head's prediction; the old
+   * `predX`/`predY` names claimed it was.
+   */
+  targetFx: 2,
+  targetFy: 3,
+} as const;
+
+/**
+ * First per-guess win-counter slot. DERIVED from PIXEL_STATS so adding a named
+ * scalar is a one-place edit — the counters just shift up with it.
+ */
+export const PIXEL_STATS_WIN_BASE = Object.keys(PIXEL_STATS).length;
+
+/**
+ * Floats in the stats region. `winCounters` is 0 today — there are no guesses
+ * yet — and becomes `dims.guesses` when §3f lands, with no other layout change.
+ */
+export function pixelStatsFloats(winCounters = 0): number {
+  return PIXEL_STATS_WIN_BASE + winCounters;
+}
 
 export interface PixelDiscShaderOpts {
   dims: PixelDiscDims;
@@ -74,12 +125,15 @@ export const PIXEL_DISC_KIND_PASSES: Record<PixelGanKind, string> = {
     " gen: clearDensGen → virtualSplat → densToFloat → criticGen → vjp → fieldGrad",
 };
 
-function fl(x: number): string {
-  if (!Number.isFinite(x)) throw new Error(`pixel_disc: non-finite ${x}`);
-  let s = x.toString();
-  if (!/[.eE]/.test(s)) s += ".0";
-  return s;
-}
+/**
+ * WGSL f32 literal. ALIAS, not a reimplementation
+ * (docs/PLAN_MULTI_GUESS_MODULARIZATION.md §2a): the body that used to live
+ * here was the third independent copy of "WGSL needs a decimal point", and the
+ * only hardened one is `f32lit` — it carries the 2026-07-27 exponent-formatting
+ * fix (`1e-10` emitted as `0.1`) that the copies never had. Short name kept
+ * because it is interpolated inline throughout the emitted shader.
+ */
+const fl = f32lit;
 
 export function resolvePixelDims(
   partial?: Partial<PixelDiscDims> & { kind?: PixelGanKind }
@@ -761,9 +815,11 @@ function emitCriticDiscBody(d: PixelDiscDims, metaStats: number): string {
   let sumBy = wgSum(tid, lBy);
   let activeN = max(nActive, 1.0);
   if (tid == 0u) {
-    critMeta[${metaStats}u] = sumR / activeN;
-    critMeta[${metaStats}u + 2u] = auxA(0u);
-    critMeta[${metaStats}u + 3u] = auxB(0u);
+    critMeta[${metaStats + PIXEL_STATS.discLoss}u] = sumR / activeN;
+    // auxA/auxB hold the TARGET force at each cell centre (fillForceGrid), so
+    // these two are F(cell 0), not a prediction — see PIXEL_STATS.targetFx.
+    critMeta[${metaStats + PIXEL_STATS.targetFx}u] = auxA(0u);
+    critMeta[${metaStats + PIXEL_STATS.targetFy}u] = auxB(0u);
     critMeta[${wl.headB}u] = critMeta[${wl.headB}u] + sumBx / activeN;
     critMeta[${wl.headB}u + 1u] = critMeta[${wl.headB}u + 1u] + sumBy / activeN;
   }
@@ -812,7 +868,7 @@ function emitCriticDiscBody(d: PixelDiscDims, metaStats: number): string {
   let sumR = wgSum(tid, lR);
   let sumB = wgSum(tid, lB);
   if (tid == 0u) {
-    critMeta[${metaStats}u] = sumR / f32(N_CELL);
+    critMeta[${metaStats + PIXEL_STATS.discLoss}u] = sumR / f32(N_CELL);
     critMeta[${wl.headB}u] = critMeta[${wl.headB}u] + sumB;
   }
   for (var k = tid; k < ${K}u; k = k + ${PIXEL_DISC_WG}u) {
@@ -848,7 +904,7 @@ function emitCriticDiscBody(d: PixelDiscDims, metaStats: number): string {
     ${emitBwdActPar(d)}
     ${emitBackboneWeightGrads(d, densAux)}
   }
-  if (tid == 0u) { critMeta[${metaStats}u] = discLoss; }
+  if (tid == 0u) { critMeta[${metaStats + PIXEL_STATS.discLoss}u] = discLoss; }
 `;
     }
     case "inpaint": {
@@ -883,7 +939,7 @@ function emitCriticDiscBody(d: PixelDiscDims, metaStats: number): string {
   let sumR = wgSum(tid, lR);
   let sumB = wgSum(tid, lB);
   if (tid == 0u) {
-    critMeta[${metaStats}u] = sumR / nMask;
+    critMeta[${metaStats + PIXEL_STATS.discLoss}u] = sumR / nMask;
     critMeta[${wl.headB}u] = critMeta[${wl.headB}u] + sumB;
   }
   for (var k = tid; k < ${K}u; k = k + ${PIXEL_DISC_WG}u) {
@@ -947,7 +1003,7 @@ function emitCriticGenBody(d: PixelDiscDims, metaStats: number): string {
   let nActive = wgSum(tid, lAct);
   let sumR = wgSum(tid, lR);
   let activeN = max(nActive, 1.0);
-  if (tid == 0u) { critMeta[${metaStats}u + 1u] = uni.genSign * (sumR / activeN); }
+  if (tid == 0u) { critMeta[${metaStats + PIXEL_STATS.genLoss}u] = uni.genSign * (sumR / activeN); }
   for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) {
     for (var k = 0u; k < ${K}u; k = k + 1u) { setDSoft(k, c, dSoftAt(k, c) / activeN); }
   }
@@ -972,7 +1028,7 @@ function emitCriticGenBody(d: PixelDiscDims, metaStats: number): string {
     add_d_dens(c, uni.genSign * (-diff / r) / f32(N_CELL));
   }
   let sumR = wgSum(tid, lR);
-  if (tid == 0u) { critMeta[${metaStats}u + 1u] = uni.genSign * (sumR / f32(N_CELL)); }
+  if (tid == 0u) { critMeta[${metaStats + PIXEL_STATS.genLoss}u] = uni.genSign * (sumR / f32(N_CELL)); }
 `;
     }
     case "real-fake": {
@@ -980,7 +1036,7 @@ function emitCriticGenBody(d: PixelDiscDims, metaStats: number): string {
       return /* wgsl */ `
   ${emitFwdPar(d, dens0)}
   ${emitGapMlpFwdPar(d)}
-  if (tid == 0u) { critMeta[${metaStats}u + 1u] = uni.genSign * (-logit); }
+  if (tid == 0u) { critMeta[${metaStats + PIXEL_STATS.genLoss}u] = uni.genSign * (-logit); }
   ${emitGapMlpBwdPar(d, "uni.genSign * -1.0", false)}
   ${emitBwdActPar(d)}
   for (var c = tid; c < N_CELL; c = c + ${PIXEL_DISC_WG}u) { set_d_dens(c, gdAt(c)); }
@@ -1017,7 +1073,7 @@ function emitCriticGenBody(d: PixelDiscDims, metaStats: number): string {
     }
   }
   let sumR = wgSum(tid, lR);
-  if (tid == 0u) { critMeta[${metaStats}u + 1u] = uni.genSign * (sumR / nMask); }
+  if (tid == 0u) { critMeta[${metaStats + PIXEL_STATS.genLoss}u] = uni.genSign * (sumR / nMask); }
   ${emitBwdActPar(d)}
   // MASKED cells already took their gradient straight from the residual; only
   // the CONTEXT cells reach D through the conv, because its input is D·(1−mask).
@@ -1233,6 +1289,13 @@ const DENS_SCALE : f32 = ${fl(PIXEL_DISC_DENS_SCALE)};
 const SOFT_EPS2 : f32 = ${fl(PIXEL_DISC_SOFT_EPS * PIXEL_DISC_SOFT_EPS)};
 
 ${COMMON}
+
+// NaN =/= itself; +/-Inf exceeds the largest finite f32. Same helper the
+// relational adversary emits (adversary_wgsl.ts) so the shared extGrads seam is
+// guarded identically on both sides — see fieldGrad below.
+fn isFiniteF(x : f32) -> bool {
+  return x == x && abs(x) <= 3.402823466e+38;
+}
 ${encodeFn}
 ${fwdStores}
 ${bwdStores}
@@ -1470,7 +1533,16 @@ fn fieldGrad(@builtin(global_invocation_id) gid : vec3u) {
   if (t >= ${field.totalFloats}u) { return; }
   var g = 0.0;
 ${fieldBlocks.join("\n")}
-  extGrads[t] = g;
+  // Drop a non-finite gradient before it can reach the field's Adam — the guard
+  // the relational adversary already applies at this IDENTICAL seam
+  // (adversary_wgsl.ts fieldGrad; both sums land in train_wgsl's pass B).
+  //
+  // It matters MORE here. Every Pixel piece ships ZERO_FIELD_LOSS
+  // (docs/PIXEL_DISC.md), which makes the pixel critic the SOLE gradient into
+  // the field by construction: there is no field loss upstream to dilute one
+  // poisoned float, so a single NaN turns the entire field NaN on the next step
+  // and it never recovers.
+  extGrads[t] = select(0.0, g, isFiniteF(g));
 }
 `;
 }
