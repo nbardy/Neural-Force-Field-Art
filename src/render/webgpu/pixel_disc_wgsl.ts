@@ -26,7 +26,12 @@
  * workspace lives in the tail of `scratch` — see pixelScratchBytes.
  */
 
-import { type FieldLayout, type HeadSpec } from "./advect_wgsl";
+import {
+  CLASS_SALT,
+  encodingPlanes,
+  type FieldLayout,
+  type HeadSpec,
+} from "./advect_wgsl";
 import {
   emitEncode,
   emitFwdStore,
@@ -188,11 +193,26 @@ export function classifyPixelDiscFusion(field: FieldLayout): PixelDiscFusion {
       reason: `needs a two-head neural field (got ${field.spec.kind})`,
     };
   }
-  if (field.classes > 0) {
-    return { tag: "unsupported", reason: "class-aware fields not supported yet" };
-  }
-  if (field.encoding.kind === "hashgrid") {
-    return { tag: "unsupported", reason: "hashgrid encoding not supported yet" };
+  // The FAMILY gate is the relational adversary's, verbatim
+  // (validateAdversaryFusion, adversary_wgsl.ts) rather than a second ladder:
+  // one-hot channels widen head 1's layer-0 input and this shader's field
+  // backward has no counterpart for those rows, while a family-planed hashgrid
+  // only moves the grid's cell index and therefore rides the dEnc machinery
+  // the generator reward already uses. `classes > 0` is NOT the question —
+  // asking it refused `familyHashgrid` for the same reason it refused the
+  // genuinely-unsupported one-hot route.
+  switch (field.family.tag) {
+    case "none":
+    case "grid-plane":
+      break;
+    case "onehot":
+      return {
+        tag: "unsupported",
+        reason:
+          "one-hot class channels widen head 1's layer-0 input and the pixel " +
+          "critic's field backward has no counterpart for those rows — use a " +
+          "family-planed hashgrid field",
+      };
   }
   return { tag: "ok" };
 }
@@ -214,12 +234,78 @@ export function pixelDensBytes(G: number): number {
   return densPackFloats(G) * 4;
 }
 
-export function pixelParticleScratchFloats(field: FieldLayout): number {
-  const sl = trainScratchLayout(field, 1);
-  return 8 + sl.encStore + sl.siteBlk;
+/**
+ * ONE per-particle scratch block, as data — the offsets the shader bakes in and
+ * the stride {@link pixelParticleScratchFloats} allocates come from the same
+ * object, so a new region cannot be indexed without also being reserved.
+ *
+ * The hand-rolled `oEnc = 8` / `oField = 8 + encStore` pair this replaced had
+ * no room between them for hashgrid's per-site `dL/dEnc` block, which is the
+ * layout half of why the pixel critic refused hashgrid at all
+ * (docs/PLAN_PIXEL_GENERATOR_ARCH.md §2a).
+ *
+ * Same discipline as `trainScratchLayout`/`advScratchLayout`: `encStore` and
+ * `dEncStore` are 0 for the encodings that do not use them, so the raw and
+ * fourier strides — and therefore every already-shipped pixel shader — are
+ * byte-identical to the pre-hashgrid emitter. `oCls` is appended LAST for the
+ * same reason: a family-planed field grows the block at the end rather than
+ * moving any existing offset.
+ */
+export interface PixelPartLayout {
+  /** normalized sample position u (2) */
+  oPos: number;
+  /** F(u) (2) */
+  oF: number;
+  /** virtual advected position u + dt·F (2) */
+  oPos2: number;
+  /** dL/dF, the density VJP's output (2) */
+  oDF: number;
+  /** γ(u) — encoded layouts only (`encStore`) */
+  oEnc: number;
+  /** dL/dγ(u) — hashgrid only (`dEncStore`), read by fieldGrad's grid scatter */
+  oDEnc: number;
+  /** per-head activation/δ blocks (`siteBlk`) */
+  oField: number;
+  /**
+   * Family label as f32 — family-planed grids only. Stored rather than
+   * re-derived in fieldGrad for the reason advScratchLayout gives: a SECOND
+   * copy of `pcg(i ^ CLASS_SALT) % C` is how a particle gets advected by one
+   * family's plane and scattered into another's.
+   */
+  oCls: number;
+  /** floats per particle */
+  stride: number;
 }
 
-/** f32s of critic field-eval workspace per grid cell (encoding + site block). */
+export function pixelPartLayout(field: FieldLayout): PixelPartLayout {
+  const sl = trainScratchLayout(field, 1);
+  const oPos = 0;
+  const oF = 2;
+  const oPos2 = 4;
+  const oDF = 6;
+  const oEnc = 8;
+  const oDEnc = oEnc + sl.encStore;
+  const oField = oDEnc + sl.dEncStore;
+  const oCls = oField + sl.siteBlk;
+  const stride = oCls + (encodingPlanes(field.encoding) > 1 ? 1 : 0);
+  return { oPos, oF, oPos2, oDF, oEnc, oDEnc, oField, oCls, stride };
+}
+
+export function pixelParticleScratchFloats(field: FieldLayout): number {
+  return pixelPartLayout(field).stride;
+}
+
+/**
+ * f32s of critic field-eval workspace per grid cell (encoding + site block).
+ *
+ * NO dEnc region, deliberately, even on a hashgrid field: the only writer of
+ * these blocks is `fillForceGrid`, which evaluates F at cell centres FORWARD
+ * only. Its output is vec-field's TARGET (auxA/auxB), a constant on the tape —
+ * `criticGen` differentiates the critic's prediction, never the target — so no
+ * `bwd_head_*` call is ever made against a critic site and nothing would ever
+ * read a dEnc block here. Reserving one would be dead scratch proportional to
+ * G², which is the one allocation in this file that scales with the grid.
+ */
 export function pixelCritSiteStride(field: FieldLayout): number {
   const sl = trainScratchLayout(field, 1);
   return sl.encStore + sl.siteBlk;
@@ -1504,12 +1590,31 @@ export function pixelDiscShader(
     ...heads.flatMap((h) => h.layers.map((L) => Math.max(L.outSize, L.inSize)))
   );
 
-  const oPos = 0;
-  const oF = 2;
-  const oPos2 = 4;
-  const oDF = 6;
-  const oEnc = 8;
-  const oField = 8 + sl.encStore;
+  const { oPos, oF, oPos2, oDF, oEnc, oDEnc, oField, oCls } =
+    pixelPartLayout(field);
+
+  /**
+   * FAMILY-PLANED grid: the label picks the feature plane, so it is live in
+   * `encodeSite`, in `bwd_head_*` and in fieldGrad's grid scatter. `planed` is
+   * false for every other field, and each `clsArg`/`planeTerm` below then
+   * expands to the empty string — that is what keeps the classless generated
+   * text character-for-character what it was.
+   */
+  const planed = encodingPlanes(field.encoding) > 1;
+  // vec-field's target is F evaluated at CELL CENTRES, and a cell centre has no
+  // family. On a C-plane field there are C different F's there and no principled
+  // way to pick one, so this is a refusal rather than a silent `cls = 0` (which
+  // would train the critic against family 0's field and look perfectly healthy).
+  // Thrown at the same κ boundary as validatePixelDims' real-fake+guesses
+  // refusal: it is a (kind, field) question, not the field-only question
+  // classifyPixelDiscFusion answers for the host.
+  if (planed && d.kind === "vec-field") {
+    throw new Error(
+      "pixel_disc: vec-field on a family-planed field — its target is F at " +
+        "cell centres, and a cell centre has no family, so there is no one " +
+        "field to fit. Use next-frame / real-fake / inpaint on a planed field."
+    );
+  }
 
   // Critic field-eval workspace, indexed BY CELL: fillForceGrid runs one cell
   // per invocation, so every cell needs its own encoding + site block. These
@@ -1527,6 +1632,9 @@ export function pixelDiscShader(
   const fieldBase = (h: number) =>
     `pBase + ${oField}u + ${h === 0 ? 0 : sl.headBlk[0]}u`;
   const encBase = () => `pBase + ${oEnc}u`;
+  const dEncBase = () => `pBase + ${oDEnc}u`;
+  /** `, pcls` on a family-planed grid; empty everywhere else. */
+  const clsArg = planed ? `, pcls` : ``;
   const fwdCall = (h: number) =>
     enc.kind === "raw"
       ? `fwd_head_${h}(uk, ${fieldBase(h)}, 0u)`
@@ -1535,10 +1643,17 @@ export function pixelDiscShader(
     enc.kind === "raw"
       ? `fwd_head_${h}(uk, ${critFieldBase(h)}, 0u)`
       : `fwd_head_${h}(${critEncBase}, ${critFieldBase(h)})`;
+  // One call shape per encoding kind — emitBwdStore's signature is
+  // type-directed the same way (train_wgsl.ts), and the adversary's bwdCall is
+  // the same three-armed dispatch. hashgrid takes the stored SITE POSITION
+  // (its backward recomputes the corner geometry from it rather than storing
+  // four indices) and the dEnc block base, plus the family label when planed.
   const bwdCall = (h: number, dExpr: string) =>
     enc.kind === "raw"
       ? `bwd_head_${h}(${dExpr}, ${fieldBase(h)})`
-      : `bwd_head_${h}(${dExpr}, ${fieldBase(h)}, ${encBase()})`;
+      : enc.kind === "fourier"
+      ? `bwd_head_${h}(${dExpr}, ${fieldBase(h)}, ${encBase()})`
+      : `bwd_head_${h}(${dExpr}, ${fieldBase(h)}, ukIn, ${dEncBase()}${clsArg})`;
   const fieldForward =
     fieldLane === "blend"
       ? `(1.0 - uni.alpha) * ${fwdCall(0)} + uni.alpha * ${fwdCall(1)}`
@@ -1561,16 +1676,111 @@ export function pixelDiscShader(
   const fwdStores = heads
     .map((h, i) => emitFwdStore(i, h, sl, maxW, enc))
     .join("\n");
+  // Which field head SEEDS the shared per-site dL/dEnc block (hashgrid only).
+  // Keyed on the LANE, not on the head index: `fieldBackward` calls both heads
+  // on the blend lane and exactly ONE head on a direct lane, so a `fieldLane: 1`
+  // game with a head-0-seeds assumption would `+=` into a block nobody wrote —
+  // reading whatever the previous step left there. Unreachable while the pixel
+  // critic was always "blend" AND hashgrid was refused; reachable the moment
+  // either changes (docs/PLAN_PIXEL_GENERATOR_ARCH.md §2a, and the same
+  // reasoning the adversary's `dEncSeedHead` carries).
+  const dEncSeedHead = fieldLane === "blend" ? 0 : fieldLane;
   const bwdStores = heads
-    .map((h, i) => emitBwdStore(i, h, sl, maxW, enc, i === 0 ? "seed" : "accumulate"))
+    .map((h, i) =>
+      emitBwdStore(i, h, sl, maxW, enc, i === dEncSeedHead ? "seed" : "accumulate")
+    )
     .join("\n");
   const encodeFn = enc.kind === "raw" ? "" : emitEncode(enc);
   const critEncInit =
     enc.kind === "raw" ? "" : `encodeSite(uk, ${critEncBase});`;
+  /**
+   * The particle's family, derived where the particle index is live and STORED,
+   * exactly as the advect kernel and both trainers derive it
+   * (`pcg(i ^ CLASS_SALT) % C`). fieldGrad reads the stored label rather than
+   * re-deriving it: this shader's fieldGrad is indexed by WEIGHT, not by
+   * particle, so a second copy of the derivation there is how a particle gets
+   * encoded through one plane and scattered into another.
+   */
+  const clsDerive = planed
+    ? `
+  let pcls = pcg(idx ^ ${CLASS_SALT}u) % ${field.classes}u;
+  scratch[pBase + ${oCls}u] = f32(pcls);`
+    : ``;
+  /**
+   * Backward-site prelude: what hashgrid's `bwd_head_*` reads beyond scratch.
+   *
+   * Both of these (and `clsDerive` above) carry their OWN leading newline and
+   * expand to the empty string otherwise, so the raw and fourier shaders come
+   * out byte-identical to the pre-hashgrid emitter rather than gaining a blank
+   * line — the same discipline the collapsing scratch offsets follow.
+   */
+  const bwdSitePrelude =
+    enc.kind === "hashgrid"
+      ? `
+  let ukIn = vec2f(scratch[pBase + ${oPos}u], scratch[pBase + ${oPos}u + 1u]);${
+          planed ? `\n  let pcls = u32(scratch[pBase + ${oCls}u]);` : ``
+        }`
+      : ``;
 
   const fieldBlocks: string[] = [];
   for (const seg of field.segments) {
-    if (seg.role === "grid") continue;
+    if (seg.role === "grid") {
+      // THE hashgrid feature table (field weights offset 0): thread = one grid
+      // float (cell, feature). This block used to be `continue` — the table was
+      // simply skipped, which is not a missing feature but a SILENT one: every
+      // grid float's extGrad stayed exactly 0, the encoding's trainable
+      // parameters received no generator reward at all, and nothing anywhere
+      // reported it (docs/PLAN_PIXEL_GENERATOR_ARCH.md §2c). Extended by
+      // tools/pixel_disc_equiv_test.ts §4, which asserts the GRID slice against
+      // tfjs autograd specifically because a test on the MLP floats alone would
+      // have passed against `continue`.
+      //
+      // Gather-side, transliterated from the adversary's fieldGrad and
+      // train_wgsl's pass B: each grid float scans the batch and claims the
+      // bilinear corners that land on its cell, so there is exactly ONE writer
+      // per grid float and no atomics. At the clamp border ix1 == ix makes TWO
+      // corner tests match the same cell — both add, which is what tfjs's
+      // oneHotᵀ scatter does with coincident indices.
+      //
+      // ABOVE the fieldLane skip below, deliberately: the table is shared by
+      // both field heads and lane isolation already happened upstream — only
+      // the active lane's bwd_head wrote dEnc.
+      if (enc.kind !== "hashgrid") {
+        throw new Error(
+          `pixel_disc: grid segment on a ${enc.kind} encoding — layout is inconsistent`
+        );
+      }
+      const { gridSize: gs, features: F } = enc;
+      // Family plane: a particle only ever reads ITS OWN plane, so a grid float
+      // in plane c must ignore every particle whose family is not c. Folding
+      // `cls · gs²` into the cell comparison does that with no extra branch. A
+      // missing term still runs and still trains — it just trains the wrong
+      // family's features, so §4b of the equiv test gates plane support directly.
+      const planeTerm = planed ? `pcls * ${gs * gs}u + ` : ``;
+      const clsRead = planed ? `\n      let pcls = u32(scratch[pBase + ${oCls}u]);` : ``;
+      fieldBlocks.push(`
+  if (t >= ${seg.floatOffset}u && t < ${seg.floatOffset + seg.floatLength}u) {
+    let cell = (t - ${seg.floatOffset}u) / ${F}u;
+    let f = (t - ${seg.floatOffset}u) % ${F}u;
+    for (var s = 0u; s < uni.b; s = s + 1u) {
+      let pBase = s * ${partStride}u;${clsRead}
+      let ux = scratch[pBase + ${oPos}u];
+      let uy = scratch[pBase + ${oPos}u + 1u];
+      let gxf = clamp(ux, 0.0, 1.0) * ${(gs - 1).toFixed(1)};
+      let gyf = clamp(uy, 0.0, 1.0) * ${(gs - 1).toFixed(1)};
+      let ix = u32(floor(gxf)); let iy = u32(floor(gyf));
+      let fx = gxf - floor(gxf); let fy = gyf - floor(gyf);
+      let ix1 = min(ix + 1u, ${gs - 1}u); let iy1 = min(iy + 1u, ${gs - 1}u);
+      var wsum = 0.0;
+      if (${planeTerm}iy * ${gs}u + ix == cell) { wsum = wsum + (1.0 - fx) * (1.0 - fy); }
+      if (${planeTerm}iy * ${gs}u + ix1 == cell) { wsum = wsum + fx * (1.0 - fy); }
+      if (${planeTerm}iy1 * ${gs}u + ix == cell) { wsum = wsum + (1.0 - fx) * fy; }
+      if (${planeTerm}iy1 * ${gs}u + ix1 == cell) { wsum = wsum + fx * fy; }
+      g = g + wsum * scratch[pBase + ${oDEnc}u + f];
+    }
+  }`);
+      continue;
+    }
     const h = seg.head;
     if (fieldLane !== "blend" && h !== fieldLane) continue;
     const l = seg.layer;
@@ -1731,8 +1941,8 @@ fn sampleAndSplat(@builtin(global_invocation_id) gid : vec3u) {
   let py = partPos[idx * 2u + 1u];
   let uk = vec2f(px / uni.width, py / uni.height);
   scratch[pBase + ${oPos}u] = uk.x;
-  scratch[pBase + ${oPos}u + 1u] = uk.y;
-  ${enc.kind === "raw" ? "" : `encodeSite(uk, ${encBase()});`}
+  scratch[pBase + ${oPos}u + 1u] = uk.y;${clsDerive}
+  ${enc.kind === "raw" ? "" : `encodeSite(uk, ${encBase()}${clsArg});`}
   let F = ${fieldForward};
   scratch[pBase + ${oF}u] = F.x;
   scratch[pBase + ${oF}u + 1u] = F.y;
@@ -1909,7 +2119,7 @@ fn densityVjpAndFieldBwd(@builtin(global_invocation_id) gid : vec3u) {
   let dPosY = dfy * scale;
   let dSig = vec2f(uni.dt * dPosX, uni.dt * dPosY);
   scratch[pBase + ${oDF}u] = dSig.x;
-  scratch[pBase + ${oDF}u + 1u] = dSig.y;
+  scratch[pBase + ${oDF}u + 1u] = dSig.y;${bwdSitePrelude}
   ${fieldBackward}
 }
 

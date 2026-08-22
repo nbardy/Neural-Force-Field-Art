@@ -1,6 +1,8 @@
 # Pixel critic × generator architecture: support matrix and porting plan
 
-Audited 2026-08-19 against `src/core/field/arch.ts`,
+Audited 2026-08-19; §2, §2a and §3 IMPLEMENTED and VERIFIED 2026-08-22 — the
+support matrix in §1 and the gate quoted below are the post-change state.
+Originally audited against `src/core/field/arch.ts`,
 `src/render/webgpu/pixel_disc_wgsl.ts`, `src/render/webgpu/adversary_wgsl.ts`,
 `src/render/webgpu/train_wgsl.ts`.
 
@@ -16,8 +18,9 @@ which refusals are fundamental, and what porting the rest costs.
 
 ## 1. The support matrix
 
-`ARCH` (`src/core/field/arch.ts:51-168`) has 13 presets. The pixel critic
-accepts **3**; the relational adversary accepts **5**.
+`ARCH` (`src/core/field/arch.ts:51-168`) has 13 presets. Before this work the
+pixel critic accepted **3**; it now accepts **5**, the same as the relational
+adversary. The `pixel` column below is the post-change state.
 
 | arch | encoding | act | heads | classes | pixel | relational |
 |---|---|---|---|---|---|---|
@@ -28,16 +31,17 @@ accepts **3**; the relational adversary accepts **5**.
 | `fourierWide` | fourier | selu | 1 | 0 | no (heads) | no (heads) |
 | `fourierSiren` | fourier | sin | 1 | 0 | no (heads) | no (heads) |
 | `siren` | raw | sin | 1 | 0 | no (heads) | no (heads) |
-| `hashgrid` | hashgrid | selu | 1 | 0 | no (heads, encoding) | no (heads) |
+| `hashgrid` | hashgrid | selu | 1 | 0 | no (heads) | no (heads) |
 | `dualStd` | raw | selu | 2 | 0 | **yes** | **yes** |
 | `dualFourier` | fourier | selu | 2 | 0 | **yes** | **yes** |
 | `dualSiren` | raw | sin | 2 | 0 | **yes** | **yes** |
-| `dualHashgrid` | hashgrid | selu | 2 | 0 | no (encoding) | **yes** |
-| `familyHashgrid` | hashgrid | selu | 2 | 3 | no (classes, encoding) | **yes** |
+| `dualHashgrid` | hashgrid | selu | 2 | 0 | **yes** | **yes** |
+| `familyHashgrid` | hashgrid | selu | 2 | 3 | **yes** (except vec-field) | **yes** |
 
-Three independent gates produce this. `classifyPixelDiscFusion`
-(`pixel_disc_wgsl.ts:106-121`) checks all three; `validateAdversaryFusion`
-(`adversary_wgsl.ts:575-606`) checks one of them plus a different class rule.
+The gate is now the adversary's family switch verbatim rather than a second
+ladder — `classes > 0` was never the right question, and asking it refused
+`familyHashgrid` for the same reason it refused the genuinely-unsupported
+one-hot route:
 
 ```ts
 export function classifyPixelDiscFusion(field: FieldLayout): PixelDiscFusion {
@@ -45,15 +49,24 @@ export function classifyPixelDiscFusion(field: FieldLayout): PixelDiscFusion {
     return { tag: "unsupported",
              reason: `needs a two-head neural field (got ${field.spec.kind})` };
   }
-  if (field.classes > 0) {
-    return { tag: "unsupported", reason: "class-aware fields not supported yet" };
-  }
-  if (field.encoding.kind === "hashgrid") {
-    return { tag: "unsupported", reason: "hashgrid encoding not supported yet" };
+  switch (field.family.tag) {
+    case "none":
+    case "grid-plane":
+      break;                       // family-planed hashgrid rides the dEnc path
+    case "onehot":
+      return { tag: "unsupported", reason: "one-hot class channels widen …" };
   }
   return { tag: "ok" };
 }
 ```
+
+One refusal was ADDED that this plan did not anticipate: **vec-field on a
+family-planed field**. Its target is `F` at cell centres, and a cell centre has
+no family — a C-plane field has C different `F`s there. Picking `cls = 0` would
+fit the critic to family 0's field and look perfectly healthy, so
+`pixelDiscShader` throws. `familyHashgrid` works with next-frame, real-fake and
+inpaint. This is a `(kind, field)` question, so it lives at the same boundary as
+the `real-fake + guesses > 1` refusal rather than in the field-only host gate.
 
 `classifyPixelDiscFusion` returning **data** rather than throwing is deliberate
 and worth preserving: the constructor needs a loud refusal, the host needs the
@@ -70,7 +83,7 @@ why `dualSiren` passes. A SIREN *adversary head* is not.
 
 ---
 
-## 2. Refusal 1: hashgrid encoding — incidental (**pending**)
+## 2. Refusal 1: hashgrid encoding — was incidental (**verified** 2026-08-22)
 
 The module header already says so (`adversary_wgsl.ts:57-65`): "the PIXEL
 critic still refuses hashgrid; this port covers the RELATIONAL adversary only."
@@ -127,7 +140,7 @@ per grid float, no atomics (rationale at `:2162-2168`), transliterated from
 Of the three, (c) is the one that fails silently. (a) and (b) are compile or
 layout errors.
 
-### 2a. Latent bug this port will hit (**pending**)
+### 2a. Latent bug this port hit, as predicted (**verified**)
 
 ```ts
 // pixel_disc_wgsl.ts:903-905
@@ -163,7 +176,7 @@ per invocation (`pixel_disc_wgsl.ts:462-477`), so a shared workspace would race
 
 ---
 
-## 3. Refusal 2: class-aware fields — partly fundamental (**pending**)
+## 3. Refusal 2: class-aware fields — partly fundamental (**verified**)
 
 The pixel critic refuses all `classes > 0`. The adversary is more precise: it
 allows `family.tag === "grid-plane"` and refuses only `"onehot"`, with the
@@ -208,7 +221,7 @@ holdouts.
 
 ---
 
-## 5. Divergence worth closing while in here (**pending**)
+## 5. Divergence worth closing while in here (**implemented** in 19bf275)
 
 The pixel `fieldGrad` writes `extGrads[t] = g` raw (`pixel_disc_wgsl.ts:1226`).
 The adversary writes `extGrads[t] = select(0.0, g, isFiniteF(g))`

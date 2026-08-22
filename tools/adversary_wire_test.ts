@@ -909,19 +909,30 @@ async function main(): Promise<void> {
       { name: "no field", plan: resolvePixelCritic({ ...baseGates, hasField: false }) },
       { name: "adversary on tfjs", plan: resolvePixelCritic({ ...baseGates, adversaryOnTfjs: true }) },
       {
-        name: "hashgrid arch (dock override)",
-        plan: resolvePixelCritic({
-          ...baseGates,
-          layout: mkLayout({ kind: "hashgrid", gridSize: 16, features: 4 }),
-        }),
-      },
-      {
         name: "class-aware field",
         plan: resolvePixelCritic({ ...baseGates, layout: mkLayout({ kind: "raw" }, 3) }),
       },
     ];
     const unnamed = dropCases.filter(
       (c) => c.plan.tag !== "dropped" || c.plan.reason.trim().length === 0
+    );
+
+    // §8c HASHGRID IS NOW SUPPORTED, NOT SILENCED. This used to sit in
+    // dropCases above: the pixel critic refused every hashgrid-encoded field
+    // because it had no dEnc scratch, no 4-arg bwd_head arm, and a fieldGrad
+    // that skipped the grid segment outright (extGrads exactly zero for every
+    // learned feature-table float — the failure that looks perfectly healthy).
+    // Those are ported now, so the gate must stay OPEN. Asserted positively
+    // rather than deleted, so a regression reads as a failure here instead of
+    // as a piece that quietly stops training its encoding.
+    const hashPlan = resolvePixelCritic({
+      ...baseGates,
+      layout: mkLayout({ kind: "hashgrid", gridSize: 16, features: 4 }),
+    });
+    ok(
+      hashPlan.tag === "fused",
+      `hashgrid-encoded field resolves fused, not dropped (got ${hashPlan.tag}` +
+        `${hashPlan.tag === "dropped" ? `: ${hashPlan.reason}` : ""})`
     );
     ok(
       unnamed.length === 0,
