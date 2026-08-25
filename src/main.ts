@@ -68,6 +68,7 @@ import { GpuPointRendererWebGPU } from "./render/webgpu/points";
 import { SplatRenderer, SplatStyle } from "./render/webgpu/splat";
 import { AdvectKernel } from "./render/webgpu/advect";
 import type { BorderMode, FieldLayout } from "./render/webgpu/advect_wgsl";
+import { totalMacs } from "./render/webgpu/advect_wgsl";
 import { FusedTrainer } from "./render/webgpu/train";
 import { MAX_BATCH, type FieldLossSpec } from "./render/webgpu/train_wgsl";
 import { FieldProbe, type FieldHealth } from "./render/webgpu/field_probe";
@@ -109,6 +110,7 @@ import {
   defaultAdversaryConfig,
   disposeTupleSample,
   type AdversaryKind,
+  type GuessKind,
   type AdversaryTarget,
   type AdversaryLoss,
   type TupleEncoding,
@@ -283,6 +285,22 @@ export interface PixelCriticSpec {
   readonly K?: number;
   readonly hidden?: number;
   readonly dt?: number;
+  /**
+   * How many guesses the critic head gets, and how they are weighted.
+   *
+   * SAME TYPE as the relational adversary's `kind` — `AdversaryKind` is
+   * `GuessKind` (src/core/gan/adversary.ts), and src/core/gan/wta.ts is the one
+   * spec four backends already share. The two games differ in what they OBSERVE
+   * (tuples vs a density image); they do not differ in what a relaxed
+   * winner-take-all head is, so this knob is deliberately not a second spelling
+   * of it.
+   *
+   * Absent ≡ {tag:"single"}, canonicalized in `guessesOf` (pixel_disc.ts) — the
+   * ONE place. `real-fake` accepts only `single` and says so loudly
+   * (`validatePixelDims`): it scores a LABEL through BCE, so it has no per-cell
+   * winner to take all.
+   */
+  readonly guesses?: GuessKind;
 }
 
 export interface ArtPieceConfig {
@@ -491,10 +509,27 @@ export function driveForForceMagnitude(
   return (friction * forceMagnitude) / ((1 - friction) * maxVelocity);
 }
 
+/**
+ * The two Adam step sizes, and the reason they are ONE range table for BOTH
+ * games: `discriminatorLearningRate` is already the `lr` uniform of the fused
+ * relational trainer AND of the fused pixel critic (see the two `encodeStep`
+ * calls in `tick`), and `generatorLearningRate` is the field trainer's for
+ * every piece. `?gLR=` / `?dLR=` therefore already steer a Pixel piece; only
+ * the dock's sliders were gated on the RELATIONAL game being on.
+ */
 export const GAME_LEARNING_RATE_RANGE = {
   generator: { min: 1e-5, max: 1e-2 },
   discriminator: { min: 1e-4, max: 3e-2 },
 } as const;
+
+/**
+ * Reward range for the PIXEL critic — its own table, not `ADV_WEIGHT`'s 0..20.
+ * The shipped pieces sit at 0.03-0.04 and the critic is the ONLY gradient on
+ * them (`fieldLoss: ZERO_FIELD_LOSS`), so the useful span is small and near
+ * zero; 0 is included because "critic trains, generator ignores it" is a real
+ * and useful diagnostic state.
+ */
+export const PIXEL_CRITIC_WEIGHT_RANGE = { min: 0, max: 0.5 } as const;
 
 /** Smallest useful training batch — matches the "train B" slider's minimum. */
 export const TRAIN_BATCH_MIN = 16;
@@ -553,6 +588,8 @@ export function resolveLiveGameControls(
   readonly forceMagnitude: number;
   readonly generatorLearningRate: number;
   readonly discriminatorLearningRate: number;
+  /** `?pixW=` — pixel critic reward. 0 on a piece that declares no critic. */
+  readonly pixelCriticWeight: number;
 } {
   const driveEnabled = cfg.drive !== undefined;
   const drive = driveEnabled
@@ -578,6 +615,19 @@ export function resolveLiveGameControls(
         floatParam(q, "dLR", 3e-3)
       )
     ),
+    // A piece with no declared critic has no reward to scale: 0 is the MEANING
+    // here, not a default, so `?pixW=` on such a piece stays 0 rather than
+    // arming a knob whose trainer does not exist.
+    pixelCriticWeight:
+      cfg.pixelDisc === undefined
+        ? 0
+        : Math.max(
+            PIXEL_CRITIC_WEIGHT_RANGE.min,
+            Math.min(
+              PIXEL_CRITIC_WEIGHT_RANGE.max,
+              floatParam(q, "pixW", cfg.pixelDisc.weight)
+            )
+          ),
   };
 }
 
@@ -2255,7 +2305,18 @@ export const GALLERY: ArtPieceConfig[] = [
     alphaBlend: 0.05,
     renderer: "surprise",
     colormap: "coolwarm",
-    createField: () => createFieldFromArch({ ...ARCH.dualStd, alpha: 0.55 }),
+    // DECLARATIVE arch, not `createField`: the dock's dual list (Dual MLP /
+    // Fourier / SIREN / HashGrid) is EXACTLY the set the fused relational
+    // adversary accepts — two-head neural field, no one-hot family
+    // (`validateAdversaryFusion`; matrix in docs/PLAN_PIXEL_GENERATOR_ARCH.md
+    // §1). What is load-bearing on this piece is the OBSERVER (pair-rotation-
+    // scale-adjusted) and the soft-angle objective, not the encoding, so the
+    // encoding is a legitimate dock knob here. Default unchanged: startLoop
+    // feeds this same object to `createFieldFromArch`, and
+    // `applyArchDockPreset` preserves α = 0.55 across a swap.
+    fieldArch: { ...ARCH.dualStd, alpha: 0.55 },
+    archEditable: true,
+    archDock: "dual",
     adversary: {
       tag: "on",
       kind: { tag: "wta", k: 4, relaxEps: 0.05 },
@@ -2389,8 +2450,21 @@ export const GALLERY: ArtPieceConfig[] = [
     backgroundColor: [4, 6, 14],
     alphaBlend: 0.05,
     renderer: "alpha-fade",
-    createField: () =>
-      createFieldFromArch({ ...ARCH.dualFourier, alpha: 0.55 }),
+    // DECLARATIVE, not `createField`, so the model dock can swap the generator
+    // architecture — the pixel critic accepts exactly the four ARCH_DOCK_DUAL
+    // presets (docs/PLAN_PIXEL_GENERATOR_ARCH.md §1: dualStd / dualFourier /
+    // dualSiren / dualHashgrid), the same five-arch capability the relational
+    // adversary has. `createField` here was never a load-bearing recipe — it
+    // called `createFieldFromArch` with this very object — but it made the arch
+    // section invisible, because the dock gates on `piece.fieldArch`.
+    //
+    // `applyArchDockPreset` preserves α / semantic / classes, and no dual preset
+    // carries `classes`, so the dock cannot reach the one refusal that lives
+    // beyond the field gate (vec-field on a family-PLANED field, which has no
+    // single F at a cell centre — `pixelDiscShader` throws).
+    fieldArch: { ...ARCH.dualFourier, alpha: 0.55 },
+    archEditable: true,
+    archDock: "dual",
     pixelDisc: {
       kind: "vec-field",
       weight: 0.04,
@@ -2423,8 +2497,21 @@ export const GALLERY: ArtPieceConfig[] = [
     backgroundColor: [4, 6, 14],
     alphaBlend: 0.05,
     renderer: "alpha-fade",
-    createField: () =>
-      createFieldFromArch({ ...ARCH.dualFourier, alpha: 0.55 }),
+    // DECLARATIVE, not `createField`, so the model dock can swap the generator
+    // architecture — the pixel critic accepts exactly the four ARCH_DOCK_DUAL
+    // presets (docs/PLAN_PIXEL_GENERATOR_ARCH.md §1: dualStd / dualFourier /
+    // dualSiren / dualHashgrid), the same five-arch capability the relational
+    // adversary has. `createField` here was never a load-bearing recipe — it
+    // called `createFieldFromArch` with this very object — but it made the arch
+    // section invisible, because the dock gates on `piece.fieldArch`.
+    //
+    // `applyArchDockPreset` preserves α / semantic / classes, and no dual preset
+    // carries `classes`, so the dock cannot reach the one refusal that lives
+    // beyond the field gate (vec-field on a family-PLANED field, which has no
+    // single F at a cell centre — `pixelDiscShader` throws).
+    fieldArch: { ...ARCH.dualFourier, alpha: 0.55 },
+    archEditable: true,
+    archDock: "dual",
     pixelDisc: {
       kind: "next-frame",
       weight: 0.04,
@@ -2457,8 +2544,21 @@ export const GALLERY: ArtPieceConfig[] = [
     backgroundColor: [4, 6, 14],
     alphaBlend: 0.05,
     renderer: "alpha-fade",
-    createField: () =>
-      createFieldFromArch({ ...ARCH.dualFourier, alpha: 0.55 }),
+    // DECLARATIVE, not `createField`, so the model dock can swap the generator
+    // architecture — the pixel critic accepts exactly the four ARCH_DOCK_DUAL
+    // presets (docs/PLAN_PIXEL_GENERATOR_ARCH.md §1: dualStd / dualFourier /
+    // dualSiren / dualHashgrid), the same five-arch capability the relational
+    // adversary has. `createField` here was never a load-bearing recipe — it
+    // called `createFieldFromArch` with this very object — but it made the arch
+    // section invisible, because the dock gates on `piece.fieldArch`.
+    //
+    // `applyArchDockPreset` preserves α / semantic / classes, and no dual preset
+    // carries `classes`, so the dock cannot reach the one refusal that lives
+    // beyond the field gate (vec-field on a family-PLANED field, which has no
+    // single F at a cell centre — `pixelDiscShader` throws).
+    fieldArch: { ...ARCH.dualFourier, alpha: 0.55 },
+    archEditable: true,
+    archDock: "dual",
     pixelDisc: {
       kind: "real-fake",
       weight: 0.03,
@@ -2491,8 +2591,21 @@ export const GALLERY: ArtPieceConfig[] = [
     backgroundColor: [4, 6, 14],
     alphaBlend: 0.05,
     renderer: "alpha-fade",
-    createField: () =>
-      createFieldFromArch({ ...ARCH.dualFourier, alpha: 0.55 }),
+    // DECLARATIVE, not `createField`, so the model dock can swap the generator
+    // architecture — the pixel critic accepts exactly the four ARCH_DOCK_DUAL
+    // presets (docs/PLAN_PIXEL_GENERATOR_ARCH.md §1: dualStd / dualFourier /
+    // dualSiren / dualHashgrid), the same five-arch capability the relational
+    // adversary has. `createField` here was never a load-bearing recipe — it
+    // called `createFieldFromArch` with this very object — but it made the arch
+    // section invisible, because the dock gates on `piece.fieldArch`.
+    //
+    // `applyArchDockPreset` preserves α / semantic / classes, and no dual preset
+    // carries `classes`, so the dock cannot reach the one refusal that lives
+    // beyond the field gate (vec-field on a family-PLANED field, which has no
+    // single F at a cell centre — `pixelDiscShader` throws).
+    fieldArch: { ...ARCH.dualFourier, alpha: 0.55 },
+    archEditable: true,
+    archDock: "dual",
     pixelDisc: {
       kind: "inpaint",
       weight: 0.04,
@@ -3104,6 +3217,12 @@ export interface LoopHandle {
    *  active piece has no adversary. */
   getAdversaryWeight(): number;
   setAdversaryWeight(x: number): void;
+  /** Dimensionless multiplier on the PIXEL critic's generator reward. A distinct
+   *  scalar from {@link LoopHandle.getAdversaryWeight} because it multiplies a
+   *  soft-density residual, not a WTA payoff in predictor-output units. No-op
+   *  when the active piece has no pixel critic. */
+  getPixelCriticWeight(): number;
+  setPixelCriticWeight(x: number): void;
   /** Latest discriminator telemetry: surprise, predictor loss, per-head win
    *  shares and the collapse tripwire. `{tag:"off"}` for non-adversary pieces. */
   getAdversaryTelemetry(): AdversaryTelemetry;
@@ -3272,6 +3391,19 @@ export function startLoop(
   // feeding the field trainer's pass B. Null on the tfjs path.
   let advTrainer: AdversaryTrainer | null = null;
   let pixelDiscTrainer: PixelDiscTrainer | null = null;
+  /**
+   * LIVE generator-reward multiplier for the pixel critic — the counterpart of
+   * `advRt.weight` for the relational game, and the reason the dock's reward
+   * row means something on a Pixel piece.
+   *
+   * It is a SEPARATE scalar from the adversary's on purpose. They multiply
+   * different quantities: `advRt.weight` scales a relaxed-WTA payoff in
+   * predictor-output units (dock range 0..20), while this scales a soft-density
+   * residual (shipped values 0.03-0.04). One slider driving both under one range
+   * would be a shared NAME over two different units — the kind of sharing that
+   * looks tidy and silently mistunes a game.
+   */
+  let pixelGenWeight = initialGameControls.pixelCriticWeight;
   // Agree+Disagree owns TWO independent predictors. `advTrainer` is lane A
   // (field head 0, disagree) and this is lane B (field head 1, agree). Both
   // read the same field-weight buffer; neither owns or mutates it.
@@ -3459,6 +3591,19 @@ export function startLoop(
       adv: advHealthBlock(),
       field: fieldHealth.tag === "measured" ? fieldHealth.metrics : null,
       pixel: pixelHealthBlock(),
+      // Read off the LAYOUT, not off cfg/options: this must describe the
+      // network that is running, so that a sweep cell which silently ignored
+      // its `?arch=` is visibly identical to its neighbour instead of being
+      // labelled as a distinct architecture. See ArchHealth in src/health.ts.
+      arch: advect
+        ? {
+            kind: advect.layout.spec.kind,
+            weightFloats: advect.layout.totalFloats,
+            macsPerParticle: totalMacs(advect.layout),
+            encoding: advect.layout.encoding.kind,
+            classes: advect.layout.classes,
+          }
+        : null,
     };
     (window as unknown as HealthWindow).__nffHealth = snapshot;
   }
@@ -3621,13 +3766,17 @@ export function startLoop(
         encodeAdversaryBranch(advTrainer);
         if (advTrainerB) encodeAdversaryBranch(advTrainerB);
       }
-      if (pixelDiscTrainer && cfg.pixelDisc) {
+      // `pixelDiscTrainer !== null` IS "resolvePixelCritic approved a critic and
+      // it was constructed" — the old `&& cfg.pixelDisc` re-asked the declaration
+      // question at the hot site, which is the same double-gate resolvePixelCritic
+      // exists to remove.
+      if (pixelDiscTrainer) {
         const b = Math.min(sampleRate, 512);
         pixelDiscTrainer.encodeStep(enc, {
           b,
           alpha: (field as HelmholtzField).alpha,
           lr: discriminatorLearningRate,
-          genWeight: cfg.pixelDisc.weight,
+          genWeight: pixelGenWeight,
           applyDisc: true,
           width: w,
           height: h,
@@ -4406,6 +4555,11 @@ export function startLoop(
             K: pixelSpec.K,
             hidden: pixelSpec.hidden,
             dt: pixelSpec.dt,
+            // Forwarded UNRESOLVED: `resolvePixelDims` owns the default and
+            // `validatePixelDims` owns the (kind, guesses) refusal. Dropping
+            // this line is how the fused multi-guess head shipped unreachable —
+            // every backend supported K guesses and no piece could ask for them.
+            guesses: pixelSpec.guesses,
           },
           batchCap: 512,
           seed: 20260805,
@@ -4706,6 +4860,18 @@ export function startLoop(
           // Generator role owns the sign. A negative UI weight is never used
           // as a hidden "agree" switch (Agree+Disagree has a named B role).
           if (advRt.tag === "on") advRt.weight = Math.max(0, Math.min(20, x));
+        },
+        getPixelCriticWeight: () => pixelGenWeight,
+        setPixelCriticWeight: (x: number) => {
+          // Magnitude only — `encodeStep` owns the sign (`L_gen = -|w|·R`), so a
+          // negative here would be a second, hidden place that decides whether
+          // the generator agrees or disagrees with the critic.
+          if (pixelDiscTrainer) {
+            pixelGenWeight = Math.max(
+              PIXEL_CRITIC_WEIGHT_RANGE.min,
+              Math.min(PIXEL_CRITIC_WEIGHT_RANGE.max, x)
+            );
+          }
         },
         getAdversaryTelemetry: () => advTele,
         getColorMode: () => colorMode,

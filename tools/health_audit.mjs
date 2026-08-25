@@ -50,13 +50,29 @@ export const PIECES = Object.freeze({
   agree: "Adversary · Agree + Disagree RGB",
   weave: "Adversary · Chaos Weave",
   hashgrid: "Adversary · Pair · HashGrid · Curl",
+  families: "Adversary · RGB Families · HashGrid",
   vecfield: "Pixel · VecField",
+  nextframe: "Pixel · NextFrame",
+  realfake: "Pixel · RealFake",
+  inpaint: "Pixel · Inpaint",
+  chaos: "Neural Field · Max Chaos",
+  species: "Neural Field · Species",
   struct: "Neural Field · Max Structure",
 });
 
-/** `all` = every adversary piece plus ONE pixel critic — the default audit. */
+/**
+ * `all` = EVERY piece in the gallery. It used to be "every adversary piece plus
+ * ONE pixel critic", which is how the 2026-08-18 baseline audited 10 of 16 and
+ * left the RGB-families adversary and three of the four pixel critics with no
+ * headless coverage at all. A partial `all` is worse than an honest subset: it
+ * reads as "the gallery is green".
+ *
+ * Selection is by NAME (see the gallery click below), so a key costs nothing
+ * but wall-clock — keep this map in sync with GALLERY in src/main.ts.
+ */
 const ALL_KEYS = Object.keys(PIECES);
 const ADVERSARY_KEYS = ALL_KEYS.filter((k) => PIECES[k].startsWith("Adversary"));
+const PIXEL_KEYS = ALL_KEYS.filter((k) => PIECES[k].startsWith("Pixel"));
 
 /**
  * Gate thresholds. Every one is a MEASURED number from this repo's notes, not a
@@ -66,6 +82,15 @@ export const GATES = Object.freeze({
   /** collapse note §5: R₁ 0.88 → 0.999 is the laminar route; 0.01–0.10 healthy.
    *  0.5 is the midpoint — well clear of both measured regimes. */
   r1Laminar: numberEnv("HEALTH_R1_MAX", 0.5),
+  /** R₂ (nematic order, same τ) is the ESCAPE ROUTE from the R₁ gate above and
+   *  has to be gated separately: a ±F₀ counter-streaming field — half the
+   *  domain flowing +x, half −x — has mean direction ZERO, so it scores R₁ ≈ 0
+   *  while looking exactly as single-axis as a laminar field does. Measured
+   *  2026-08-25: "Neural Field · Max Structure" passed the R₁ gate at 0.034
+   *  with R₂ 0.927, and Tri WTA K=6 at R₁ 0.337 / R₂ 0.613. Healthy pieces in
+   *  that same run sat at R₂ 0.075–0.198, so 0.5 separates the two regimes with
+   *  the same margin r1Laminar has. */
+  r2Nematic: numberEnv("HEALTH_R2_MAX", 0.5),
   /** collapse note: sat 0 → 0.46 on the collapsed point observer. */
   satFrozen: numberEnv("HEALTH_SAT_MAX", 0.3),
   /** collapse note: AC = 0.0007 caught the collapse in the act at step 800. */
@@ -337,6 +362,21 @@ export function classify(agg, gates = GATES) {
   if (Number.isFinite(agg.r1) && agg.r1 > gates.r1Laminar) {
     return { tag: "laminar-collapse", where: "batch", r1: agg.r1, r2: agg.r2, ac: agg.ac };
   }
+  // Ranked BELOW both laminar arms deliberately: nematic order is implied by
+  // polar order (a field with one direction also has one axis), so when both
+  // fire the R₁ reading is the more specific one and sends the reader to the
+  // right place. This arm is what catches the case R₁ CANNOT see — see
+  // GATES.r2Nematic. Un-gated until 2026-08-25 even though CLAUDE.md has named
+  // the exploit the whole time, which is how Max Structure scored "healthy"
+  // on a field that is one axis end to end.
+  if (Number.isFinite(agg.fieldR2) && agg.fieldR2 > gates.r2Nematic) {
+    return {
+      tag: "nematic-collapse",
+      r2: agg.fieldR2,
+      r1: agg.fieldR1,
+      ac: agg.ac,
+    };
+  }
   if (Number.isFinite(agg.fps) && agg.fps < gates.fpsFloor) {
     return { tag: "perf-regression", fps: agg.fps };
   }
@@ -352,6 +392,13 @@ export function describe(v) {
       return (
         `LAMINAR COLLAPSE — ${v.where} R1 ${fmt(v.r1)} (> ${GATES.r1Laminar}) ` +
         `sustained; the field has one global direction. R2 ${fmt(v.r2)}, ` +
+        `ac ${fmt(v.ac)}`
+      );
+    case "nematic-collapse":
+      return (
+        `NEMATIC COLLAPSE — grid R2 ${fmt(v.r2)} (> ${GATES.r2Nematic}) with R1 ` +
+        `${fmt(v.r1)} LOW: the field has one global AXIS, not one direction. ` +
+        `Counter-streaming sheets read as isotropic to R1 and look laminar. ` +
         `ac ${fmt(v.ac)}`
       );
     case "pole-exploit":
@@ -639,6 +686,24 @@ function selfTest() {
     );
 
   ok(run({}).tag === "healthy", "a nominal snapshot stream is healthy");
+  // REGRESSION GUARD, 2026-08-25. This exact stream — R₁ low, R₂ high — scored
+  // "healthy" for the whole life of this file, and it is the shape a
+  // counter-streaming ±F₀ sheet actually produces. It is the one collapse the
+  // R₁ gate is structurally blind to, so if this case ever reads healthy again
+  // the gallery can go single-axis with every verdict green.
+  ok(
+    run({ field: { ...snap().field, r1: 0.03, r2: 0.93 } }).tag === "nematic-collapse",
+    "R1 LOW with R2 HIGH is a counter-streaming sheet, not an isotropic field"
+  );
+  ok(
+    run({ field: { ...snap().field, r1: 0.97, r2: 0.95 }, adv: null }).tag ===
+      "laminar-collapse",
+    "when BOTH orders are high, R1 wins: polar order is the more specific reading"
+  );
+  ok(
+    run({ field: { ...snap().field, r1: 0.03, r2: 0.49 } }).tag === "healthy",
+    "R2 just under the gate is still healthy — the arm is a threshold, not a slope"
+  );
   ok(
     run({ adv: { ...snap().adv, r1: 0.98 } }).tag === "laminar-collapse",
     "batch R1 0.98 → laminar-collapse"
@@ -762,7 +827,8 @@ function selfTest() {
   }
   // Every verdict tag must have a handler — an unhandled one throws by design.
   for (const v of [
-    { tag: "healthy" }, { tag: "laminar-collapse" }, { tag: "pole-exploit" },
+    { tag: "healthy" }, { tag: "laminar-collapse" }, { tag: "nematic-collapse" },
+    { tag: "pole-exploit" },
     { tag: "frozen-saturated" }, { tag: "dead-field" }, { tag: "blown-up" },
     { tag: "nonfinite" }, { tag: "perf-regression" }, { tag: "no-signal" },
     { tag: "stalled" }, { tag: "page-error" }, { tag: "browser-stalled" },
@@ -780,84 +846,101 @@ function selfTest() {
 
 /* ── main ────────────────────────────────────────────────────────────────── */
 
-if (process.argv[2] === "--self-test") {
+/**
+ * Run the audit ONLY when this file is the process entry point.
+ *
+ * Without this guard, `import("./tools/health_audit.mjs")` — the obvious way to
+ * reuse `classify`/`aggregate` to re-score an already-recorded run offline —
+ * launches a real 16-piece GPU audit as an import side effect. Hit for real on
+ * 2026-08-25 while re-scoring a finished run against a new gate.
+ */
+const INVOKED_DIRECTLY =
+  !!process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (INVOKED_DIRECTLY && process.argv[2] === "--self-test") {
   process.exit(selfTest() === 0 ? 0 : 1);
 }
 
-const arg = process.argv[2] ?? "all";
-const base = process.argv[3] ?? DEFAULT_BASE;
-const durationSec = Number(process.argv[4] ?? 90);
-const sampleSec = Number(process.argv[5] ?? 2);
-const keys =
-  arg === "all"
-    ? ALL_KEYS
-    : arg === "adversary"
-      ? ADVERSARY_KEYS
-      : arg.split(",").map((k) => k.trim()).filter(Boolean);
-for (const k of keys) {
-  if (!PIECES[k]) {
-    console.error(`unknown piece key '${k}' — known: ${ALL_KEYS.join(", ")}`);
-    process.exit(2);
+if (INVOKED_DIRECTLY) {
+  const arg = process.argv[2] ?? "all";
+  const base = process.argv[3] ?? DEFAULT_BASE;
+  const durationSec = Number(process.argv[4] ?? 90);
+  const sampleSec = Number(process.argv[5] ?? 2);
+  const keys =
+    arg === "all"
+      ? ALL_KEYS
+      : arg === "adversary"
+        ? ADVERSARY_KEYS
+        : arg === "pixel"
+          ? PIXEL_KEYS
+          : arg.split(",").map((k) => k.trim()).filter(Boolean);
+  for (const k of keys) {
+    if (!PIECES[k]) {
+      console.error(`unknown piece key '${k}' — known: ${ALL_KEYS.join(", ")}`);
+      process.exit(2);
+    }
   }
-}
 
-const runDir = path.join(
-  ROOT,
-  "output",
-  "health-audit",
-  new Date().toISOString().replace(/[:.]/g, "-")
-);
-fs.mkdirSync(runDir, { recursive: true });
+  const runDir = path.join(
+    ROOT,
+    "output",
+    "health-audit",
+    new Date().toISOString().replace(/[:.]/g, "-")
+  );
+  fs.mkdirSync(runDir, { recursive: true });
 
-const browser = await puppeteer.launch({ headless: "new", args: CHROME_ARGS });
-const results = [];
-try {
-  // SERIALIZED: every piece contends for the same GPU, and a parallel run would
-  // measure scheduler contention rather than the artwork.
-  for (const key of keys) {
-    console.log(`\n=== ${key}: ${PIECES[key]} (${durationSec}s) ===`);
-    results.push(
-      await runPiece(browser, key, PIECES[key], {
-        base, durationSec, sampleSec, runDir, shots: !!process.env.HEALTH_SHOTS,
-      })
+  const browser = await puppeteer.launch({ headless: "new", args: CHROME_ARGS });
+  const results = [];
+  try {
+    // SERIALIZED: every piece contends for the same GPU, and a parallel run would
+    // measure scheduler contention rather than the artwork.
+    for (const key of keys) {
+      console.log(`\n=== ${key}: ${PIECES[key]} (${durationSec}s) ===`);
+      results.push(
+        await runPiece(browser, key, PIECES[key], {
+          base, durationSec, sampleSec, runDir, shots: !!process.env.HEALTH_SHOTS,
+        })
+      );
+    }
+  } finally {
+    await browser.close();
+  }
+
+  console.log("\n╔══ VERDICTS ═══════════════════════════════════════════════════");
+  const pad = Math.max(...results.map((r) => r.pieceName.length));
+  for (const r of results) {
+    const a = r.agg;
+    console.log(
+      `║ ${r.pieceName.padEnd(pad)}  ${isHealthy(r.verdict) ? "PASS" : "FAIL"}  ${describe(r.verdict)}`
+    );
+    console.log(
+      `║ ${" ".repeat(pad)}        ac ${fmt(a.ac)} (${a.acTrend.tag}) · dc ${fmt(a.dc)} · ` +
+        `dc/ac ${fmt(a.dc / a.ac)} · sat ${fmt(a.satFrac)} · OW ${fmt(a.okuboWeiss)} · ` +
+        `R1 grid ${fmt(a.fieldR1)}/R2 ${fmt(a.fieldR2)} · R1 batch ${fmt(a.r1)} · ` +
+        `payoff ${fmt(a.payoff)} · ${fmt(a.fps)} fps · n=${a.count}`
     );
   }
-} finally {
-  await browser.close();
-}
+  console.log("╚═══════════════════════════════════════════════════════════════");
+  console.log(`artifacts: ${runDir}`);
 
-console.log("\n╔══ VERDICTS ═══════════════════════════════════════════════════");
-const pad = Math.max(...results.map((r) => r.pieceName.length));
-for (const r of results) {
-  const a = r.agg;
-  console.log(
-    `║ ${r.pieceName.padEnd(pad)}  ${isHealthy(r.verdict) ? "PASS" : "FAIL"}  ${describe(r.verdict)}`
+  fs.writeFileSync(
+    path.join(runDir, "summary.json"),
+    JSON.stringify(
+      {
+        base, durationSec, sampleSec, gates: GATES,
+        pieces: results.map((r) => ({
+          key: r.key, piece: r.pieceName, verdict: r.verdict,
+          healthy: isHealthy(r.verdict), aggregate: stripSeries(r.agg),
+        })),
+      },
+      nanReplacer,
+      2
+    )
   );
-  console.log(
-    `║ ${" ".repeat(pad)}        ac ${fmt(a.ac)} (${a.acTrend.tag}) · dc ${fmt(a.dc)} · ` +
-      `dc/ac ${fmt(a.dc / a.ac)} · sat ${fmt(a.satFrac)} · OW ${fmt(a.okuboWeiss)} · ` +
-      `R1 grid ${fmt(a.fieldR1)}/R2 ${fmt(a.fieldR2)} · R1 batch ${fmt(a.r1)} · ` +
-      `payoff ${fmt(a.payoff)} · ${fmt(a.fps)} fps · n=${a.count}`
-  );
+
+  const unhealthy = results.filter((r) => !isHealthy(r.verdict)).length;
+  console.log(`${unhealthy} unhealthy piece(s)`);
+  process.exit(unhealthy);
+
 }
-console.log("╚═══════════════════════════════════════════════════════════════");
-console.log(`artifacts: ${runDir}`);
-
-fs.writeFileSync(
-  path.join(runDir, "summary.json"),
-  JSON.stringify(
-    {
-      base, durationSec, sampleSec, gates: GATES,
-      pieces: results.map((r) => ({
-        key: r.key, piece: r.pieceName, verdict: r.verdict,
-        healthy: isHealthy(r.verdict), aggregate: stripSeries(r.agg),
-      })),
-    },
-    nanReplacer,
-    2
-  )
-);
-
-const unhealthy = results.filter((r) => !isHealthy(r.verdict)).length;
-console.log(`${unhealthy} unhealthy piece(s)`);
-process.exit(unhealthy);

@@ -54,9 +54,17 @@ import {
   physicsForward,
   surpriseMetricOf,
   resolvePixelCritic,
+  applyArchDockPreset,
+  archDockPresets,
   type ArtPieceConfig,
   type TfjsAdversaryRuntime,
 } from "../src/main";
+import type { FieldArch } from "../src/core/field/arch";
+import {
+  classifyPixelDiscFusion,
+  pixelDiscShader,
+} from "../src/render/webgpu/pixel_disc_wgsl";
+import { resolvePixelDims } from "../src/core/gan/pixel_disc";
 import { HelmholtzField } from "../src/core/field/helmholtz";
 import { layoutField, type Encoding } from "../src/render/webgpu/advect_wgsl";
 
@@ -609,7 +617,10 @@ async function main(): Promise<void> {
     // silently train nothing on either path.
     const trainable = GALLERY.filter(
       (p) => resolveAdversary(p.adversary, q).tag === "on"
-    ).every((p) => !!p.createField || !!p.createModel);
+      // `fieldArch` counts: startLoop resolves declarative arch BEFORE
+      // createField (main.ts), so an arch-swappable adversary piece — e.g.
+      // "Adversary · Pair WTA K=4" — trains exactly the same field.
+    ).every((p) => !!p.createField || !!p.fieldArch || !!p.createModel);
     ok(trainable, "every adversary piece supplies a field or a model to train");
   }
 
@@ -980,6 +991,87 @@ async function main(): Promise<void> {
       brokenPieces === 0,
       `no gallery piece declares both the Agree+Disagree game and a pixel ` +
         `critic (${pixelPieces} pixel pieces checked)`
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  console.log("\n§8d PIXEL DOCK × ARCH — every selectable arch is one the critic accepts");
+  // ══════════════════════════════════════════════════════════════════════
+  // The Pixel pieces are `archEditable` (declarative `fieldArch`, `archDock:
+  // "dual"`), so the dock can restart them on any ARCH_DOCK_DUAL preset. The
+  // critic's acceptance is NOT a property of the dock, so nothing else stops a
+  // sixth preset being added that `classifyPixelDiscFusion` refuses or that
+  // `pixelDiscShader` throws on — and the failure surfaces as a blank canvas at
+  // restart, on a piece whose ZERO_FIELD_LOSS means the critic is the only
+  // gradient. Emitting the shader (not just classifying the field) is what
+  // catches the `(kind, field)` refusals that live past the field-only gate,
+  // e.g. vec-field on a family-PLANED field.
+  {
+    const encodingForArch = (arch: FieldArch): Encoding =>
+      arch.encoding === "fourier"
+        ? { kind: "fourier", octaves: arch.fourierOctaves ?? 4 }
+        : arch.encoding === "hashgrid"
+        ? {
+            kind: "hashgrid",
+            gridSize: arch.gridSize ?? 64,
+            features: arch.gridFeatures ?? 2,
+            planes: (arch.classes ?? 0) > 0 ? arch.classes! : 1,
+          }
+        : { kind: "raw" };
+
+    const pixelPieces = GALLERY.filter((p) => p.pixelDisc && p.archEditable);
+    let refused = 0;
+    let combos = 0;
+    for (const piece of pixelPieces) {
+      for (const preset of archDockPresets(piece.archDock ?? "aesthetic")) {
+        const arch = applyArchDockPreset(piece.fieldArch!, preset.arch);
+        const enc = encodingForArch(arch);
+        const inSize =
+          enc.kind === "fourier"
+            ? 2 + 4 * enc.octaves
+            : enc.kind === "hashgrid"
+            ? enc.features
+            : 2;
+        const units = arch.hiddenUnits ?? [32, 32];
+        const chain = (n: number) => {
+          const dims = [];
+          let prev = n;
+          for (const u of units) {
+            dims.push({ inSize: prev, outSize: u, activation: arch.activation === "sin" ? ("sin" as const) : ("selu" as const) });
+            prev = u;
+          }
+          dims.push({ inSize: prev, outSize: 2, activation: "tanh" as const });
+          return dims;
+        };
+        const classes = arch.classes ?? 0;
+        const layout = layoutField(
+          arch.semantic === "agree-disagree" ? "agree-disagree" : "helmholtz",
+          [chain(inSize), chain(inSize + (enc.kind === "raw" ? classes : 0))],
+          { classes, encoding: enc }
+        );
+        combos++;
+        const plan = classifyPixelDiscFusion(layout);
+        if (plan.tag !== "ok") {
+          refused++;
+          console.log(`      ${piece.name} + ${preset.key}: field gate — ${plan.reason}`);
+          continue;
+        }
+        try {
+          pixelDiscShader(layout, {
+            dims: resolvePixelDims({ ...piece.pixelDisc, kind: piece.pixelDisc!.kind }),
+            batchCap: 64,
+            fieldLane: "blend",
+          });
+        } catch (e) {
+          refused++;
+          console.log(`      ${piece.name} + ${preset.key}: shader — ${(e as Error).message}`);
+        }
+      }
+    }
+    ok(
+      pixelPieces.length > 0 && refused === 0,
+      `every arch the pixel dock can select emits a critic shader ` +
+        `(${pixelPieces.length} pieces x presets = ${combos} combos, ${refused} refused)`
     );
   }
 

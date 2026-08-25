@@ -68,6 +68,35 @@ export type AdvHealth =
       readonly heads: readonly number[];
     };
 
+/**
+ * MEASURED architecture fingerprint — what actually COMPILED, never what was
+ * requested.
+ *
+ * WHY THIS EXISTS. `?arch=` is honoured only on `archEditable` pieces
+ * (src/index.tsx gates on it), and the adversary knobs are meaningless on a
+ * piece with no adversary. A config SWEEP that labelled its cells by the
+ * requested URL would therefore happily report "architecture makes no
+ * difference" after running the same network N times — the most expensive lie
+ * this instrument could tell, because it costs hours of GPU before it lies.
+ *
+ * These four numbers come off the advect kernel's own `FieldLayout`, so two
+ * cells that differ here really did compile different networks, and two that
+ * do not really did not. `tools/health_report.ts` refuses to compare cells that
+ * share a fingerprint across an axis it is supposed to vary.
+ */
+export interface ArchHealth {
+  /** Field kind, e.g. `helmholtz` — `FieldLayout.spec.kind`. */
+  readonly kind: string;
+  /** Packed trainable floats. The primary fingerprint: depth/width changes move it. */
+  readonly weightFloats: number;
+  /** Multiply-accumulates per particle per frame — the cost axis. */
+  readonly macsPerParticle: number;
+  /** Input encoding (`raw` | `hashgrid` | …). Changes without moving weightFloats. */
+  readonly encoding: string;
+  /** Family/species count C; 0 = classless. */
+  readonly classes: number;
+}
+
 /** Pixel critic block, present only while a fused pixel critic is running. */
 export interface PixelHealth {
   /** Critic (discriminator) loss. */
@@ -128,6 +157,8 @@ export interface HealthSnapshot {
   readonly field: FieldHealthBlock | null;
   /** `null` ⇔ this piece has no pixel critic. */
   readonly pixel: PixelHealth | null;
+  /** `null` ⇔ the advect kernel has not been built yet (pre-first-frame only). */
+  readonly arch: ArchHealth | null;
 }
 
 /** Publication cadence. Deliberately ~1 Hz: the field probe is 32²×5 field

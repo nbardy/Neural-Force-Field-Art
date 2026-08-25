@@ -22,6 +22,7 @@ import {
   GALLERY,
   GAME_LEARNING_RATE_RANGE,
   INK_LOOK_DECAY,
+  PIXEL_CRITIC_WEIGHT_RANGE,
   TRAIN_BATCH_MAX,
   TRAIN_BATCH_MIN,
   adversaryLossOf,
@@ -39,6 +40,7 @@ import {
   type HeadHealth,
   type InkLook,
   type LoopHandle,
+  type PixelCriticSpec,
 } from "./main";
 import type { FieldHealth } from "./render/webgpu/field_probe";
 import type { FamilyPayoff } from "./render/webgpu/adversary_train";
@@ -86,6 +88,19 @@ const G_LR_MIN = GAME_LEARNING_RATE_RANGE.generator.min;
 const G_LR_MAX = GAME_LEARNING_RATE_RANGE.generator.max;
 const D_LR_MIN = GAME_LEARNING_RATE_RANGE.discriminator.min;
 const D_LR_MAX = GAME_LEARNING_RATE_RANGE.discriminator.max;
+/**
+ * The critic's capacity, as the dock's one-line summary — the counterpart of
+ * `describeFieldArch` for the OTHER net in the game. `guesses` is the same
+ * `GuessKind` the relational adversary calls `kind` (src/core/gan/wta.ts is the
+ * one spec), so it reads the same way in both sections.
+ */
+function describePixelCritic(spec: PixelCriticSpec): string {
+  const g = spec.guesses ?? { tag: "single" as const };
+  const guesses =
+    g.tag === "single" ? "1 guess" : `${g.k} guesses ε${g.relaxEps}`;
+  return `G${spec.G ?? 16} E${spec.E ?? 8} K${spec.K ?? 16} h${spec.hidden ?? 32} · ${guesses}`;
+}
+
 const ADV_WEIGHT_MIN = ADVERSARY_WEIGHT_RANGE.min;
 const ADV_WEIGHT_MAX = ADVERSARY_WEIGHT_RANGE.max;
 
@@ -220,6 +235,33 @@ const learningRateToSlider = (value: number, min: number, max: number): number =
 const sliderToLearningRate = (value: number, min: number, max: number): number =>
   min * Math.pow(max / min, value);
 
+/**
+ * `?arch=<preset>` — the ARCHITECTURE axis, as a first-class URL knob.
+ *
+ * It is deliberately GLOBAL and survives a gallery switch, exactly like
+ * `?advM`/`?advK`/`?advPolar` (see the comment in `defaultsForPiece`): a config
+ * sweep varies architecture ACROSS pieces, and a knob that silently reverted on
+ * every piece change could not express that. A DOCK-set preset keeps the old
+ * behaviour of not following you to the next piece — that one is an aesthetic
+ * choice about the piece you are looking at, not a declared experiment.
+ *
+ * Unknown values THROW rather than falling back to the piece default. A sweep
+ * that mistypes an axis value must fail at the first cell, not spend an hour
+ * measuring the default architecture N times and report it as N architectures.
+ * (The measured `ArchHealth` fingerprint in the snapshot is the second line of
+ * defence, for the pieces that are not `archEditable` at all.)
+ */
+function resolveArchPreset(q: URLSearchParams): ArchPresetKey | null {
+  const raw = q.get("arch");
+  if (raw === null) return null;
+  if (!isArchPresetKey(raw)) {
+    throw new URIError(
+      `?arch must be one of ${Object.keys(ARCH).join(", ")} — got '${raw}'`
+    );
+  }
+  return raw;
+}
+
 function defaultsForPiece(piece: number): RuntimeConfig {
   // URL adversary knobs are intentionally GLOBAL: selecting another gallery
   // piece re-resolves that piece through the same query. This matches
@@ -238,7 +280,7 @@ function defaultsForPiece(piece: number): RuntimeConfig {
     adversaryKind: adv.tag === "on" ? adv.kind.tag : "off",
     k: adv.tag === "on" && adv.kind.tag === "wta" ? adv.kind.k : 1,
     relaxEps: adv.tag === "on" && adv.kind.tag === "wta" ? adv.kind.relaxEps : 0,
-    archPreset: null,
+    archPreset: resolveArchPreset(new URLSearchParams(window.location.search)),
   };
 }
 
@@ -266,8 +308,10 @@ function runtimeForPieceSwitch(
     adversaryKind: nextDefaults.adversaryKind,
     k: nextDefaults.k,
     relaxEps: nextDefaults.relaxEps,
-    // Don't carry an aesthetic arch preset onto a locked game piece.
-    archPreset: null,
+    // Don't carry an aesthetic DOCK arch preset onto a locked game piece — but
+    // a URL-declared `?arch=` is a global knob and re-resolves here, the same
+    // way ?advM/?advK do through nextDefaults. See resolveArchPreset.
+    archPreset: nextDefaults.archPreset,
   };
 }
 
@@ -552,6 +596,7 @@ const DOCK_OVERRIDE_PARAMS = [
   "advPolarTau",
   "gLR",
   "dLR",
+  "pixW",
   "drive",
   "color",
   "cmap",
@@ -1284,6 +1329,15 @@ function App(): ReactElement {
   const [discriminatorLearningRate, setDiscriminatorLearningRate] = useState(
     () => restoredDock?.discriminatorLearningRate ?? 3e-3
   );
+  /**
+   * Pixel-critic reward. NOT restored from the persisted dock and not in
+   * `PersistedDock`: the share/save schema is versioned and `advWeight` already
+   * occupies the "game weight" slot with a different unit and range. The loop
+   * owns the value (`?pixW=` > piece default) and the mount handler below reads
+   * it back, which is the same direction every other non-persisted control uses
+   * on a piece switch.
+   */
+  const [pixelWeight, setPixelWeight] = useState(0);
   const [resetRate, setResetRate] = useState(
     () => restoredDock?.resetRate ?? 0.01
   );
@@ -1383,6 +1437,17 @@ function App(): ReactElement {
 
   const piece = GALLERY[runtime.piece];
   const adversary = runtime.adversaryKind !== "off";
+  /**
+   * The piece's declared density critic, or `undefined`. This is a PIECE
+   * property, not a dock one: unlike the relational game there is no `?adv=off`
+   * equivalent, and `resolvePixelCritic` (main.ts) can still drop it at startup
+   * for a reason the console prints — so this gates the section, and a dropped
+   * critic shows a section whose reward slider is a no-op rather than silently
+   * pretending the piece has no critic at all.
+   */
+  const pixelCritic = piece.pixelDisc;
+  /** Either game. The step-size sliders belong to whichever one is running. */
+  const hasGame = adversary || pixelCritic !== undefined;
   const dockPresets = archDockPresets(piece.archDock ?? "aesthetic");
   const activeArch = (() => {
     if (!piece.fieldArch) return null;
@@ -1515,6 +1580,7 @@ function App(): ReactElement {
           handle.setStrokeStyle(strokeStyle);
           handle.setStrokeLength(strokeLength);
           handle.setAdversaryWeight(advWeight);
+          handle.setPixelCriticWeight(pixelWeight);
           handle.setColorMode(colorMode);
         } else {
           setParticles(handle.getParticleCount());
@@ -1530,6 +1596,7 @@ function App(): ReactElement {
           setStrokeStyle(handle.getStrokeStyle());
           setStrokeLength(handle.getStrokeLength());
           setAdvWeight(handle.getAdversaryWeight());
+          setPixelWeight(handle.getPixelCriticWeight());
           setColorMode(handle.getColorMode());
         }
       },
@@ -1960,6 +2027,93 @@ function App(): ReactElement {
             </ControlSection>
           )}
 
+          {/* THE TWO STEP SIZES ARE SHARED, so they live in ONE section rather
+              than inside the relational game's. `discriminatorLearningRate` is
+              the `lr` uniform of BOTH fused critics and `generatorLearningRate`
+              is the field trainer's for every piece — the values already
+              reached a Pixel piece through `?gLR=`/`?dLR=`; only these sliders
+              were behind `adversary &&`, which is a RELATIONAL predicate
+              (`runtime.adversaryKind !== "off"`) standing in for "has a game". */}
+          {hasGame && (
+            <ControlSection title="training" testid="game-training-controls">
+              <RangeRow
+                label="G lr"
+                value={learningRateToSlider(
+                  generatorLearningRate,
+                  G_LR_MIN,
+                  G_LR_MAX
+                )}
+                min={0}
+                max={1}
+                step={0.005}
+                display={generatorLearningRate.toExponential(1)}
+                testid="generator-learning-rate-control"
+                onChange={(value) => {
+                  const next = sliderToLearningRate(value, G_LR_MIN, G_LR_MAX);
+                  setGeneratorLearningRate(next);
+                  handleRef.current?.setGeneratorLearningRate(next);
+                }}
+              />
+              <RangeRow
+                label="D lr"
+                value={learningRateToSlider(
+                  discriminatorLearningRate,
+                  D_LR_MIN,
+                  D_LR_MAX
+                )}
+                min={0}
+                max={1}
+                step={0.005}
+                display={discriminatorLearningRate.toExponential(1)}
+                testid="discriminator-learning-rate-control"
+                onChange={(value) => {
+                  const next = sliderToLearningRate(value, D_LR_MIN, D_LR_MAX);
+                  setDiscriminatorLearningRate(next);
+                  handleRef.current?.setDiscriminatorLearningRate(next);
+                }}
+              />
+              <div className="tui-static-row" data-testid="learning-rate-ratio">
+                <span>D / G</span>
+                <strong>
+                  {(discriminatorLearningRate / generatorLearningRate).toFixed(2)}×
+                </strong>
+              </div>
+            </ControlSection>
+          )}
+
+          {pixelCritic && (
+            <ControlSection title="pixel critic" testid="pixel-critic-controls">
+              <div className="tui-static-row" data-testid="pixel-critic-summary">
+                <span>{pixelCritic.kind ?? "vec-field"}</span>
+                <strong>{describePixelCritic(pixelCritic)}</strong>
+              </div>
+              {/* Its own range, NOT the adversary's 0..20: this multiplies a
+                  soft-density residual, not a WTA payoff in predictor-output
+                  units (main.ts PIXEL_CRITIC_WEIGHT_RANGE). The shipped pieces
+                  carry fieldLoss: ZERO_FIELD_LOSS, so 0 here means the field
+                  gets NO gradient — a real diagnostic state, and the reason the
+                  row shows the value rather than only a slider position. */}
+              <RangeRow
+                label="reward"
+                value={pixelWeight}
+                min={PIXEL_CRITIC_WEIGHT_RANGE.min}
+                max={PIXEL_CRITIC_WEIGHT_RANGE.max}
+                step={0.005}
+                display={pixelWeight.toFixed(3)}
+                testid="pixel-critic-reward-control"
+                onChange={(value) => {
+                  setPixelWeight(value);
+                  handleRef.current?.setPixelCriticWeight(value);
+                }}
+              />
+              {pixelWeight === 0 && (
+                <p className="tui-note" data-testid="pixel-critic-zero-note">
+                  reward 0 · critic trains, field does not (ZERO_FIELD_LOSS piece)
+                </p>
+              )}
+            </ControlSection>
+          )}
+
           {adversary && (
             <ControlSection title="adversary" testid="adversary-controls">
               <div className="tui-static-row" data-testid="objective-contract">
@@ -2236,48 +2390,6 @@ function App(): ReactElement {
                   handleRef.current?.setAdversaryWeight(value);
                 }}
               />
-              <RangeRow
-                label="G lr"
-                value={learningRateToSlider(
-                  generatorLearningRate,
-                  G_LR_MIN,
-                  G_LR_MAX
-                )}
-                min={0}
-                max={1}
-                step={0.005}
-                display={generatorLearningRate.toExponential(1)}
-                testid="generator-learning-rate-control"
-                onChange={(value) => {
-                  const next = sliderToLearningRate(value, G_LR_MIN, G_LR_MAX);
-                  setGeneratorLearningRate(next);
-                  handleRef.current?.setGeneratorLearningRate(next);
-                }}
-              />
-              <RangeRow
-                label="D lr"
-                value={learningRateToSlider(
-                  discriminatorLearningRate,
-                  D_LR_MIN,
-                  D_LR_MAX
-                )}
-                min={0}
-                max={1}
-                step={0.005}
-                display={discriminatorLearningRate.toExponential(1)}
-                testid="discriminator-learning-rate-control"
-                onChange={(value) => {
-                  const next = sliderToLearningRate(value, D_LR_MIN, D_LR_MAX);
-                  setDiscriminatorLearningRate(next);
-                  handleRef.current?.setDiscriminatorLearningRate(next);
-                }}
-              />
-              <div className="tui-static-row" data-testid="learning-rate-ratio">
-                <span>D / G</span>
-                <strong>
-                  {(discriminatorLearningRate / generatorLearningRate).toFixed(2)}×
-                </strong>
-              </div>
               {isWta ? (
                 <>
                   <RangeRow
