@@ -56,6 +56,11 @@ import {
   resolvePixelCritic,
   applyArchDockPreset,
   archDockPresets,
+  adversaryTargetOf,
+  adversaryLossOf,
+  gamePressureOf,
+  predictorArchOf,
+  PREDICTOR_ARCH_DOCK,
   type ArtPieceConfig,
   type TfjsAdversaryRuntime,
 } from "../src/main";
@@ -66,7 +71,19 @@ import {
 } from "../src/render/webgpu/pixel_disc_wgsl";
 import { resolvePixelDims } from "../src/core/gan/pixel_disc";
 import { HelmholtzField } from "../src/core/field/helmholtz";
-import { layoutField, type Encoding } from "../src/render/webgpu/advect_wgsl";
+import {
+  layoutField,
+  layoutAdversary,
+  encodingDim,
+  type Encoding,
+  type LayerDims,
+} from "../src/render/webgpu/advect_wgsl";
+import {
+  adversaryPassAShader,
+  adversaryPassBShader,
+  fusedObjectiveDims,
+} from "../src/render/webgpu/adversary_wgsl";
+import { headCount } from "../src/core/gan/adversary";
 
 let failures = 0;
 const ok = (cond: boolean, msg: string) => {
@@ -1044,11 +1061,21 @@ async function main(): Promise<void> {
           return dims;
         };
         const classes = arch.classes ?? 0;
-        const layout = layoutField(
-          arch.semantic === "agree-disagree" ? "agree-disagree" : "helmholtz",
-          [chain(inSize), chain(inSize + (enc.kind === "raw" ? classes : 0))],
-          { classes, encoding: enc }
-        );
+        // Honour `arch.heads`. Hardcoding two heads here made this section
+        // unfalsifiable in exactly the way it exists to prevent: a single-head
+        // preset added to ARCH_DOCK_DUAL still produced a helmholtz layout, so
+        // the gate stayed green while the dock offered a field
+        // `classifyPixelDiscFusion` refuses ("needs a two-head neural field").
+        // Caught 2026-08-26 by injecting ARCH.siren into the dual dock — §8e
+        // failed and §8d did not.
+        const layout =
+          (arch.heads ?? 2) === 1
+            ? layoutField("vector", [chain(inSize)], { classes: 0, encoding: enc })
+            : layoutField(
+                arch.semantic === "agree-disagree" ? "agree-disagree" : "helmholtz",
+                [chain(inSize), chain(inSize + (enc.kind === "raw" ? classes : 0))],
+                { classes, encoding: enc }
+              );
         combos++;
         const plan = classifyPixelDiscFusion(layout);
         if (plan.tag !== "ok") {
@@ -1072,6 +1099,130 @@ async function main(): Promise<void> {
       pixelPieces.length > 0 && refused === 0,
       `every arch the pixel dock can select emits a critic shader ` +
         `(${pixelPieces.length} pieces x presets = ${combos} combos, ${refused} refused)`
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  console.log("\n§8e ADVERSARY DOCK × ARCH — every selectable arch emits both fused passes");
+  // ══════════════════════════════════════════════════════════════════════
+  // Seven relational-adversary pieces are `archEditable` on the dual dock (see
+  // DUAL_ARCH_DOCK in main.ts), so the dock can restart any of them on any
+  // ARCH_DOCK_DUAL preset. That the dock list happens to equal the set
+  // `validateAdversaryFusion` accepts is a COINCIDENCE of two files nothing
+  // enforces — add a fifth preset with a one-hot family route or a single head
+  // and the dock hands the user a configuration the fused adversary throws on,
+  // at restart, with the artwork already gone.
+  //
+  // Emitting BOTH shaders is the gate, not just the layout: `layoutAdversary`
+  // and the validator are field-shape checks, while the refusals that actually
+  // bite (activation the backward has no checkpoint for, family route with no
+  // dEnc counterpart) live in the emitters. Each piece is compiled with ITS
+  // OWN game — observer, target, loss, K, ε, pressure — because the objective
+  // dims (du, dy) come from the observer, and a du=1 pair game exercises code
+  // a du=2 point game never reaches.
+  {
+    const encodingForArch = (arch: FieldArch): Encoding =>
+      arch.encoding === "fourier"
+        ? { kind: "fourier", octaves: arch.fourierOctaves ?? 4 }
+        : arch.encoding === "hashgrid"
+        ? {
+            kind: "hashgrid",
+            gridSize: arch.gridSize ?? 64,
+            features: arch.gridFeatures ?? 2,
+            planes: (arch.classes ?? 0) > 0 ? arch.classes! : 1,
+          }
+        : { kind: "raw" };
+
+    const advPieces = GALLERY.filter(
+      (p) => p.archEditable && p.fieldArch && p.adversary?.tag === "on"
+    );
+    let refused = 0;
+    let combos = 0;
+    for (const piece of advPieces) {
+      const spec = piece.adversary!;
+      if (spec.tag !== "on") continue;
+      for (const preset of archDockPresets(piece.archDock ?? "aesthetic")) {
+        const arch = applyArchDockPreset(piece.fieldArch!, preset.arch);
+        const enc = encodingForArch(arch);
+        const act = arch.activation === "sin" ? ("sin" as const) : ("selu" as const);
+        const head: LayerDims[] = [];
+        let inSize = encodingDim(enc);
+        for (const w of arch.hiddenUnits ?? [32, 32]) {
+          head.push({ inSize, outSize: w, activation: act });
+          inSize = w;
+        }
+        head.push({ inSize, outSize: 2, activation: "tanh" as const });
+        // Honour `arch.heads` rather than always emitting two — a single-head
+        // preset becomes FieldSpec.kind "vector", which is exactly what
+        // `validateAdversaryFusion` refuses, and hardcoding two heads here
+        // would make this whole section unfalsifiable.
+        const single = (arch.heads ?? 2) === 1;
+        const field = single
+          ? layoutField("vector", [head], { classes: 0, encoding: enc })
+          : layoutField(
+              arch.semantic === "agree-disagree" ? "agree-disagree" : "helmholtz",
+              [head, head.map((d) => ({ ...d }))],
+              { classes: arch.classes ?? 0, encoding: enc }
+            );
+
+        const target = adversaryTargetOf(spec);
+        const loss = adversaryLossOf(spec);
+        const { du, outDy } = fusedObjectiveDims(spec.encoding.tag, target, loss);
+        const k = headCount(spec.kind);
+        // BOTH dock axes, not just the encoding: the predictor width is now
+        // selectable too (PREDICTOR_ARCH_DOCK), and (arch × width) is the set
+        // the dock can actually produce. The widths are read from the dock
+        // list rather than restated, so adding a fifth width extends this gate
+        // instead of silently escaping it.
+        for (const pred of [
+          predictorArchOf(spec),
+          ...PREDICTOR_ARCH_DOCK.map((o) => o.arch),
+        ]) {
+        const advL = layoutAdversary(
+          k,
+          [
+            { inSize: du, outSize: pred.hiddenUnits, activation: "selu" },
+            {
+              inSize: pred.hiddenUnits,
+              outSize: pred.featureDim,
+              activation: "selu",
+            },
+            { inSize: pred.featureDim, outSize: outDy, activation: "linear" },
+          ],
+          { du, dy: outDy }
+        );
+        const opts = {
+          tag: spec.encoding.tag,
+          k,
+          relaxEps: spec.kind.tag === "wta" ? spec.kind.relaxEps : 0,
+          target,
+          loss,
+          // Every shipped piece defaults to wrap borders -> torus observer.
+          observerGeometry: "periodic" as const,
+          fieldLane: "blend" as const,
+          generatorRole: "disagree" as const,
+          pressure: gamePressureOf(spec),
+          batchCap: 512,
+          seed: 1234,
+        };
+        combos++;
+        try {
+          adversaryPassAShader(field, advL, opts as never);
+          adversaryPassBShader(field, advL, opts as never);
+        } catch (e) {
+          refused++;
+          console.log(
+            `      ${piece.name} + ${preset.key} + ` +
+              `${pred.hiddenUnits}/${pred.featureDim}: ${(e as Error).message}`
+          );
+        }
+        }
+      }
+    }
+    ok(
+      advPieces.length > 0 && refused === 0,
+      `every (arch x predictor width) the adversary dock can select emits both ` +
+        `fused passes (${advPieces.length} pieces = ${combos} combos, ${refused} refused)`
     );
   }
 
