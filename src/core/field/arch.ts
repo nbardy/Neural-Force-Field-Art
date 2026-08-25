@@ -198,6 +198,20 @@ export function archDockPresets(kind: ArchDockKind = "aesthetic"): readonly Arch
 /**
  * Apply a dock preset onto a piece's base arch, preserving game-load-bearing
  * knobs (α, semantic, classes) while swapping encoding / widths / activation.
+ *
+ * THE PRESERVE LIST IS EXHAUSTIVE ON PURPOSE, and the omission that matters is
+ * `fourierOctaves`. α is an OUTPUT blend and `semantic`/`classes` are GAME
+ * facts — all three are meaningful whatever encoding the user picks, so they
+ * survive. Octaves is part of the fourier ENCODING, and a dock swap is exactly
+ * "give me this preset's encoding"; carrying a previous piece's octave count
+ * onto a preset the user just chose would make "Dual Fourier" mean different
+ * things depending on where you came from.
+ *
+ * The consequence is real and load-bearing elsewhere: "Adversary · Agree +
+ * Disagree RGB" tunes `fourierOctaves: 3` against the preset default of 4, so
+ * a dock swap would silently reset it. That piece therefore stays on
+ * `createField` rather than joining DUAL_ARCH_DOCK (main.ts). Anything else
+ * carrying a per-piece encoding knob must make the same call.
  */
 export function applyArchDockPreset(base: FieldArch, preset: FieldArch): FieldArch {
   return {

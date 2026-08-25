@@ -205,7 +205,55 @@ export type AdversarySpec =
        * {@link DEFAULT_GAME_PRESSURE} — none, i.e. the shipped behaviour.
        */
       readonly pressure?: GamePressure;
+      /**
+       * The PREDICTOR's own net. Omitted resolves to
+       * {@link PREDICTOR_ARCH_DEFAULT} — 32/16, which is what every shipped
+       * piece and every number in agent_notes/ was measured at.
+       */
+      readonly predictor?: PredictorArch;
     };
+
+/**
+ * THE OTHER MODEL IN A RELATIONAL GAME. `FieldArch` describes the generator;
+ * this describes each of the K discriminator heads, whose shape is
+ * `du → hiddenUnits selu → featureDim selu → dy linear` (du and dy come from
+ * the OBSERVER, not from here — see `fusedObjectiveDims`).
+ *
+ * `AdversaryTrainer` and the tfjs `Adversary` have both accepted these two
+ * numbers since the port, and until now NO caller passed either, so the
+ * predictor was the one model in this project that had never been varied:
+ * every reading in agent_notes/ is at 32/16. That is worth remembering when
+ * reading a result as a property of "the adversary" — it is a property of a
+ * 32/16 adversary.
+ *
+ * The fused codegen is general over depth and width; the ONLY predictor
+ * restriction is activation, because `emitBwdStore` needs the pre-activation
+ * checkpoints SELU keeps and `sin` does not (`validateAdversaryFusion`). Note
+ * that refusal walks the PREDICTOR, so a SIREN *generator* (`dualSiren`) is
+ * fine — an easy misreading of the validator.
+ */
+export interface PredictorArch {
+  readonly hiddenUnits: number;
+  readonly featureDim: number;
+}
+
+/** What every shipped piece ran before the knob existed. Do not "improve". */
+export const PREDICTOR_ARCH_DEFAULT: PredictorArch = {
+  hiddenUnits: 32,
+  featureDim: 16,
+};
+
+/** Widths the dock offers. Labels are what the dock shows. */
+export const PREDICTOR_ARCH_DOCK: readonly {
+  readonly key: string;
+  readonly label: string;
+  readonly arch: PredictorArch;
+}[] = [
+  { key: "tiny", label: "16/8", arch: { hiddenUnits: 16, featureDim: 8 } },
+  { key: "std", label: "32/16", arch: PREDICTOR_ARCH_DEFAULT },
+  { key: "wide", label: "64/32", arch: { hiddenUnits: 64, featureDim: 32 } },
+  { key: "wider", label: "128/64", arch: { hiddenUnits: 128, featureDim: 64 } },
+] as const;
 
 /**
  * GENERATOR-SIDE PRESSURE that keeps the game from paying for a DEAD field.
@@ -675,6 +723,39 @@ export const GALLERY_ANTI_COLLAPSE: GamePressure = {
   tau: ADVERSARY_OBJECTIVE_DEFAULTS.tau,
 };
 
+/**
+ * THE ENCODING IS A DOCK KNOB, NOT A GAME INVARIANT — every piece that points
+ * here declares `fieldArch` + `archEditable` instead of `createField`, and the
+ * dock offers ARCH_DOCK_DUAL (Dual MLP / Fourier / SIREN / HashGrid).
+ *
+ * On a relational-adversary piece what is load-bearing is the OBSERVER (point
+ * / pair / tri / quad), the objective (soft-angle vs raw-vector), K and ε. The
+ * position ENCODING is orthogonal to all four: "Adversary · Pair WTA K=4" and
+ * "Adversary · Pair · HashGrid · Curl" are the SAME game at the SAME α on two
+ * different encodings, and shipped that way on purpose. The Pixel critics and
+ * the two plain Max Chaos / Max Structure fields point here for the same
+ * reason — a dual-head field, nothing about the game riding on the encoding.
+ *
+ * `createField` is the hatch for pieces whose arch genuinely bakes semantics,
+ * and exactly two still need it: "Agree + Disagree RGB" (`fourierOctaves: 3`,
+ * which `applyArchDockPreset` deliberately does NOT carry across a swap — see
+ * the preserve list there) and "RGB Families · HashGrid" (`familyHashgrid` →
+ * the `grid-plane` FamilyRoute, whose `classes`/`planes` the dual dock has no
+ * presets for). Everything else was calling `createFieldFromArch` on a plain
+ * literal — the hatch reached for because it was there, at the cost of the
+ * dock hiding the model section entirely: index.tsx gates the WHOLE section on
+ * `piece.fieldArch`, so those pieces showed no arch info at all, not even the
+ * read-only summary.
+ *
+ * SAFE BY CONSTRUCTION, not by convention: ARCH_DOCK_DUAL is exactly the set
+ * `validateAdversaryFusion` accepts — two-head field, no one-hot family — so
+ * no dock choice can reach a refusal. `adversary_wire_test.ts` proves that by
+ * CODEGEN over every (piece × preset) pair rather than trusting this comment:
+ * §8d for the pixel critics, §8e for the relational adversary. Add a fifth
+ * preset to the dual dock and those gates are what fail.
+ */
+export const DUAL_ARCH_DOCK = "dual" as const;
+
 /** One-line pressure description for the trainer log. */
 function describePressure(p: GamePressure): string {
   switch (p.tag) {
@@ -703,6 +784,18 @@ export function gamePressureOf(
   spec: Extract<AdversarySpec, { readonly tag: "on" }>
 ): GamePressure {
   return spec.pressure ?? DEFAULT_GAME_PRESSURE;
+}
+
+/**
+ * Canonical predictor dims. Both trainers take `hiddenUnits`/`featureDim` as
+ * OPTIONAL with their own `?? 32` / `?? 16` fallbacks, which is two more places
+ * for the fused path and the tfjs oracle to drift apart on a number neither
+ * declares. Resolve once, here, and pass a concrete pair to both.
+ */
+export function predictorArchOf(
+  spec: Extract<AdversarySpec, { readonly tag: "on" }>
+): PredictorArch {
+  return spec.predictor ?? PREDICTOR_ARCH_DEFAULT;
 }
 
 export function adversaryLossOf(
@@ -836,6 +929,27 @@ export function resolveAdversary(
 
   const game = from?.game;
   const gamePart = game ? { game } : {};
+  // `?advHidden` / `?advFeature` — the PREDICTOR's width, the one model in
+  // this project that had no knob. Resolved against the piece's own predictor
+  // so a URL that names neither is byte-identical to the piece.
+  const predictorBase = from ? predictorArchOf(from) : PREDICTOR_ARCH_DEFAULT;
+  const predictor: PredictorArch = {
+    hiddenUnits: intParam(q, "advHidden", predictorBase.hiddenUnits),
+    featureDim: intParam(q, "advFeature", predictorBase.featureDim),
+  };
+  if (
+    !Number.isInteger(predictor.hiddenUnits) ||
+    predictor.hiddenUnits < 1 ||
+    predictor.hiddenUnits > 256 ||
+    !Number.isInteger(predictor.featureDim) ||
+    predictor.featureDim < 1 ||
+    predictor.featureDim > 256
+  ) {
+    throw new Error(
+      `?advHidden/?advFeature must be integers in [1, 256], got ` +
+        `${predictor.hiddenUnits}/${predictor.featureDim}`
+    );
+  }
   const pressure = parseGamePressure(q, from ? gamePressureOf(from) : DEFAULT_GAME_PRESSURE, loss);
   if (mode === "single") {
     return {
@@ -846,6 +960,7 @@ export function resolveAdversary(
       loss,
       weight,
       pressure,
+      predictor,
       ...gamePart,
     };
   }
@@ -858,6 +973,7 @@ export function resolveAdversary(
       loss,
       weight,
       pressure,
+      predictor,
       ...gamePart,
     };
   }
@@ -883,7 +999,17 @@ export function resolveAdversary(
   }
   const kind: AdversaryKind =
     from.kind.tag === "single" ? { tag: "single" } : { tag: "wta", k, relaxEps: eps };
-  return { tag: "on", kind, encoding, target, loss, weight, pressure, ...gamePart };
+  return {
+    tag: "on",
+    kind,
+    encoding,
+    target,
+    loss,
+    weight,
+    pressure,
+    predictor,
+    ...gamePart,
+  };
 }
 
 /**
@@ -1659,6 +1785,10 @@ export function createAdversary(
           ...defaultAdversaryConfig(spec.kind, spec.encoding, observerGeometry),
           target: adversaryTargetOf(spec),
           loss: adversaryLossOf(spec),
+          // Same resolved pair the fused trainer gets — the oracle must be the
+          // same net, or a fused/tfjs disagreement reads as a kernel bug.
+          hiddenUnits: predictorArchOf(spec).hiddenUnits,
+          featureDim: predictorArchOf(spec).featureDim,
           batchTuples,
           // 3e-3 default (vs the module default 1e-3): the discriminator must track a
           // field that is itself moving every frame. A predictor that lags is
@@ -2165,7 +2295,7 @@ export const GALLERY: ArtPieceConfig[] = [
     renderer: "alpha-fade",
     fieldArch: { ...ARCH.dualStd, alpha: 0.7 },
     archEditable: true,
-    archDock: "dual",
+    archDock: DUAL_ARCH_DOCK,
     lookEditable: true,
     fieldLoss: MAX_CHAOS_FIELD_LOSS,
     computeLoss: helmholtzChaosLoss(MAX_CHAOS_FIELD_LOSS),
@@ -2223,7 +2353,11 @@ export const GALLERY: ArtPieceConfig[] = [
     alphaBlend: 0.05,
     renderer: "surprise",
     colormap: "inferno",
-    createField: () => createFieldFromArch({ ...ARCH.dualStd, alpha: 0.7 }),
+    // Encoding is a dock knob here, not a game invariant — the observer,
+    // objective, K and ε are what this piece is. See DUAL_ARCH_DOCK.
+    fieldArch: { ...ARCH.dualStd, alpha: 0.7 },
+    archEditable: true,
+    archDock: DUAL_ARCH_DOCK,
     adversary: {
       tag: "on",
       kind: { tag: "single" },
@@ -2258,7 +2392,11 @@ export const GALLERY: ArtPieceConfig[] = [
     backgroundColor: [8, 2, 22],
     alphaBlend: 0.05,
     renderer: "alpha-fade",
-    createField: () => createFieldFromArch({ ...ARCH.dualStd, alpha: 0.62 }),
+    // Encoding is a dock knob here, not a game invariant — the observer,
+    // objective, K and ε are what this piece is. See DUAL_ARCH_DOCK.
+    fieldArch: { ...ARCH.dualStd, alpha: 0.62 },
+    archEditable: true,
+    archDock: DUAL_ARCH_DOCK,
     adversary: {
       tag: "on",
       kind: { tag: "wta", k: 8, relaxEps: 0.05 },
@@ -2305,18 +2443,12 @@ export const GALLERY: ArtPieceConfig[] = [
     alphaBlend: 0.05,
     renderer: "surprise",
     colormap: "coolwarm",
-    // DECLARATIVE arch, not `createField`: the dock's dual list (Dual MLP /
-    // Fourier / SIREN / HashGrid) is EXACTLY the set the fused relational
-    // adversary accepts — two-head neural field, no one-hot family
-    // (`validateAdversaryFusion`; matrix in docs/PLAN_PIXEL_GENERATOR_ARCH.md
-    // §1). What is load-bearing on this piece is the OBSERVER (pair-rotation-
-    // scale-adjusted) and the soft-angle objective, not the encoding, so the
-    // encoding is a legitimate dock knob here. Default unchanged: startLoop
-    // feeds this same object to `createFieldFromArch`, and
-    // `applyArchDockPreset` preserves α = 0.55 across a swap.
+    // Encoding is a dock knob here, not a game invariant — the observer
+    // (pair-rotation-scale-adjusted) and the soft-angle objective are what
+    // this piece is. See DUAL_ARCH_DOCK.
     fieldArch: { ...ARCH.dualStd, alpha: 0.55 },
     archEditable: true,
-    archDock: "dual",
+    archDock: DUAL_ARCH_DOCK,
     adversary: {
       tag: "on",
       kind: { tag: "wta", k: 4, relaxEps: 0.05 },
@@ -2370,7 +2502,11 @@ export const GALLERY: ArtPieceConfig[] = [
     alphaBlend: 0.05,
     renderer: "surprise",
     colormap: "viridis",
-    createField: () => createFieldFromArch({ ...ARCH.dualStd, alpha: 0.55 }),
+    // Encoding is a dock knob here, not a game invariant — the observer,
+    // objective, K and ε are what this piece is. See DUAL_ARCH_DOCK.
+    fieldArch: { ...ARCH.dualStd, alpha: 0.55 },
+    archEditable: true,
+    archDock: DUAL_ARCH_DOCK,
     adversary: {
       tag: "on",
       kind: { tag: "wta", k: 6, relaxEps: 0.05 },
@@ -2402,7 +2538,11 @@ export const GALLERY: ArtPieceConfig[] = [
     alphaBlend: 0.05,
     renderer: "surprise",
     colormap: "inferno",
-    createField: () => createFieldFromArch({ ...ARCH.dualStd, alpha: 0.55 }),
+    // Encoding is a dock knob here, not a game invariant — the observer,
+    // objective, K and ε are what this piece is. See DUAL_ARCH_DOCK.
+    fieldArch: { ...ARCH.dualStd, alpha: 0.55 },
+    archEditable: true,
+    archDock: DUAL_ARCH_DOCK,
     adversary: {
       tag: "on",
       kind: { tag: "wta", k: 6, relaxEps: 0.05 },
@@ -2464,7 +2604,7 @@ export const GALLERY: ArtPieceConfig[] = [
     // single F at a cell centre — `pixelDiscShader` throws).
     fieldArch: { ...ARCH.dualFourier, alpha: 0.55 },
     archEditable: true,
-    archDock: "dual",
+    archDock: DUAL_ARCH_DOCK,
     pixelDisc: {
       kind: "vec-field",
       weight: 0.04,
@@ -2511,7 +2651,7 @@ export const GALLERY: ArtPieceConfig[] = [
     // single F at a cell centre — `pixelDiscShader` throws).
     fieldArch: { ...ARCH.dualFourier, alpha: 0.55 },
     archEditable: true,
-    archDock: "dual",
+    archDock: DUAL_ARCH_DOCK,
     pixelDisc: {
       kind: "next-frame",
       weight: 0.04,
@@ -2558,7 +2698,7 @@ export const GALLERY: ArtPieceConfig[] = [
     // single F at a cell centre — `pixelDiscShader` throws).
     fieldArch: { ...ARCH.dualFourier, alpha: 0.55 },
     archEditable: true,
-    archDock: "dual",
+    archDock: DUAL_ARCH_DOCK,
     pixelDisc: {
       kind: "real-fake",
       weight: 0.03,
@@ -2605,7 +2745,7 @@ export const GALLERY: ArtPieceConfig[] = [
     // single F at a cell centre — `pixelDiscShader` throws).
     fieldArch: { ...ARCH.dualFourier, alpha: 0.55 },
     archEditable: true,
-    archDock: "dual",
+    archDock: DUAL_ARCH_DOCK,
     pixelDisc: {
       kind: "inpaint",
       weight: 0.04,
@@ -2699,8 +2839,11 @@ export const GALLERY: ArtPieceConfig[] = [
     // preserved more legible structure in the screenshot comparison. It is not
     // an order/chaos axis and the two direct-vector heads have no separate roles.
     renderer: "alpha-fade",
-    createField: () =>
-      createFieldFromArch({ ...ARCH.dualFourier, alpha: 0.45 }),
+    // Encoding is a dock knob here, not a game invariant — the observer,
+    // objective, K and ε are what this piece is. See DUAL_ARCH_DOCK.
+    fieldArch: { ...ARCH.dualFourier, alpha: 0.45 },
+    archEditable: true,
+    archDock: DUAL_ARCH_DOCK,
     fieldLoss: MAX_CHAOS_FIELD_LOSS,
     adversary: {
       tag: "on",
@@ -2776,8 +2919,11 @@ export const GALLERY: ArtPieceConfig[] = [
     // Curl: each particle draws its curved per-frame trajectory (2nd-order,
     // curlAmp=1) rather than a dot, so at 24 px/frame the cloud reads as ink.
     stroke: "curl",
-    createField: () =>
-      createFieldFromArch({ ...ARCH.dualHashgrid, alpha: 0.55 }),
+    // Encoding is a dock knob here, not a game invariant — the observer,
+    // objective, K and ε are what this piece is. See DUAL_ARCH_DOCK.
+    fieldArch: { ...ARCH.dualHashgrid, alpha: 0.55 },
+    archEditable: true,
+    archDock: DUAL_ARCH_DOCK,
     adversary: {
       tag: "on",
       kind: { tag: "wta", k: 4, relaxEps: 0.05 },
@@ -2862,7 +3008,7 @@ export const GALLERY: ArtPieceConfig[] = [
     stroke: "curl",
     fieldArch: { ...ARCH.dualStd, alpha: 0.7 },
     archEditable: true,
-    archDock: "dual",
+    archDock: DUAL_ARCH_DOCK,
     lookEditable: true,
     fieldLoss: MAX_STRUCTURE_FIELD_LOSS,
     computeLoss: helmholtzChaosLoss(MAX_STRUCTURE_FIELD_LOSS),
@@ -3251,6 +3397,8 @@ export interface StartLoopOptions {
     relaxEps?: number;
     /** Swap declarative field architecture (aesthetic / archEditable pieces). */
     fieldArch?: FieldArch;
+    /** Swap the PREDICTOR's width. Compiled, like fieldArch — restarts. */
+    predictor?: PredictorArch;
   };
 }
 
@@ -3285,6 +3433,7 @@ export function startLoop(
           encoding: options.overrides.adversaryEncoding ?? resolvedAdv.encoding,
           target: options.overrides.adversaryTarget ?? adversaryTargetOf(resolvedAdv),
           loss: options.overrides.adversaryLoss ?? adversaryLossOf(resolvedAdv),
+          predictor: options.overrides.predictor ?? predictorArchOf(resolvedAdv),
           kind:
             resolvedAdv.kind.tag === "wta"
               ? {
@@ -4498,6 +4647,10 @@ export function startLoop(
           pressure: gamePressureOf(advSpec),
           k: headCount(advSpec.kind),
           relaxEps: advSpec.kind.tag === "wta" ? advSpec.kind.relaxEps : 0,
+          // Resolved, never left to the trainer's own `?? 32` / `?? 16`: the
+          // tfjs oracle has a second copy of those fallbacks.
+          hiddenUnits: predictorArchOf(advSpec).hiddenUnits,
+          featureDim: predictorArchOf(advSpec).featureDim,
           batchCap: 1024,
           fieldWeightsBuffer: advect.weightsBuffer,
           particleCount: advect.count,
@@ -4537,6 +4690,8 @@ export function startLoop(
                 `two independent predictors, one summed field update`
             : `[adversary] FUSED ${advSpec.kind.tag} encoding=${advSpec.encoding.tag} ` +
                 `k=${headCount(advSpec.kind)} weight=${advRt.weight} ` +
+                `predictor=${predictorArchOf(advSpec).hiddenUnits}/` +
+                `${predictorArchOf(advSpec).featureDim} ` +
                 `pressure=${describePressure(gamePressureOf(advSpec))} — disc train + ` +
                 `generator reward in-frame, tfjs idle`
         );

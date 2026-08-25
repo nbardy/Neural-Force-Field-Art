@@ -41,6 +41,9 @@ import {
   type InkLook,
   type LoopHandle,
   type PixelCriticSpec,
+  predictorArchOf,
+  PREDICTOR_ARCH_DEFAULT,
+  PREDICTOR_ARCH_DOCK,
 } from "./main";
 import type { FieldHealth } from "./render/webgpu/field_probe";
 import type { FamilyPayoff } from "./render/webgpu/adversary_train";
@@ -118,6 +121,14 @@ interface RuntimeConfig {
   relaxEps: number;
   /** Dock override for archEditable pieces; null = piece default fieldArch. */
   archPreset: ArchPresetKey | null;
+  /**
+   * Dock override for the PREDICTOR's width; null = the piece's own (which is
+   * PREDICTOR_ARCH_DEFAULT for every shipped piece). A KEY, not a
+   * `PredictorArch`, for the same reason archPreset is: the persisted blob then
+   * validates against a closed set instead of two free integers, and a stored
+   * width cannot outlive a change to what the dock offers.
+   */
+  predictorPreset: string | null;
 }
 
 /** Live dials + compile-time dock knobs persisted across refresh. */
@@ -281,6 +292,11 @@ function defaultsForPiece(piece: number): RuntimeConfig {
     k: adv.tag === "on" && adv.kind.tag === "wta" ? adv.kind.k : 1,
     relaxEps: adv.tag === "on" && adv.kind.tag === "wta" ? adv.kind.relaxEps : 0,
     archPreset: resolveArchPreset(new URLSearchParams(window.location.search)),
+    // Not URL-resolved: `?advHidden`/`?advFeature` are free integers that
+    // resolveAdversary already applied to `adv` above, and there is no key for
+    // an arbitrary pair. null means "whatever the spec says", which is exactly
+    // right — the dock shows the resolved width either way.
+    predictorPreset: null,
   };
 }
 
@@ -312,6 +328,7 @@ function runtimeForPieceSwitch(
     // a URL-declared `?arch=` is a global knob and re-resolves here, the same
     // way ?advM/?advK do through nextDefaults. See resolveArchPreset.
     archPreset: nextDefaults.archPreset,
+    predictorPreset: nextDefaults.predictorPreset,
   };
 }
 
@@ -473,6 +490,14 @@ function parsePersistedDock(
       : isArchPresetKey(runtime.archPreset)
         ? runtime.archPreset
         : null;
+  // Unknown key -> null (the piece's own width), never a throw: a blob written
+  // by a build whose dock offered a different set must degrade to the default,
+  // the same way an unknown archPreset does.
+  const predictorPreset =
+    typeof runtime.predictorPreset === "string" &&
+    PREDICTOR_ARCH_DOCK.some((o) => o.key === runtime.predictorPreset)
+      ? runtime.predictorPreset
+      : null;
 
   const particles = Number(data.particles);
   const samples = Number(data.samples);
@@ -553,6 +578,7 @@ function parsePersistedDock(
       k: recipe.k,
       relaxEps: recipe.relaxEps,
       archPreset,
+      predictorPreset,
     },
     particles: clamp(Math.round(particles), PMIN, PMAX),
     // Restored dock values are bounded by the architectural ceiling only; the
@@ -1460,6 +1486,20 @@ function App(): ReactElement {
     }
     return piece.fieldArch;
   })();
+  /**
+   * The predictor the running loop is actually using. `null` means "no dock
+   * override" — startLoop then keeps the spec's own, which is what
+   * `piecePredictor` displays. Reported either way: the dock's job here is to
+   * stop the predictor being the one model you cannot see.
+   */
+  const pieceAdv = piece.adversary?.tag === "on" ? piece.adversary : null;
+  const piecePredictor = pieceAdv
+    ? predictorArchOf(pieceAdv)
+    : PREDICTOR_ARCH_DEFAULT;
+  const activePredictor =
+    PREDICTOR_ARCH_DOCK.find((o) => o.key === runtime.predictorPreset)?.arch ??
+    null;
+  const shownPredictor = activePredictor ?? piecePredictor;
   const showHeadBlend =
     (activeArch?.heads ?? piece.fieldArch?.heads ?? (piece.createField ? 2 : 1)) ===
     2;
@@ -1610,6 +1650,7 @@ function App(): ReactElement {
           k: runtime.k,
           relaxEps: runtime.relaxEps,
           fieldArch: activeArch ?? undefined,
+          predictor: activePredictor ?? undefined,
         },
       }
     );
@@ -1993,6 +2034,42 @@ function App(): ReactElement {
               )}
               {piece.archEditable && (
                 <p className="tui-note restart-note">arch is compiled · changing it restarts</p>
+              )}
+              {/* THE SECOND MODEL. A relational piece trains two nets and the
+                  dock named only one, so "what model is this piece?" had no
+                  answer for the predictor — which is also the net whose width
+                  had never been varied (every reading in agent_notes/ is
+                  32/16). Shown for every adversary piece, editable on all of
+                  them: the fused codegen is general over these dims and only
+                  refuses `sin`, which no predictor uses. */}
+              {adversary && (
+                <>
+                  <div className="tui-note" data-testid="model-predictor-summary">
+                    {`predictor · ${runtime.k} × [${shownPredictor.hiddenUnits}, ` +
+                      `${shownPredictor.featureDim}] · selu`}
+                  </div>
+                  <Segmented
+                    label="pred"
+                    value={runtime.predictorPreset ?? "default"}
+                    choices={[
+                      { value: "default", label: "default" },
+                      ...PREDICTOR_ARCH_DOCK.map((o) => ({
+                        value: o.key,
+                        label: o.label,
+                      })),
+                    ]}
+                    onChange={(value) =>
+                      setRuntime((r) => ({
+                        ...r,
+                        predictorPreset: value === "default" ? null : value,
+                      }))
+                    }
+                    testid="model-predictor-presets"
+                  />
+                  <p className="tui-note restart-note">
+                    predictor is compiled · changing it restarts
+                  </p>
+                </>
               )}
             </ControlSection>
           )}
