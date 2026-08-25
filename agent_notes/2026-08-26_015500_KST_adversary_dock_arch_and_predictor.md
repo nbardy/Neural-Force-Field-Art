@@ -120,6 +120,29 @@ keep. **That refusal walks the PREDICTOR, not the field**, which is why
   0 refused.
 - Both new gates proven to FAIL on an injected bad preset.
 - 9 of the 10 pure-CPU suites pass.
+- **LIVE, real adapter** — `node tools/dock_swap_probe.mjs` (new). Drives the
+  real dock on "Adversary · Pair WTA K=4", swaps to Dual HashGrid + predictor
+  64/32, and reads `__nffHealth` before and after. VERDICT OK:
+
+  | | field arch | predictor | grid R₁ | grid R₂ | adv payoff | fps |
+  |---|---|---|---|---|---|---|
+  | before | standard [32×32] · 2 heads | 4 × [32, 16] | 0.038 | 0.0018 | 1.352 | 60.0 |
+  | after | hashgrid [32×32] · 2 heads | 4 × [64, 32] | 0.0038 | 0.000023 | 1.375 | 60.0 |
+
+  Both nets genuinely recompiled — the advect log goes 2440 → 6664 weight
+  floats (f16/unrolled → f32/not), and the adversary log goes `predictor=32/16`
+  → `predictor=64/32`. Both configurations train, both isotropic (R₁ **and**
+  R₂ — R₁ alone is escapable), both at 60 fps.
+
+  The codegen gate proves every dock choice EMITS; this proves one of them
+  RUNS. Note the browser-pane route does NOT work for this: it hands the page a
+  0×0 canvas, so the swapchain fails and `__nffHealth.field` stays `null` — a
+  false negative that looks exactly like a dead field.
+
+  `.claude/launch.json` added for `preview_start` — LOCAL ONLY, `.claude` is
+  gitignored, so recreate it if you need it. It invokes
+  `node_modules/.bin/parcel` directly because **`yarn` is not on PATH on this
+  box**, so the documented `yarn start` does not run here.
 
 ## NOT verified / open
 
@@ -130,7 +153,6 @@ keep. **That refusal walks the PREDICTOR, not the field**, which is why
   unit direction`, `adjusted public predictions are direction-normalized
   (0.301868, 0.396196)`. Someone should own this; it is the strict invariant
   suite for the exact observer the Pair pieces use.
-- **No live browser check of the dock.** Deferred deliberately, see below.
 - The 21 GPU suites were not run.
 - The two `createField` holdouts still show no model section at all — the
   `piece.fieldArch` gate in `index.tsx:1898` hides the read-only summary too.
