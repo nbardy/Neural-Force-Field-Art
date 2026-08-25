@@ -62,6 +62,96 @@ node tools/smoke.mjs https://nbardy.github.io/Neural-Force-Field-Art/
 
 Output: `SCREENSHOT <path>`, `PROBE {webgpu,adapter,hud,warning}`, then the full console log. **Caveat:** whether a *software* WebGPU adapter is available depends on the box — some headless Chromium builds report `adapter: null` (no SwiftShader-WebGPU), in which case the app correctly shows the WebGPU warning and only the non-render paths are verifiable. On a machine with a real (or SwiftShader) WebGPU adapter it renders and the screenshot shows particles.
 
+**On an Apple box `smoke.mjs` does not work and is not the tool you want.** It
+forces a SOFTWARE fallback adapter that does not exist there, so the page
+correctly shows the "needs WebGPU" notice and nothing renders — a run that
+looks like a regression and is not. Use the REAL-adapter flags that
+`tools/health_audit.mjs`, `tools/soak_adversary.mjs` and
+`tools/pressure_live_probe.mjs` already share (`--enable-unsafe-webgpu
+--use-angle=metal --ignore-gpu-blocklist`), or just run the audit below — it
+drives the gallery, records the metrics, and screenshots with `HEALTH_SHOTS=1`.
+
+### Tests: `bun tools/<name>_test.ts`
+
+There is no aggregate runner, no `yarn test`, no watch mode — **31 `*_test.ts`
+suites in `tools/`, run one file at a time.** Each prints `ok`/`FAIL` lines and
+exits nonzero on failure.
+
+```bash
+bun tools/field_probe_test.ts
+```
+
+**21 of the 31 open a real WebGPU device and must run SEQUENTIALLY**, with
+nothing else on the GPU — parallel runs flake for reasons that have nothing to
+do with your change. Tell them apart mechanically rather than from a list here
+(a list goes stale):
+
+```bash
+rg -l bun-webgpu tools/          # GPU: serialize these
+```
+
+The other 10 are pure CPU (`ad_test`, `ad_jvp_test`, `ad_train_test`,
+`adversary_test`, `adversary_objectives_test`, `adversary_strict_test`,
+`adversary_wire_test`, `cover_oracle_test`, `drive_controls_test`,
+`url_guard_test`) and are safe to run together.
+
+Suites that gate a specific invariant are named at the invariant: see
+`tools/family_grid_test.ts` under Particle families, `tools/field_probe_test.ts`
+under Health metrics, and the probes under Adversary numerical stability.
+
+### Health metrics: `window.__nffHealth`
+
+Every piece publishes a structured **~1 Hz snapshot of EXACT floats** — never
+formatted text. Schema, and what each number detects, is in `src/health.ts`;
+the measurement is `src/render/webgpu/field_probe.ts`, which builds its own
+encoder and binds the weights READ-ONLY, so it cannot perturb the artwork
+(`field_probe_test.ts` §4 enforces exactly that, including a bit-identical
+weight check across 5 samples).
+
+Three blocks: `field` (present on **every** piece), `adv` (`null` unless the
+piece has an adversary), `pixel` (`null` unless a pixel critic runs).
+
+Read the thresholds from `src/health.ts` rather than restating them. Three
+contracts that are easy to get wrong:
+
+- **`null` always means UNMEASURED, never 0.** An unmeasured R₁ reported as 0
+  reads as "perfectly isotropic" — the most flattering lie this instrument
+  could tell about a collapsed field.
+- **Direction collapse is `r1`, and `field.r1` ≠ `adv.r1`.** `field.r1` is the
+  32² GRID measurement and exists on every piece; `adv.r1` is the training
+  BATCH twin and is `null` unless anti-collapse pressure is compiled. Same
+  statistic, same τ = 0.05, two sample populations — never substitute one for
+  the other, and note that the gap between them is itself a reading (the cloud
+  has bunched into part of the domain). Measured: pressure ON → grid R₁ 0.003;
+  the same piece with `?advPolar=0&advNematic=0` → **0.52**, DC/AC **72**.
+- **Never read `r1` without `r2`.** R₁ alone is escapable: a ±F₀
+  counter-streaming field scores R₁ ≈ 0 and looks exactly as laminar. Measured
+  R₂ = 0.81 on "Neural Field · Max Structure" while its R₁ sat at 0.10.
+
+**Never parse the HUD to get these.** Every previous headless gate regexed
+numbers out of the on-screen text, and the 2026-08-17 soak flake
+(`agent_notes/2026-08-17_soak_flake_attribution.md`) was the bill: a formatter
+change or a `toExponential(2)` rounding across a threshold is indistinguishable
+from the artwork changing.
+
+**Recording them** — headless, real adapter, one typed verdict per piece:
+
+```bash
+node tools/health_audit.mjs --self-test
+node tools/health_audit.mjs hashgrid,struct http://localhost:1234/index.html 60 2
+```
+
+`--self-test` is pure (no GPU, no server) and gates the verdict logic itself. A
+real run writes a per-piece time series plus `summary.json` to
+`output/health-audit/<iso-timestamp>/` (gitignored) and **exits with the number
+of unhealthy pieces**. Piece keys are the `PIECES` map at the top of that file;
+`all` and `adversary` are group aliases; `HEALTH_SHOTS=1` adds screenshots.
+Every gate threshold is overridable by env (`HEALTH_R1_MAX`, `HEALTH_AC_DEAD`,
+…) and every default is a measured number from `agent_notes/`, not a guess.
+
+Design + the readings above:
+`agent_notes/2026-08-19_032513_KST_grid_direction_order.md`.
+
 ### Build
 
 - `yarn build` = `parcel build --no-scope-hoist`. **`--no-scope-hoist` is load-bearing:** default scope-hoisting crashes tfjs at runtime (`ReferenceError: $<hash>$exports is not defined`, blank page).
@@ -83,7 +173,9 @@ It also waits for the asynchronous Pages build and asserts the live `index.html`
 
 ### Caveats
 
-- No linter or test runner is configured.
+- No linter, and no aggregate test runner — but there ARE 31 suites, run
+  per-file with `bun`. See **Tests** above; do not conclude from this bullet
+  that a change ships unverified.
 - Both `yarn.lock` and `package-lock.json` may exist; the deploy path uses `npm` + `git push` to the `gh-pages` branch (site: https://nbardy.github.io/Neural-Force-Field-Art/).
 - `tools/smoke.mjs` needs `puppeteer` (a devDependency; downloads a Chromium on install).
 

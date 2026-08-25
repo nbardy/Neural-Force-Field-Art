@@ -81,6 +81,28 @@ net — not the field. A SIREN *generator* is fine for both critics, carried by
 `train_wgsl`'s pre-activation checkpoints (`train_wgsl.ts:265-277`), which is
 why `dualSiren` passes. A SIREN *adversary head* is not.
 
+
+### 1a. The dock can now reach all five (2026-08-25)
+
+The four Pixel pieces used to bake their generator imperatively —
+`createField: () => createFieldFromArch({ ...ARCH.dualFourier, alpha: 0.55 })`
+— which is exactly what `fieldArch` compiles to, but the model dock gates on
+`piece.fieldArch`, so the section was invisible and the support matrix above was
+unreachable from the UI. They now declare `fieldArch` + `archEditable: true` +
+`archDock: "dual"`, and `ARCH_DOCK_DUAL` is precisely the four two-head presets
+the matrix marks **yes**.
+
+That makes the matrix load-bearing at RUNTIME rather than at authoring time, so
+it is now gated: `tools/adversary_wire_test.ts` §8d builds a `FieldLayout` for
+every (pixel piece × dock preset) pair, runs `classifyPixelDiscFusion`, and
+EMITS `pixelDiscShader` — the emission is the half that catches the
+`(kind, field)` refusals living past the field-only gate, e.g. vec-field on a
+family-planed field. 16 combos, 0 refused. Adding a fifth `ARCH_DOCK_DUAL`
+preset the critic refuses now fails that test instead of failing at restart on a
+`ZERO_FIELD_LOSS` piece, where a refused arch means no gradient at all.
+
+Handoff: `agent_notes/2026-08-25_pixel_piece_config_sharing.md`.
+
 ---
 
 ## 2. Refusal 1: hashgrid encoding — was incidental (**verified** 2026-08-22)
