@@ -139,6 +139,12 @@ contracts that are easy to get wrong:
 - **Never read `r1` without `r2`.** R₁ alone is escapable: a ±F₀
   counter-streaming field scores R₁ ≈ 0 and looks exactly as laminar. Measured
   R₂ = 0.81 on "Neural Field · Max Structure" while its R₁ sat at 0.10.
+  **This is now GATED**, as `nematic-collapse` at `HEALTH_R2_MAX` (default 0.5),
+  ranked below both laminar arms because polar order implies nematic order. It
+  was prose here and nothing else for weeks, and the piece named in the sentence
+  above was scoring PASS the whole time — re-measured 2026-08-25 at R₁ 0.034 /
+  **R₂ 0.927**. A failure mode described in this file and not gated in
+  `classify()` reads, to everyone downstream, as a check that is running.
 
 **Never parse the HUD to get these.** Every previous headless gate regexed
 numbers out of the on-screen text, and the 2026-08-17 soak flake
@@ -163,7 +169,15 @@ THROWS rather than falling back to the piece default. It is honoured only on
 real run writes a per-piece time series plus `summary.json` to
 `output/health-audit/<iso-timestamp>/` (gitignored) and **exits with the number
 of unhealthy pieces**. Piece keys are the `PIECES` map at the top of that file;
-`all` and `adversary` are group aliases; `HEALTH_SHOTS=1` adds screenshots.
+`all`, `adversary` and `pixel` are group aliases; `HEALTH_SHOTS=1` adds
+screenshots. **`all` means all 16 gallery pieces.** Until 2026-08-25 it covered
+10 and said so in its own comment, so every green `all` run was a claim about
+62% of the gallery — and both of the worst-collapsed fields were in the
+uncovered 38%. Keep `PIECES` in sync with `GALLERY` in `src/main.ts`.
+
+Importing this file is side-effect free (`INVOKED_DIRECTLY` guard) — that is
+what lets `tools/health_sweep.ts` reuse `runPiece`/`aggregate`/`classify`.
+Before the guard, `import()` launched a full GPU audit.
 Every gate threshold is overridable by env (`HEALTH_R1_MAX`, `HEALTH_AC_DEAD`,
 …) and every default is a measured number from `agent_notes/`, not a guess.
 
