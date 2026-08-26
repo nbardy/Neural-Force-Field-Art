@@ -32,6 +32,38 @@ Artifacts: `output/health-audit/2026-08-25T16-08-34-194Z/` (gitignored).
 | Pixel · VecField | FROZEN .512 | **LAMINAR** | **0.782** | 0.556 | 0.194 | 0.616 | 41.7 |
 | Max Structure | healthy | **NEMATIC** (was PASS) | 0.034 | **0.927** | 0 | 0.647 | 50.0 |
 
+## The six pieces that had NEVER been audited
+
+Second run, `output/health-audit/2026-08-25T16-31-01-871Z/`, same build/server:
+
+| piece | verdict | grid R1 | grid R2 | sat | ac | fps |
+|---|---|---|---|---|---|---|
+| Adversary · RGB Families · HashGrid | healthy | 0.065 | 0.056 | 0 | 0.345 | 58.9 |
+| Pixel · NextFrame | **FROZEN** | **0.821** | 0.604 | **0.528** | 0.600 | 59.8 |
+| Pixel · RealFake | healthy | 0.160 | 0.138 | 0.262 | 1.033 | 58.3 |
+| Pixel · Inpaint | healthy | 0.048 | 0.065 | 0.177 | 1.104 | 59.8 |
+| Neural Field · Max Chaos | healthy | 0.116 | 0.057 | 0.046 | 0.896 | 59.9 |
+| Neural Field · Species | healthy | 0.317 | 0.074 | 0.017 | 0.771 | 59.3 |
+
+**Gallery total: 16 audited, 6 unhealthy.**
+
+NextFrame is frozen AND would fail the laminar arm on its own (R1 0.821); the
+saturation verdict ranks above it. So the pixel critics split cleanly:
+
+| critic | what it predicts | grid R1 |
+|---|---|---|
+| VecField | the force field itself | **0.782** |
+| NextFrame | the next frame of the motion | **0.821** |
+| RealFake | is this patch real | 0.160 |
+| Inpaint | fill a masked hole | 0.048 |
+
+The two collapsed critics are exactly the two whose target IS the field/its
+motion; the two whose target is an image property are fine. That is the same
+shape as the predictor-scale-blindness result — a critic asked to predict the
+field can be beaten by making the field one global direction — but this is a
+CORRELATION over four pieces, not a measurement of mechanism. Nobody has run
+the controls (tau sweep, or `rmsP` once it exists) on a pixel critic.
+
 ## Finding 1 — the R2 escape route was documented but never gated (FIXED)
 
 `CLAUDE.md` has said the whole time: *"Never read `r1` without `r2`. R₁ alone is
