@@ -87,13 +87,25 @@ do with your change. Tell them apart mechanically rather than from a list here
 (a list goes stale):
 
 ```bash
-rg -l bun-webgpu tools/          # GPU: serialize these
+rg -l bun-webgpu tools/*_test.ts   # GPU: serialize these
 ```
+
+Glob the test files, not the directory: `tools/` also holds probes and a
+`tools/splat/` subtree that open a device without being suites.
 
 The other 10 are pure CPU (`ad_test`, `ad_jvp_test`, `ad_train_test`,
 `adversary_test`, `adversary_objectives_test`, `adversary_strict_test`,
 `adversary_wire_test`, `cover_oracle_test`, `drive_controls_test`,
 `url_guard_test`) and are safe to run together.
+
+**`adversary_strict_test` is RED and has been for a while** — bisected to
+eb211d1 / 7f4dba0 / 7a8d12d, so it predates any of the dock work above. It
+fails the adjusted-observer invariants (`active target value is exactly
+invariant under positive signal scaling`, `active target is an exact unit
+direction`, `public predictions are direction-normalized`). That is the strict
+suite for the observer the Pair pieces use, so treat a red run as EXPECTED
+noise for now and diff against these three names before blaming your change —
+but it is unowned, and it should not stay that way.
 
 Suites that gate a specific invariant are named at the invariant: see
 `tools/family_grid_test.ts` under Particle families, `tools/field_probe_test.ts`
@@ -141,6 +153,12 @@ node tools/health_audit.mjs --self-test
 node tools/health_audit.mjs hashgrid,struct http://localhost:1234/index.html 60 2
 ```
 
+`?arch=<preset>` selects the field architecture (keys in `src/core/field/arch.ts`
+`ARCH`). Like `?advM`/`?advK` it is GLOBAL — it survives a gallery switch, which
+is what lets a sweep vary architecture across pieces — and an unknown value
+THROWS rather than falling back to the piece default. It is honoured only on
+`archEditable` pieces; the snapshot's measured `arch` block is how you tell.
+
 `--self-test` is pure (no GPU, no server) and gates the verdict logic itself. A
 real run writes a per-piece time series plus `summary.json` to
 `output/health-audit/<iso-timestamp>/` (gitignored) and **exits with the number
@@ -151,6 +169,50 @@ Every gate threshold is overridable by env (`HEALTH_R1_MAX`, `HEALTH_AC_DEAD`,
 
 Design + the readings above:
 `agent_notes/2026-08-19_032513_KST_grid_direction_order.md`.
+
+#### Sweeps: the same instrument across a config MATRIX
+
+`health_audit.mjs` measures ONE config — the right unit for "is the shipped
+gallery healthy", the wrong one for "which objective/architecture actually
+produces structure". That second question is `tools/health_sweep.ts` (driver)
+plus `tools/health_report.ts` (reducer). They are separate because a matrix is
+hours of serialized GPU and the reduction is milliseconds: the report can be
+re-cut against a new gate without re-measuring anything.
+
+```bash
+bun tools/health_sweep.ts --example > sweep.json
+bun tools/health_sweep.ts sweep.json http://localhost:1234/index.html
+bun tools/health_report.ts output/health-sweep/<spec-name>
+```
+
+The spec is `{name, durationSec, sampleSec, axes}`. `axes.piece` takes the
+audit's short piece keys; **every other axis name is a URL knob passed
+verbatim** (`arch`, `advLoss`, `advM`, `advK`, `advPolar`, `advNematic`,
+`advWeight`, `gLR`, `dLR`, …), so a knob added to the app is sweepable the day
+it lands. Both files have `--self-test` (pure, no GPU, no server).
+
+Three properties worth knowing before you trust a report:
+
+- **It resumes.** The run directory is keyed by `spec.name`, not a timestamp,
+  and a cell whose result file *parses* is skipped. Re-invoking the same spec
+  continues an interrupted sweep; a truncated file is re-run rather than
+  counted. Rename the spec to force a fresh run.
+- **It proves the axes actually varied.** `?arch=` is honoured only on
+  `archEditable` pieces and adversary knobs are inert without an adversary, so
+  a sweep that trusted its own URLs would run one network N times and conclude
+  "architecture makes no difference". Every cell records the MEASURED
+  `ArchHealth` fingerprint (`src/health.ts`) and the report puts a **collision
+  banner above every chart** when an axis produced one compiled network.
+  Verified live: `arch=dualStd` → `raw/w2440`, `arch=dualFourier` →
+  `fourier/w3464`.
+- **Unmeasured is never plotted as 0.** Nonfinite samples break the trace into
+  separate polylines, so a gap looks like a gap instead of a line drawn through
+  values nobody measured.
+
+Wall clock is the real constraint: the audit is serialized on purpose (parallel
+runs measure GPU scheduler contention, not the artwork), so 4 objectives x 3
+archs x 5 pieces x 300 s is over five hours. The driver prints the estimate
+before it opens the browser.
 
 ### Build
 
@@ -178,6 +240,16 @@ It also waits for the asynchronous Pages build and asserts the live `index.html`
   that a change ships unverified.
 - Both `yarn.lock` and `package-lock.json` may exist; the deploy path uses `npm` + `git push` to the `gh-pages` branch (site: https://nbardy.github.io/Neural-Force-Field-Art/).
 - `tools/smoke.mjs` needs `puppeteer` (a devDependency; downloads a Chromium on install).
+- **`yarn` may not be on PATH** even though every command here is spelled
+  `yarn …`. `node_modules/.bin/parcel src/index.html --port 1234` is the direct
+  equivalent of `yarn start`, and is what a `.claude/launch.json` should invoke
+  (that file is gitignored, so recreate it per-machine).
+- **The in-app browser pane cannot verify this app.** It hands the page a 0×0
+  canvas, so the swapchain fails, the render path never runs, and
+  `__nffHealth.field` stays `null` — indistinguishable from a dead field, and
+  a false negative you will chase. Use a real headless Chrome with the
+  real-adapter flags (`tools/health_audit.mjs`, `tools/dock_swap_probe.mjs`,
+  `tools/soak_adversary.mjs`) instead.
 
 #### Particle families (RGB Families piece)
 
@@ -211,6 +283,99 @@ state `off`/`unmeasured` otherwise rather than inventing a bucketing rule.
 
 Design + measurements:
 `agent_notes/2026-08-19_family_conditioned_hashgrid_adversary.md`.
+
+## Model selection: the TWO nets a relational game trains
+
+"What model is this piece?" has two answers, and conflating them is the most
+common way to misread a result.
+
+- **Generator** — the neural force field itself, declared as a `FieldArch`
+  (`src/core/field/arch.ts`): encoding (raw / fourier / hashgrid) × activation
+  (selu / sin) × widths × heads (1 or 2) × α blend. Thirteen `ARCH` presets.
+- **Predictor / discriminator** — K heads, each
+  `du → hiddenUnits selu → featureDim selu → dy linear`. `du` and `dy` come from
+  the OBSERVER (`fusedObjectiveDims`), not from the preset.
+
+### Both are dock knobs, and both are compiled
+
+A piece opts in with declarative `fieldArch` + `archEditable` + `archDock`
+rather than `createField`; see `DUAL_ARCH_DOCK` in `main.ts` for the single
+canonical explanation and the current membership. `?arch=<preset>` /
+`?advHidden=<n>` / `?advFeature=<n>` are the URL equivalents, all GLOBAL (they
+survive a gallery switch) and all THROWING on an out-of-range value rather than
+falling back to the piece default.
+
+`createField` is the hatch for pieces whose arch genuinely bakes semantics, and
+exactly two need it: **Agree + Disagree RGB** (`fourierOctaves: 3`, which
+`applyArchDockPreset` deliberately does not carry across a swap) and **RGB
+Families · HashGrid** (`grid-plane` FamilyRoute — no dual preset carries
+`classes`/`planes`). `applyArchDockPreset`'s preserve list is α / `semantic` /
+`classes` and the reasoning for what is NOT on it is documented there.
+
+**Cost of the hatch, when it is used where it is not needed:** `index.tsx`
+gates the WHOLE model section on `piece.fieldArch`, so a `createField` piece
+shows no arch info at all — not even the read-only summary. Those two pieces
+still cannot tell you what they are running.
+
+### EVERY prior adversary reading is a 32/16 reading
+
+`AdversaryTrainer` and the tfjs `Adversary` have accepted
+`hiddenUnits`/`featureDim` since the port and **no caller passed either until
+2026-08-26**. The predictor is the one model in this project that had never
+been varied. Win EMAs, payoff curves, R₁/R₂, the pole-exploit refutation, the
+NaN probes — all of it is a property of a **32/16 adversary**, not of "the
+adversary". Resolve the pair through `predictorArchOf` and pass it explicitly;
+both trainers still carry their own `?? 32` / `?? 16`, which is two places for
+the fused path and its own oracle to drift on a number neither declares.
+
+The only predictor restriction in the fused codegen is activation: SELU, not
+`sin`, because `emitBwdStore` needs pre-activation checkpoints `sin` does not
+keep. **That refusal walks the PREDICTOR, not the field** — which is why
+`dualSiren` (a SIREN *generator*) is accepted. Misreading
+`validateAdversaryFusion` as "SIREN unsupported" is easy and wrong.
+
+### Gating a dock that can recompile the artwork
+
+`ARCH_DOCK_DUAL` happening to equal the set `validateAdversaryFusion` accepts
+is a coincidence of two files. `adversary_wire_test.ts` makes it load-bearing
+by CODEGEN over every combination the dock can produce — §8d for the pixel
+critics, §8e for the relational adversary (7 pieces × 4 arch presets × 5
+predictor widths = 140, ~12 s, pure CPU). Emitting the shaders is the gate, not
+just building the layout: the refusals that bite live in the emitters.
+
+> **Both gates must honour `arch.heads`.** §8d originally hardcoded a two-head
+> `layoutField`, so a single-head preset added to the dual dock produced a
+> helmholtz layout in the test and a `vector` layout in production — the gate
+> stayed GREEN while the dock offered a field the critic refuses. It could not
+> have caught the thing it exists to catch. Found 2026-08-26 by injecting
+> `ARCH.siren` into `ARCH_DOCK_DUAL`; §8e failed and §8d did not.
+>
+> **That injection is how you verify either gate still works.** A codegen gate
+> that cannot be made to fail is decoration.
+
+### Proving a swap RUNS, not just compiles
+
+```bash
+node_modules/.bin/parcel src/index.html --port 1234   # separate shell
+node tools/dock_swap_probe.mjs [url] [piece] [settleMs]
+```
+
+Drives the real dock, swaps arch + predictor mid-flight, and reads
+`window.__nffHealth` (exact floats, never the HUD) on both sides. Measured on
+"Adversary · Pair WTA K=4":
+
+| | field arch | predictor | grid R₁ | grid R₂ | fps |
+|---|---|---|---|---|---|
+| before | standard [32×32] · 2 heads | 4 × [32, 16] | 0.038 | 0.0018 | 60.0 |
+| after | hashgrid [32×32] · 2 heads | 4 × [64, 32] | 0.0038 | 0.000023 | 60.0 |
+
+Both nets genuinely recompile — the advect log goes 2440 → 6664 weight floats
+(f16/unrolled → f32/not) and the adversary log goes `predictor=32/16` →
+`predictor=64/32`. Read R₁ **with** R₂, per Health metrics above.
+
+Design + measurements:
+`agent_notes/2026-08-26_015500_KST_adversary_dock_arch_and_predictor.md` and
+`agent_notes/2026-08-25_122500_KST_pair_wta_arch_dock.md`.
 
 ## Adversary numerical stability
 

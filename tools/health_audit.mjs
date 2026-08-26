@@ -525,7 +525,7 @@ export function decodeSnapshot(encoded) {
  * REAL adapter flags. `--use-angle=metal` is the one that matters on this box;
  * `tools/smoke.mjs`'s software-fallback flags produce `adapter: null` here.
  */
-const CHROME_ARGS = [
+export const CHROME_ARGS = [
   "--no-sandbox",
   "--enable-unsafe-webgpu",
   "--enable-webgpu-developer-features",
@@ -533,7 +533,7 @@ const CHROME_ARGS = [
   "--use-angle=metal",
 ];
 
-async function runPiece(browser, key, pieceName, opts) {
+export async function runPiece(browser, key, pieceName, opts) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 800 });
   const pageErrors = [];
@@ -653,7 +653,7 @@ async function runPiece(browser, key, pieceName, opts) {
   return { key, pieceName, verdict, agg, pageErrors, consoleErrors, thrown };
 }
 
-const stripSeries = (agg) => {
+export const stripSeries = (agg) => {
   const { acSeries, t, nonfinite, gateCanary, ...rest } = agg;
   return {
     ...rest,
