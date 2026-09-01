@@ -1,1 +1,129 @@
-<!DOCTYPE html><html lang="en"><head><script src="splat3d.8705cb56.js"></script><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>prompt → 3D splats</title><style>:root{color-scheme:dark}html,body{color:#cdd6f4;background:#0b0d12;height:100%;margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}#wrap{flex-direction:column;justify-content:center;align-items:center;gap:14px;min-height:100%;padding:24px;display:flex}#grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;width:min(768px,100vw - 48px);display:grid}.tile{min-width:0;position:relative}.view{aspect-ratio:1;image-rendering:pixelated;background:#000;border:1px solid #313244;border-radius:8px;width:100%;display:block}.tile.active .view{border-color:#89b4fa}.label{color:#cdd6f4;pointer-events:none;background:#0b0d12b8;border-radius:4px;padding:2px 5px;font-size:11px;position:absolute;bottom:7px;left:7px}#controls{flex-wrap:wrap;align-items:center;gap:8px;width:min(768px,100vw - 48px);display:flex}#prompt{color:#cdd6f4;font:inherit;background:#181825;border:1px solid #45475a;border-radius:6px;flex:260px;min-width:180px;padding:8px 10px;font-size:14px}select,button{color:#cdd6f4;font:inherit;cursor:pointer;background:#1e2030;border:1px solid #45475a;border-radius:6px;padding:8px 10px;font-size:13px}select{max-width:128px}#clipLayout{max-width:178px}#gridPromptMode{max-width:156px}#gridRasterMode{max-width:166px}#gridStrength{max-width:136px}#viewSampler{max-width:148px}#qualityPreset{max-width:142px}#representation{max-width:152px}#backgroundMode{max-width:142px}#alphaReg,#boundsReg{max-width:132px}#coverageReg,#splatReg{max-width:142px}#framingMode{max-width:126px}button:hover,select:hover{border-color:#89b4fa}button:disabled,select:disabled{opacity:.5;cursor:default}#readout{color:#a6adc8;letter-spacing:.2px;width:min(768px,100vw - 48px);min-height:18px;font-size:13px}#notice{color:#f38ba8;width:min(768px,100vw - 48px);min-height:16px;font-size:13px}#timings{z-index:10;box-sizing:border-box;color:#cdd6f4;white-space:pre;pointer-events:none;background:#0b0d12db;border:1px solid #313244;border-radius:8px;width:248px;padding:10px 11px;font-size:11px;line-height:1.45;position:fixed;top:12px;right:12px}#timings .muted{color:#7f849c}@media (width<=1180px){#timings{order:3;width:min(768px,100vw - 48px);position:static}}</style></head><body> <div id="wrap"> <div id="timings"><span class="muted">sampled wall profile waiting...</span></div> <div id="grid"></div> <div id="controls"> <input id="prompt" type="text" placeholder="a photo of a cat" value="a photo of a cat" autocomplete="off"> <select id="qualityPreset"> <option value="full3d" selected>full 3D</option> <option value="fast">fast base</option> <option value="manual">manual</option> </select> <select id="representation"> <option value="isotropic">isotropic splats</option> <option value="anisotropic" selected>anisotropic splats</option> </select> <select id="view"></select> <select id="promptMode"> <option value="camera" selected>camera text</option> <option value="coarse">coarse text</option> <option value="same">same text</option> </select> <select id="bgTextMode"> <option value="black">black bg</option> <option value="centered" selected>centered bg</option> <option value="none">no bg text</option> </select> <select id="backgroundMode"> <option value="black" selected>black render</option> <option value="dark_random">dark random</option> <option value="curriculum">bg curriculum</option> <option value="blurred_noise">blurred noise bg</option> <option value="checkerboard">checker bg</option> <option value="fourier">fourier bg</option> </select> <select id="alphaReg"> <option value="off" selected>alpha off</option> <option value="weak">alpha weak</option> <option value="medium">alpha med</option> </select> <select id="boundsReg"> <option value="off">bounds off</option> <option value="weak" selected>bounds weak</option> <option value="medium">bounds med</option> </select> <select id="coverageReg"> <option value="off" selected>transmit off</option> <option value="weak">transmit weak</option> <option value="medium">transmit paper</option> </select> <select id="rayReg"> <option value="off" selected>ray compact off</option> <option value="weak">ray compact weak</option> <option value="medium">ray compact med</option> </select> <select id="entropyReg"> <option value="off" selected>ray entropy off</option> <option value="weak">ray entropy weak</option> <option value="medium">ray entropy med</option> </select> <select id="stageMode"> <option value="joint" selected>joint rates</option> <option value="staged">staged rates</option> </select> <select id="adaptiveSplats" title="Fixed keeps every splat identity; adapt periodically recycles dead splats into high-gradient regions."> <option value="off">fixed splats</option> <option value="on" selected>adapt splats</option> </select> <select id="mipSmoothing"> <option value="off" selected>mip smooth off</option> <option value="on">coarse-to-fine</option> </select> <select id="splatReg"> <option value="off">splat reg off</option> <option value="tiny" selected>anti-tiny</option> <option value="band">scale band</option> </select> <select id="framingMode"> <option value="normal">normal cam</option> <option value="zoom_out" selected>zoom out</option> </select> <select id="viewBatch"> <option value="1">1/9 view</option> <option value="2">2/9 views</option> <option value="3" selected>3/9 views</option> <option value="5">5/9 views</option> <option value="9">9/9 views</option> </select> <select id="viewSampler"> <option value="epoch">epoch views</option> <option value="random" selected>biased random views</option> </select> <select id="clipMode"> <option value="1">single CLIP</option> <option value="2">batch CLIP x2</option> <option value="3" selected>batch CLIP x3</option> <option value="6">batch CLIP x6</option> <option value="9">batch CLIP x9</option> </select> <select id="clipLayout"> <option value="per_view" selected>per-view CLIP</option> <option value="grid9_close2">3x3 grid + 2</option> <option value="dual_grid4">2 grids + 4</option> </select> <select id="gridPromptMode"> <option value="contact_sheet">grid prompt</option> <option value="literal">literal grid</option> <option value="literal_v2" selected>object grid</option> <option value="same">same grid text</option> </select> <select id="gridRasterMode"> <option value="scratch256">grid raster 256</option> <option value="direct80" selected>grid raster 80</option> <option value="hi512">grid raster 512</option> </select> <select id="gridStrength"> <option value="off">grid off</option> <option value="weak" selected>grid weak</option> <option value="medium">grid med</option> <option value="full">grid full</option> </select> <button id="optimize">Optimize</button> <button id="reset">Reset</button> </div> <div id="readout">boot…</div> <div id="notice"></div> </div> <script src="splat3d.4303df36.js" defer></script> </body></html>
+<!DOCTYPE html><html lang=en><script type=module src=splat.1cf83058.js></script><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1"><title>prompt → 3D splats</title><style>:root{color-scheme:dark}html,body{color:#cdd6f4;background:#0b0d12;height:100%;margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}#wrap{flex-direction:column;justify-content:center;align-items:center;gap:14px;min-height:100%;padding:24px;display:flex}#grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;width:min(768px,100vw - 48px);display:grid}.tile{min-width:0;position:relative}.view{aspect-ratio:1;width:100%;image-rendering:pixelated;background:#000;border:1px solid #313244;border-radius:8px;display:block}.tile.active .view{border-color:#89b4fa}.label{color:#cdd6f4;pointer-events:none;background:#0b0d12b8;border-radius:4px;padding:2px 5px;font-size:11px;position:absolute;bottom:7px;left:7px}#controls{flex-wrap:wrap;align-items:center;gap:8px;width:min(768px,100vw - 48px);display:flex}#prompt{color:#cdd6f4;min-width:180px;font:inherit;background:#181825;border:1px solid #45475a;border-radius:6px;flex:260px;padding:8px 10px;font-size:14px}select,button{color:#cdd6f4;font:inherit;cursor:pointer;background:#1e2030;border:1px solid #45475a;border-radius:6px;padding:8px 10px;font-size:13px}select{max-width:128px}#clipLayout{max-width:178px}#gridPromptMode{max-width:156px}#gridRasterMode{max-width:166px}#gridStrength{max-width:136px}#viewSampler{max-width:148px}#qualityPreset{max-width:142px}#representation{max-width:152px}#backgroundMode{max-width:142px}#alphaReg,#boundsReg{max-width:132px}#coverageReg,#splatReg{max-width:142px}#framingMode{max-width:126px}button:hover,select:hover{border-color:#89b4fa}button:disabled,select:disabled{opacity:.5;cursor:default}#readout{color:#a6adc8;letter-spacing:.2px;width:min(768px,100vw - 48px);min-height:18px;font-size:13px}#notice{color:#f38ba8;width:min(768px,100vw - 48px);min-height:16px;font-size:13px}#timings{z-index:10;box-sizing:border-box;color:#cdd6f4;white-space:pre;pointer-events:none;background:#0b0d12db;border:1px solid #313244;border-radius:8px;width:248px;padding:10px 11px;font-size:11px;line-height:1.45;position:fixed;top:12px;right:12px}#timings .muted{color:#7f849c}@media (width<=1180px){#timings{order:3;width:min(768px,100vw - 48px);position:static}}</style><body>
+    <div id=wrap>
+      <div id=timings><span class=muted>sampled wall profile waiting...</span></div>
+      <div id=grid></div>
+      <div id=controls>
+        <input id=prompt placeholder="a photo of a cat" value="a photo of a cat" autocomplete=off>
+        <select id=qualityPreset>
+          <option value=full3d selected>full 3D</option>
+          <option value=fast>fast base</option>
+          <option value=manual>manual</option>
+        </select>
+        <select id=representation>
+          <option value=isotropic>isotropic splats</option>
+          <option value=anisotropic selected>anisotropic splats</option>
+        </select>
+        <select id=view></select>
+        <select id=promptMode>
+          <option value=camera selected>camera text</option>
+          <option value=coarse>coarse text</option>
+          <option value=same>same text</option>
+        </select>
+        <select id=bgTextMode>
+          <option value=black>black bg</option>
+          <option value=centered selected>centered bg</option>
+          <option value=none>no bg text</option>
+        </select>
+        <select id=backgroundMode>
+          <option value=black selected>black render</option>
+          <option value=dark_random>dark random</option>
+          <option value=curriculum>bg curriculum</option>
+          <option value=blurred_noise>blurred noise bg</option>
+          <option value=checkerboard>checker bg</option>
+          <option value=fourier>fourier bg</option>
+        </select>
+        <select id=alphaReg>
+          <option value=off selected>alpha off</option>
+          <option value=weak>alpha weak</option>
+          <option value=medium>alpha med</option>
+        </select>
+        <select id=boundsReg>
+          <option value=off>bounds off</option>
+          <option value=weak selected>bounds weak</option>
+          <option value=medium>bounds med</option>
+        </select>
+        <select id=coverageReg>
+          <option value=off selected>transmit off</option>
+          <option value=weak>transmit weak</option>
+          <option value=medium>transmit paper</option>
+        </select>
+        <select id=rayReg>
+          <option value=off selected>ray compact off</option>
+          <option value=weak>ray compact weak</option>
+          <option value=medium>ray compact med</option>
+        </select>
+        <select id=entropyReg>
+          <option value=off selected>ray entropy off</option>
+          <option value=weak>ray entropy weak</option>
+          <option value=medium>ray entropy med</option>
+        </select>
+        <select id=stageMode>
+          <option value=joint selected>joint rates</option>
+          <option value=staged>staged rates</option>
+        </select>
+        <select id=adaptiveSplats title="Fixed keeps every splat identity; adapt periodically recycles dead splats into high-gradient regions.">
+          <option value=off>fixed splats</option>
+          <option value=on selected>adapt splats</option>
+        </select>
+        <select id=mipSmoothing>
+          <option value=off selected>mip smooth off</option>
+          <option value=on>coarse-to-fine</option>
+        </select>
+        <select id=splatReg>
+          <option value=off>splat reg off</option>
+          <option value=tiny selected>anti-tiny</option>
+          <option value=band>scale band</option>
+        </select>
+        <select id=framingMode>
+          <option value=normal>normal cam</option>
+          <option value=zoom_out selected>zoom out</option>
+        </select>
+        <select id=viewBatch>
+          <option value=1>1/9 view</option>
+          <option value=2>2/9 views</option>
+          <option value=3 selected>3/9 views</option>
+          <option value=5>5/9 views</option>
+          <option value=9>9/9 views</option>
+        </select>
+        <select id=viewSampler>
+          <option value=epoch>epoch views</option>
+          <option value=random selected>biased random views</option>
+        </select>
+	        <select id=clipMode>
+	          <option value=1>single CLIP</option>
+	          <option value=2>batch CLIP x2</option>
+	          <option value=3 selected>batch CLIP x3</option>
+	          <option value=6>batch CLIP x6</option>
+	          <option value=9>batch CLIP x9</option>
+	        </select>
+	        <select id=clipLayout>
+	          <option value=per_view selected>per-view CLIP</option>
+	          <option value=grid9_close2>3x3 grid + 2</option>
+	          <option value=dual_grid4>2 grids + 4</option>
+	        </select>
+	        <select id=gridPromptMode>
+	          <option value=contact_sheet>grid prompt</option>
+	          <option value=literal>literal grid</option>
+	          <option value=literal_v2 selected>object grid</option>
+	          <option value=same>same grid text</option>
+	        </select>
+	        <select id=gridRasterMode>
+	          <option value=scratch256>grid raster 256</option>
+	          <option value=direct80 selected>grid raster 80</option>
+	          <option value=hi512>grid raster 512</option>
+	        </select>
+	        <select id=gridStrength>
+	          <option value=off>grid off</option>
+	          <option value=weak selected>grid weak</option>
+	          <option value=medium>grid med</option>
+	          <option value=full>grid full</option>
+	        </select>
+	        <button id=optimize>Optimize</button>
+        <button id=reset>Reset</button>
+      </div>
+      <div id=readout>boot…</div>
+      <div id=notice></div>
+    </div>
+    <script type=module src=splat3d.4dc4f7db.js></script>
+  
+
