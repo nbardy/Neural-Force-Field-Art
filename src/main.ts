@@ -3140,6 +3140,49 @@ export const GALLERY: ArtPieceConfig[] = [
     fieldLoss: ZERO_FIELD_LOSS,
     computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
   },
+  {
+    // NAMED PIECE: Sand of Times. This is a preserved dock capture, not a
+    // rename of the older Pair/HashGrid work at index 17. Gallery entries are
+    // append-only because shared dock links persist their numeric piece index.
+    name: "Sand of Times",
+    particleCount: 190000,
+    friction: 0.97,
+    drive: 0.9,
+    forceMagnitude: forceMagnitudeForDrive(0.9, 65.75, 0.97),
+    maxVelocity: 65.75,
+    resetRate: 0.014,
+    drawRate: 2,
+    learningRate: 0.0048,
+    discriminatorLearningRate: 0.000005308844442309883,
+    sampleRate: 9584,
+    border: { tag: "reset" },
+    colorMode: { tag: "surprise-raw", colormap: "inferno" },
+    backgroundColor: [2, 3, 9],
+    alphaBlend: 0.8,
+    renderer: "alpha-fade",
+    stroke: "curl",
+    strokeLen: 3,
+    fieldArch: { ...ARCH.dualHashgrid, alpha: 0.8 },
+    archEditable: true,
+    archDock: DUAL_ARCH_DOCK,
+    adversary: {
+      tag: "on",
+      kind: { tag: "wta", k: 10, relaxEps: 0.1 },
+      encoding: { tag: "pair-rotation-scale-adjusted" },
+      loss: {
+        tag: "angle-relative-scale",
+        tau: 0.05,
+        scaleWeight: 0.5,
+        energyWeight: 0.1,
+        energyTarget: 0.35,
+      },
+      predictor: { hiddenUnits: 128, featureDim: 64 },
+      weight: 0.015,
+      pressure: GALLERY_ANTI_COLLAPSE,
+    },
+    fieldLoss: ZERO_FIELD_LOSS,
+    computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
+  },
 ];
 
 /**
