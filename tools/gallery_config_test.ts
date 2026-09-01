@@ -86,5 +86,19 @@ for (const name of [
   ok(GALLERY.some((piece) => piece.name === name), `${name} remains present`);
 }
 
+const historicalPixel = GALLERY.find(
+  (piece) => piece.name === "Pixel · RealFake · Historical"
+);
+ok(!!historicalPixel, "historical Pixel RealFake piece exists");
+if (historicalPixel?.pixelDisc) {
+  ok(
+    historicalPixel.pixelDisc.kind === "real-fake" &&
+      historicalPixel.pixelDisc.historicalReplay?.capacity === 256 &&
+      historicalPixel.pixelDisc.historicalReplay.captureEvery === 4 &&
+      historicalPixel.pixelDisc.historicalReplay.probability === 0.75,
+    "historical RealFake has a bounded rolling density replay"
+  );
+}
+
 if (failures) process.exit(1);
 console.log("gallery config ok");

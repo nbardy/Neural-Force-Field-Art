@@ -101,7 +101,10 @@ function describePixelCritic(spec: PixelCriticSpec): string {
   const g = spec.guesses ?? { tag: "single" as const };
   const guesses =
     g.tag === "single" ? "1 guess" : `${g.k} guesses ε${g.relaxEps}`;
-  return `G${spec.G ?? 16} E${spec.E ?? 8} K${spec.K ?? 16} h${spec.hidden ?? 32} · ${guesses}`;
+  const replay = spec.historicalReplay
+    ? ` · history ${spec.historicalReplay.capacity}`
+    : "";
+  return `G${spec.G ?? 16} E${spec.E ?? 8} K${spec.K ?? 16} h${spec.hidden ?? 32} · ${guesses}${replay}`;
 }
 
 const ADV_WEIGHT_MIN = ADVERSARY_WEIGHT_RANGE.min;

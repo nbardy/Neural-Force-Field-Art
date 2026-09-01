@@ -349,6 +349,15 @@ export interface PixelCriticSpec {
    * winner to take all.
    */
   readonly guesses?: GuessKind;
+  /** Optional bounded replay of prior real density snapshots for RealFake. */
+  readonly historicalReplay?: {
+    /** Number of G×G density snapshots retained in the rolling population. */
+    readonly capacity: number;
+    /** Capture one live real snapshot every N critic steps. */
+    readonly captureEvery?: number;
+    /** Probability of comparing against history instead of uniform fake noise. */
+    readonly probability?: number;
+  };
 }
 
 export interface ArtPieceConfig {
@@ -2731,6 +2740,43 @@ export const GALLERY: ArtPieceConfig[] = [
     computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
   },
   {
+    // Historical RealFake: the current cloud remains the positive example,
+    // while the negative example is sampled from a rolling population of old
+    // density snapshots. This makes the critic learn temporal improvement
+    // rather than only the latest-vs-uniform distinction.
+    name: "Pixel · RealFake · Historical",
+    particleCount: 80000,
+    friction: 0.97,
+    drive: 0.65,
+    forceMagnitude: forceMagnitudeForDrive(0.65, 24, 0.97),
+    maxVelocity: 24,
+    resetRate: 0.003,
+    drawRate: 2,
+    learningRate: 0.0015,
+    backgroundColor: [4, 6, 14],
+    alphaBlend: 0.05,
+    renderer: "alpha-fade",
+    fieldArch: { ...ARCH.dualFourier, alpha: 0.55 },
+    archEditable: true,
+    archDock: DUAL_ARCH_DOCK,
+    pixelDisc: {
+      kind: "real-fake",
+      weight: 0.03,
+      G: 16,
+      E: 8,
+      K: 16,
+      hidden: 32,
+      dt: 0.15,
+      historicalReplay: {
+        capacity: 256,
+        captureEvery: 4,
+        probability: 0.75,
+      },
+    },
+    fieldLoss: ZERO_FIELD_LOSS,
+    computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
+  },
+  {
     name: "Pixel · Inpaint",
     particleCount: 80000,
     friction: 0.97,
@@ -4833,6 +4879,7 @@ export function startLoop(
           },
           batchCap: 512,
           seed: 20260805,
+          historicalReplay: pixelSpec.historicalReplay,
         });
         pixelDiscTrainer.setParticleBuffers(
           advect.posBuffer,

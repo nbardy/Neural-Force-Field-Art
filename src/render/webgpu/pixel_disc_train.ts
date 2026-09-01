@@ -72,6 +72,15 @@ export interface PixelDiscStepOpts {
   maskSeed?: number;
 }
 
+export interface PixelDiscHistoricalReplayOpts {
+  /** Number of detached G×G real-density snapshots retained on the GPU. */
+  capacity: number;
+  /** Capture one live snapshot every N discriminator steps. */
+  captureEvery?: number;
+  /** Probability of using an old snapshot as the negative example. */
+  probability?: number;
+}
+
 export class PixelDiscTrainer {
   readonly field: FieldLayout;
   readonly dims: PixelDiscDims;
@@ -88,6 +97,7 @@ export class PixelDiscTrainer {
   private readonly densPack: GPUBuffer;
   private readonly metaBuf: GPUBuffer;
   private readonly uniBuf: GPUBuffer;
+  private readonly historyBuf: GPUBuffer | null;
   /**
    * Floats in `critMeta`'s stats tail: the named scalars plus one §3f win
    * counter per guess. An INSTANCE value, not a module constant, because the
@@ -100,6 +110,11 @@ export class PixelDiscTrainer {
   private partDummy: GPUBuffer;
   private partCount = 0;
   private cursor = 0;
+  private historyWrite = 0;
+  private historyCount = 0;
+  private historyStep = 0;
+  private readonly historyCaptureEvery: number;
+  private readonly historyProbability: number;
   private adamStep = 0;
   private frame = 0;
   lastStats: PixelDiscStats | null = null;
@@ -134,6 +149,7 @@ export class PixelDiscTrainer {
       batchCap?: number;
       fieldLane?: "blend" | 0 | 1;
       seed?: number;
+      historicalReplay?: PixelDiscHistoricalReplayOpts;
     }
   ) {
     validatePixelDiscFusion(field);
@@ -168,6 +184,34 @@ export class PixelDiscTrainer {
     this.statsFloats = pixelStatsFloats(pixelWinCounters(this.dims));
     this.metaBuf = mk((this.nWeights * 3 + this.statsFloats) * 4);
     this.extGradsBuf = mk(field.totalFloats * 4);
+    const history = opts.historicalReplay;
+    if (history && this.kind !== "real-fake") {
+      throw new Error("pixel_disc: historical replay is only supported for real-fake");
+    }
+    if (history && (!Number.isInteger(history.capacity) || history.capacity <= 0)) {
+      throw new Error(`pixel_disc: bad historical replay capacity=${history?.capacity}`);
+    }
+    if (
+      history?.captureEvery !== undefined &&
+      (!Number.isInteger(history.captureEvery) || history.captureEvery <= 0)
+    ) {
+      throw new Error(`pixel_disc: bad historical replay captureEvery=${history.captureEvery}`);
+    }
+    if (
+      history?.probability !== undefined &&
+      (!Number.isFinite(history.probability) || history.probability < 0 || history.probability > 1)
+    ) {
+      throw new Error(`pixel_disc: bad historical replay probability=${history.probability}`);
+    }
+    const historyCapacity = history?.capacity ?? 0;
+    this.historyBuf = history
+      ? device.createBuffer({
+          size: historyCapacity * nCell * 4,
+          usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+        })
+      : null;
+    this.historyCaptureEvery = history?.captureEvery ?? 1;
+    this.historyProbability = history?.probability ?? 1;
     this.uniBuf = device.createBuffer({
       size: 64,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -258,6 +302,9 @@ export class PixelDiscTrainer {
     this.partCount = count;
     this.bind = this.makeBind(pos);
     this.cursor = 0;
+    this.historyWrite = 0;
+    this.historyCount = 0;
+    this.historyStep = 0;
   }
 
   uploadCriticWeights(w: Float32Array): void {
@@ -378,6 +425,26 @@ export class PixelDiscTrainer {
     dispatch(this.pipeSample, b);
     dispatch(this.pipeDensF, nCell);
 
+    // RealFake's historical population is a detached replay of prior live
+    // density images. Capture the current positive example before replacing
+    // the auxiliary region with an old negative example for this step.
+    const availableHistoryCount = this.historyCount;
+    const replayHit = this.historyBuf !== null &&
+      availableHistoryCount > 0 &&
+      this.historyRandom() < this.historyProbability;
+    if (this.historyBuf && this.historyStep % this.historyCaptureEvery === 0) {
+      const nCellBytes = nCell * 4;
+      encoder.copyBufferToBuffer(
+        this.densPack,
+        0,
+        this.historyBuf,
+        this.historyWrite * nCellBytes,
+        nCellBytes
+      );
+      this.historyWrite = (this.historyWrite + 1) % (this.historyBuf.size / nCellBytes);
+      this.historyCount = Math.min(this.historyCount + 1, this.historyBuf.size / nCellBytes);
+    }
+
     // Targets for vec-field: one invocation per cell, ahead of the single-thread
     // critic that reads them. Was an inline serial loop inside criticDisc.
     if (this.pipeForceGrid) dispatch(this.pipeForceGrid, nCell);
@@ -390,9 +457,21 @@ export class PixelDiscTrainer {
         dispatch(this.pipeDensF, nCell);
         break;
       case "real-fake":
-        dispatch(this.pipeClearAtomics, nCell);
-        dispatch(this.pipeFakeSplat, b);
-        dispatch(this.pipeDensFake, nCell);
+        if (replayHit) {
+          const nCellBytes = nCell * 4;
+          const slot = this.historyRandomInt(availableHistoryCount);
+          encoder.copyBufferToBuffer(
+            this.historyBuf!,
+            slot * nCellBytes,
+            this.densPack,
+            2 * nCellBytes,
+            nCellBytes
+          );
+        } else {
+          dispatch(this.pipeClearAtomics, nCell);
+          dispatch(this.pipeFakeSplat, b);
+          dispatch(this.pipeDensFake, nCell);
+        }
         break;
       case "vec-field":
       case "inpaint":
@@ -415,6 +494,19 @@ export class PixelDiscTrainer {
     }
 
     this.cursor = (this.cursor + b) % Math.max(this.partCount, 1);
+    this.historyStep++;
+  }
+
+  private historyRandom(): number {
+    let x = (this.historyStep * 1664525 + 1013904223) >>> 0;
+    x ^= x >>> 16;
+    return x / 0x100000000;
+  }
+
+  private historyRandomInt(n: number): number {
+    let x = (this.historyStep * 22695477 + 1) >>> 0;
+    x ^= x >>> 15;
+    return n > 0 ? x % n : 0;
   }
 
   /** Copy stats into the MAP_READ staging buffer. Call before submit. */
