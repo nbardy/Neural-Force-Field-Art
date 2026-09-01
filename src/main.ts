@@ -392,6 +392,8 @@ export interface ArtPieceConfig {
   generatorLearningRates?: GeneratorLearningRates;
   /** Explicit particle palette; Agree+Disagree uses stable exact RGB roles. */
   palette?: "speed" | "species" | "rgb-roles" | "rgb-families" | "optimizer-groups-v1";
+  /** Initial diagnostic colour mode for a fresh gallery load. */
+  colorMode?: ColorMode;
   mode?: "standard" | "agree-disagree";
   /**
    * Legacy path: a sigmoid MLP whose `[0,1]` output is re-centered by
@@ -1077,7 +1079,9 @@ export function resolveColorMode(
   const raw =
     want === "surprise" ||
     want === "surprise-raw" ||
-    (want === null && cfg.renderer === "surprise" && !perUnit);
+    (want === null &&
+      (cfg.colorMode?.tag === "surprise-raw" || cfg.renderer === "surprise") &&
+      !perUnit);
   const on = raw || perUnit;
   if (!on) return { tag: "velocity" };
   if (adv.tag === "off") {
@@ -3104,7 +3108,7 @@ export const GALLERY: ArtPieceConfig[] = [
     // gallery indices are part of persisted dock state and shared URLs.
     // The supplied recipe is point-observed, WTA-K10, soft-angle, and uses a
     // dual HashGrid field with curl ink.
-    name: "Adversary · Point · HashGrid · Curl · WTA10",
+    name: "Adversary · Point · HashGrid · Curl · WTA10 · Coolwarm Raw",
     particleCount: 190000,
     friction: 0.97,
     drive: 0.9,
@@ -3113,16 +3117,10 @@ export const GALLERY: ArtPieceConfig[] = [
     resetRate: 0.014,
     drawRate: 2,
     learningRate: 0.0048,
-    discriminatorLearningRate: 0.00011208369124213449,
+    discriminatorLearningRate: 0.00002660725059798809,
     sampleRate: 9584,
     border: { tag: "reset" },
-    generatorLearningRates: {
-      tag: "shared-heads",
-      shared: 0.0008,
-      head0: 0.0048,
-      head1: 0.0018,
-    },
-    palette: "optimizer-groups-v1",
+    colorMode: { tag: "surprise-raw", colormap: "coolwarm" },
     backgroundColor: [2, 3, 9],
     alphaBlend: 0.17,
     renderer: "alpha-fade",
@@ -3133,7 +3131,7 @@ export const GALLERY: ArtPieceConfig[] = [
     archDock: DUAL_ARCH_DOCK,
     adversary: {
       tag: "on",
-      kind: { tag: "wta", k: 10, relaxEps: 0.05 },
+      kind: { tag: "wta", k: 10, relaxEps: 0.1 },
       encoding: { tag: "point" },
       loss: { tag: "soft-angle", tau: 0.05 },
       weight: 0.015,
@@ -3149,7 +3147,8 @@ export const GALLERY: ArtPieceConfig[] = [
  * so that appending pieces cannot shift the default and renaming this one
  * fails LOUDLY at module load instead of silently falling back to GALLERY[0].
  */
-export const DEFAULT_PIECE_NAME = "Adversary · Point · HashGrid · Curl · WTA10";
+export const DEFAULT_PIECE_NAME =
+  "Adversary · Point · HashGrid · Curl · WTA10 · Coolwarm Raw";
 
 export const DEFAULT_PIECE_INDEX: number = (() => {
   const index = GALLERY.findIndex((piece) => piece.name === DEFAULT_PIECE_NAME);

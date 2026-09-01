@@ -1419,7 +1419,9 @@ function App(): ReactElement {
   const [dockOpen, setDockOpen] = useState(() => !hudStartsCollapsed());
   const [telemetry, setTelemetry] = useState<AdversaryTelemetry>({ tag: "off" });
   const [colorMode, setColorMode] = useState<ColorMode>(
-    () => restoredDock?.colorMode ?? { tag: "velocity" }
+    () =>
+      restoredDock?.colorMode ??
+      GALLERY[DEFAULT_PIECE_INDEX].colorMode ?? { tag: "velocity" }
   );
   const [surpriseSpan, setSurpriseSpan] = useState<{
     lo: number;

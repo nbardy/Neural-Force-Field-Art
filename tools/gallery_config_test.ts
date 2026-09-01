@@ -18,7 +18,7 @@ function ok(condition: boolean, message: string): void {
 }
 
 const promoted = GALLERY.find(
-  (piece) => piece.name === "Adversary · Point · HashGrid · Curl · WTA10"
+  (piece) => piece.name === "Adversary · Point · HashGrid · Curl · WTA10 · Coolwarm Raw"
 );
 ok(!!promoted, "promoted Point/WTA10 piece exists");
 if (promoted) {
@@ -27,7 +27,11 @@ if (promoted) {
   ok(promoted.particleCount === 190000, "particle count is 190000");
   ok(promoted.maxVelocity === 65.75, "max velocity is 65.75");
   ok(promoted.sampleRate === 9584, "sample rate is 9584");
-  ok(promoted.discriminatorLearningRate === 0.00011208369124213449, "D LR is promoted");
+  ok(promoted.discriminatorLearningRate === 0.00002660725059798809, "D LR is promoted");
+  ok(
+    promoted.colorMode?.tag === "surprise-raw" && promoted.colorMode.colormap === "coolwarm",
+    "default colour mode is RAW / coolwarm"
+  );
   ok(promoted.border?.tag === "reset", "border is reset");
   ok(promoted.stroke === "curl" && promoted.strokeLen === 3, "curl length is 3");
   ok(promoted.fieldArch?.encoding === "hashgrid", "field architecture is HashGrid");
@@ -35,6 +39,7 @@ if (promoted) {
     promoted.adversary?.tag === "on" &&
       promoted.adversary.kind.tag === "wta" &&
       promoted.adversary.kind.k === 10 &&
+      promoted.adversary.kind.relaxEps === 0.1 &&
       promoted.adversary.encoding.tag === "point" &&
       promoted.adversary.loss?.tag === "soft-angle",
     "game is point / WTA K10 / soft-angle"
@@ -42,7 +47,7 @@ if (promoted) {
   const controls = resolveLiveGameControls(promoted, new URLSearchParams());
   ok(controls.generatorLearningRate === 0.0048, "G LR resolves from the piece");
   ok(
-    controls.discriminatorLearningRate === 0.00011208369124213449,
+    controls.discriminatorLearningRate === 0.00002660725059798809,
     "D LR resolves from the piece"
   );
   ok(
