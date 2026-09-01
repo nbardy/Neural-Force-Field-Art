@@ -108,10 +108,10 @@ struct Uni {
   pad0       : f32,
   pad1       : f32,
   pad2       : f32,
-  palette    : u32,    // 0 speed, 1 species, 2 exact RGB Agree/Disagree roles
+  palette    : u32,    // 0 speed, 1 species, 2 RGB roles, 3 families, 4 optimizer groups
   pad3       : u32,
   pad4       : u32,
-  pad5       : u32,
+  pad5       : f32,
 };
 @group(0) @binding(0) var<uniform> u : Uni;
 `;
@@ -138,6 +138,23 @@ fn pcg(v : u32) -> u32 {
 @group(0) @binding(1) var<storage, read> posBuf : array<f32>;
 @group(0) @binding(2) var<storage, read> velBuf : array<f32>;
 @group(0) @binding(3) var<storage, read_write> acc : array<atomic<u32>>;
+@group(0) @binding(4) var<storage, read> diagnosticBuf : array<f32>;
+
+fn diagnosticColor(iid : u32, velocity : f32) -> vec3f {
+  if (u.pad3 == 0u) { return vec3f(0.0); }
+  let value = clamp((diagnosticBuf[iid + u.pad4] + u.background.w) * u.pad5, 0.0, 1.0);
+  let low = min(value * 2.0, 1.0);
+  let high = max(value * 2.0 - 1.0, 0.0);
+  var col = mix(
+    mix(vec3f(0.08, 0.25, 1.0), vec3f(0.9, 0.12, 0.85), low),
+    vec3f(1.0, 0.55, 0.08),
+    high
+  );
+  if (u.palette == 5u) { col = vec3f(value * 1.15, value * value * 0.8, value * value * value * 0.35); }
+  if (u.palette == 6u) { col = vec3f(0.12 + 0.78 * value, 0.08 + 0.85 * (1.0 - abs(2.0 * value - 1.0)), 0.32 + 0.5 * (1.0 - value)); }
+  if (u.palette == 7u) { col = mix(vec3f(0.23, 0.3, 0.95), vec3f(0.95, 0.25, 0.22), value); }
+  return col * (0.55 + 0.45 * velocity);
+}
 
 fn tap(x : i32, y : i32, wgt : f32, col : vec3f) {
   if (wgt <= 0.0) { return; } // box corners outside the cone: skip the atomics
@@ -185,6 +202,14 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       cls == 2u
     );
     col = base * (0.55 + 0.45 * t);
+  } else if (u.palette == 4u) {
+    let group = iid % 3u;
+    let base = select(
+      select(vec3f(0.12, 0.95, 1.0), vec3f(1.0, 0.18, 0.78), group == 1u),
+      vec3f(1.0, 0.72, 0.12),
+      group == 2u
+    );
+    col = base * (0.55 + 0.45 * t);
   } else if (u.classes > 0u) {
     // per-species base colour (cosine palette, golden-angle spaced hues),
     // brightness modulated by speed — PALETTE HOOK: swap this block for a
@@ -194,6 +219,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     let base = 0.55 + 0.45 * cos(vec3f(hue, hue + 2.0944, hue + 4.1888));
     col = base * (0.55 + 0.45 * t);
   }
+  if (u.pad3 != 0u) { col = diagnosticColor(iid, t); }
 
   // RADIAL CONE kernel over the integer box covering the circle |t - p| <= r.
   // Texel "centres" sit at INTEGER coords — the same convention as the old
@@ -244,7 +270,7 @@ struct Uni {
   palette    : u32,
   pad3       : u32,
   pad4       : u32,
-  pad5       : u32,
+  pad5       : f32,
 };
 @group(0) @binding(0) var<uniform> u : Uni;
 `;
@@ -277,6 +303,23 @@ fn pcg(v : u32) -> u32 {
 // last frame's velocities (v_old). record() copies vel -> prevVel AFTER this
 // pass, so while the pass runs: velBuf = post-advect v_new, prevVelBuf = v_old.
 @group(0) @binding(4) var<storage, read> prevVelBuf : array<f32>;
+@group(0) @binding(5) var<storage, read> diagnosticBuf : array<f32>;
+
+fn diagnosticColor(iid : u32, velocity : f32) -> vec3f {
+  if (u.pad3 == 0u) { return vec3f(0.0); }
+  let value = clamp((diagnosticBuf[iid + u.pad4] + u.background.w) * u.pad5, 0.0, 1.0);
+  let low = min(value * 2.0, 1.0);
+  let high = max(value * 2.0 - 1.0, 0.0);
+  var col = mix(
+    mix(vec3f(0.08, 0.25, 1.0), vec3f(0.9, 0.12, 0.85), low),
+    vec3f(1.0, 0.55, 0.08),
+    high
+  );
+  if (u.palette == 5u) { col = vec3f(value * 1.15, value * value * 0.8, value * value * value * 0.35); }
+  if (u.palette == 6u) { col = vec3f(0.12 + 0.78 * value, 0.08 + 0.85 * (1.0 - abs(2.0 * value - 1.0)), 0.32 + 0.5 * (1.0 - value)); }
+  if (u.palette == 7u) { col = mix(vec3f(0.23, 0.3, 0.95), vec3f(0.95, 0.25, 0.22), value); }
+  return col * (0.55 + 0.45 * velocity);
+}
 
 fn tap(x : i32, y : i32, wgt : f32, col : vec3f) {
   if (wgt <= 0.0) { return; } // box corners outside the cone: skip the atomics
@@ -350,12 +393,21 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       cls == 2u
     );
     col = base * (0.55 + 0.45 * t);
+  } else if (u.palette == 4u) {
+    let group = iid % 3u;
+    let base = select(
+      select(vec3f(0.12, 0.95, 1.0), vec3f(1.0, 0.18, 0.78), group == 1u),
+      vec3f(1.0, 0.72, 0.12),
+      group == 2u
+    );
+    col = base * (0.55 + 0.45 * t);
   } else if (u.classes > 0u) {
     let cls = pcg(iid ^ 2166136261u) % u.classes;
     let hue = f32(cls) * 2.399963;
     let base = 0.55 + 0.45 * cos(vec3f(hue, hue + 2.0944, hue + 4.1888));
     col = base * (0.55 + 0.45 * t);
   }
+  if (u.pad3 != 0u) { col = diagnosticColor(iid, t); }
 
   // native-space per-frame velocity and acceleration (CSS px/frame * dpr)
   let vN = v * u.dpr;
@@ -465,7 +517,10 @@ export interface SplatOpts {
   maxSpeed?: number;
   /** multi-species count — colours splats per class (0 = speed colouring) */
   classes?: number;
-  palette?: "speed" | "species" | "rgb-roles" | "rgb-families";
+  palette?: "speed" | "species" | "rgb-roles" | "rgb-families" | "optimizer-groups-v1";
+  /** Optional per-particle scalar colour diagnostic. Values are mapped as
+   *  clamp((value * scale), 0, 1); geometry remains velocity/stroke-driven. */
+  colorDiagnostic?: SplatColorDiagnostic;
   /** per-frame trail persistence: 0 = hard clear, ~0.85-0.95 = ghost trails */
   decay?: number;
   /** linear gain on accumulated energy before the tone curve */
@@ -488,6 +543,19 @@ export interface SplatOpts {
   strokeLen?: number;
   /** explicit device (headless/tests) — defaults to tfjs's webgpu device */
   device?: GPUDevice;
+}
+
+export interface SplatColorDiagnostic {
+  buffer: GPUBuffer;
+  /** Human-readable semantic label for tooling/UI; shader behavior is scalar. */
+  mode: "raw" | "per-unit";
+  /** Float element offset into buffer (default 0). */
+  offsetFloats?: number;
+  /** Multiplier converting values to the [0,1] colour domain. */
+  scale?: number;
+  /** Additive offset applied before scale; useful for percentile windows. */
+  bias?: number;
+  colormap?: "inferno" | "viridis" | "coolwarm";
 }
 
 /** Where the tonemap pass lands: swapchain (canvas) or owned texture. */
@@ -570,6 +638,7 @@ export class SplatRenderer {
   maxSpeed: number;
   classes: number;
   palette: "speed" | "species" | "rgb-roles" | "rgb-families";
+  colorDiagnostic: SplatColorDiagnostic | null;
   decay: number;
   exposure: number;
   /** radial cone splat radius, CSS px (native = radius*dpr, clamped [0.75,4]) */
@@ -588,6 +657,9 @@ export class SplatRenderer {
   private splatBind: GPUBindGroup | null = null;
   private splatBindPos: GPUBuffer | null = null;
   private splatBindVel: GPUBuffer | null = null;
+  private diagnosticBuf: GPUBuffer;
+  private readonly zeroDiagnostic: GPUBuffer;
+  private splatBindDiagnostic: GPUBuffer | null = null;
 
   // stroke-style ("vel"/"curl") machinery — all lazily created so the default
   // dot path is untouched. prevVel snapshots last frame's velocities (v_old):
@@ -598,6 +670,7 @@ export class SplatRenderer {
   private strokeBind: GPUBindGroup | null = null;
   private strokeBindPos: GPUBuffer | null = null;
   private strokeBindVel: GPUBuffer | null = null;
+  private strokeBindDiagnostic: GPUBuffer | null = null;
 
   /**
    * @param canvas on-screen canvas (must NOT have a 2d/webgl context yet), or
@@ -627,12 +700,19 @@ export class SplatRenderer {
       topology: "triangle-list",
     });
     this.uni = uniformBuffer(device, 80);
+    this.zeroDiagnostic = device.createBuffer({
+      size: 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    this.device.queue.writeBuffer(this.zeroDiagnostic, 0, new Float32Array([0]));
+    this.diagnosticBuf = this.zeroDiagnostic;
 
     this.dpr = opts.dpr ?? 1;
     this.background = opts.background ?? [2, 0, 12];
     this.maxSpeed = opts.maxSpeed ?? 4;
     this.classes = opts.classes ?? 0;
     this.palette = opts.palette ?? (this.classes > 0 ? "species" : "speed");
+    this.colorDiagnostic = opts.colorDiagnostic ?? null;
     this.decay = opts.decay ?? 0;
     this.exposure = opts.exposure ?? 1;
     this.radius = opts.radius ?? 1.25;
@@ -659,6 +739,12 @@ export class SplatRenderer {
         })
         .catch(() => {});
     } catch (_) {}
+  }
+
+  /** Select a per-particle scalar colour source without changing ink
+   * geometry. Pass null to restore the configured palette. */
+  setColorDiagnostic(diagnostic: SplatColorDiagnostic | null): void {
+    this.colorDiagnostic = diagnostic;
   }
 
   /** Splat N particles (interleaved-xy f32 pos/vel storage buffers — the same
@@ -711,6 +797,8 @@ export class SplatRenderer {
     // and the accumulator all agree texel-for-texel.
     const nw = Math.ceil(w * this.dpr);
     const nh = Math.ceil(h * this.dpr);
+    const diagnostic = this.colorDiagnostic;
+    this.diagnosticBuf = diagnostic?.buffer ?? this.zeroDiagnostic;
     this.ensureAccum(nw, nh);
     const stroke = this.style !== "dot";
     if (stroke) {
@@ -749,14 +837,21 @@ export class SplatRenderer {
     // clamp, high counts degrade to SHORTER continuous strokes — never a
     // beaded dash, never a 5-10fps cliff.
     this.uniF[15] = Math.max(2, Math.min(24, Math.floor(STROKE_TAP_BUDGET / (Math.max(1, n) * STROKE_TAPS_PER_SAMPLE))));
-    this.uniU[16] =
-      this.palette === "rgb-families"
+    this.uniU[16] = diagnostic
+      ? diagnostic.colormap === "viridis" ? 6 : diagnostic.colormap === "coolwarm" ? 7 : 5
+      : this.palette === "optimizer-groups-v1"
+      ? 4
+      : this.palette === "rgb-families"
         ? 3
         : this.palette === "rgb-roles"
         ? 2
         : this.palette === "species"
         ? 1
         : 0;
+    this.uniU[17] = diagnostic ? 1 : 0;
+    this.uniU[18] = Math.max(0, Math.floor(diagnostic?.offsetFloats ?? 0));
+    this.uniF[11] = Number.isFinite(diagnostic?.bias) ? diagnostic!.bias! : 0;
+    this.uniF[19] = Number.isFinite(diagnostic?.scale) ? Math.max(0, diagnostic!.scale!) : 1;
     this.device.queue.writeBuffer(this.uni, 0, this.uniData);
 
     const enc = encoder;
@@ -875,12 +970,15 @@ export class SplatRenderer {
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       });
       this.prevVelCount = n;
-      this.strokeBindPos = null; // group binds prevVel — force rebuild
+    this.strokeBindPos = null; // group binds prevVel — force rebuild
+    this.splatBindDiagnostic = null;
+    this.strokeBindDiagnostic = null;
     }
     if (
       this.strokeBind &&
       this.strokeBindPos === posBuf &&
-      this.strokeBindVel === velBuf
+      this.strokeBindVel === velBuf &&
+      this.strokeBindDiagnostic === this.diagnosticBuf
     ) {
       return;
     }
@@ -892,10 +990,12 @@ export class SplatRenderer {
         { binding: 2, resource: { buffer: velBuf } },
         { binding: 3, resource: { buffer: this.accBuf! } },
         { binding: 4, resource: { buffer: this.prevVel! } },
+        { binding: 5, resource: { buffer: this.diagnosticBuf } },
       ],
     });
     this.strokeBindPos = posBuf;
     this.strokeBindVel = velBuf;
+    this.strokeBindDiagnostic = this.diagnosticBuf;
   }
 
   // Cached on buffer identity like points.ts: the fused advect kernel's
@@ -904,7 +1004,8 @@ export class SplatRenderer {
     if (
       this.splatBind &&
       this.splatBindPos === posBuf &&
-      this.splatBindVel === velBuf
+      this.splatBindVel === velBuf &&
+      this.splatBindDiagnostic === this.diagnosticBuf
     ) {
       return;
     }
@@ -915,10 +1016,12 @@ export class SplatRenderer {
         { binding: 1, resource: { buffer: posBuf } },
         { binding: 2, resource: { buffer: velBuf } },
         { binding: 3, resource: { buffer: this.accBuf! } },
+        { binding: 4, resource: { buffer: this.diagnosticBuf } },
       ],
     });
     this.splatBindPos = posBuf;
     this.splatBindVel = velBuf;
+    this.splatBindDiagnostic = this.diagnosticBuf;
   }
 
   destroy(): void {
@@ -930,6 +1033,9 @@ export class SplatRenderer {
     } catch (_) {}
     try {
       this.prevVel?.destroy();
+    } catch (_) {}
+    try {
+      this.zeroDiagnostic.destroy();
     } catch (_) {}
     this.target.destroy();
   }

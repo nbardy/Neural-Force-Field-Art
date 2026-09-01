@@ -216,6 +216,32 @@ input {
   padding: 3px 5px;
 }
 
+/* Display is a top-level section with compact Ink and Color subsections. Keep
+   the nested bodies in the same grid language as the other dock controls, but
+   give their headings a clear visual hierarchy. */
+.tui-subsection {
+  min-width: 0;
+  border-bottom: 1px solid rgba(127, 161, 224, 0.13);
+}
+
+.tui-subsection:last-child {
+  border-bottom: 0;
+}
+
+.tui-subsection-title {
+  padding: 3px 2px 2px;
+  color: #7890b8;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.tui-subsection-body {
+  min-width: 0;
+  padding-bottom: 2px;
+}
+
 .tui-row,
 .tui-segment-row,
 .tui-static-row {
@@ -319,10 +345,47 @@ input {
 }
 
 .tui-chip {
+  position: relative;
   min-height: 19px;
   padding: 3px 5px;
   font-size: 9px;
   font-weight: 700;
+}
+
+/* A title remains available as the native fallback. The popover also appears
+   for keyboard focus, so the distinction between payoff and velocity is
+   discoverable without a mouse. */
+.tui-chip[data-tooltip]::after {
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  bottom: calc(100% + 5px);
+  width: min(270px, calc(100vw - 42px));
+  padding: 6px 7px;
+  border: 1px solid var(--tui-line-hot);
+  border-radius: 3px;
+  background: rgba(5, 10, 22, 0.98);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.42);
+  color: #d6e3ff;
+  content: attr(data-tooltip);
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  text-align: left;
+  text-transform: none;
+  transform: translateY(3px);
+  transition: opacity 100ms ease, transform 100ms ease;
+  visibility: hidden;
+  white-space: normal;
+}
+
+.tui-chip[data-tooltip]:hover::after,
+.tui-chip[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
 }
 
 .tui-chip:hover,
@@ -366,6 +429,10 @@ input {
   margin: 1px 0 3px 65px;
   color: #5f6d85;
   font-size: 9px;
+}
+
+.color-mode-note {
+  margin-top: 0;
 }
 
 .restart-note::before {
@@ -541,6 +608,10 @@ input {
   .tui-section-title {
     padding-left: 5px;
     font-size: 8px;
+  }
+
+  .tui-subsection-title {
+    padding-left: 1px;
   }
 
   .tui-row,

@@ -35,7 +35,10 @@ struct Uni {
   hasVel     : u32,
   classes    : u32,
   palette    : u32,
-  pad        : u32,
+  diagnostic : u32,
+  diagOffset : u32,
+  diagScale  : f32,
+  pad        : f32,
 };
 
 // same hash + salt as the advect/train kernels — class is derived, not stored
@@ -47,6 +50,23 @@ fn pcg(v : u32) -> u32 {
 @group(0) @binding(0) var<uniform> u : Uni;
 @group(0) @binding(1) var<storage, read> posBuf : array<f32>;
 @group(0) @binding(2) var<storage, read> velBuf : array<f32>;
+@group(0) @binding(3) var<storage, read> diagnosticBuf : array<f32>;
+
+fn diagnosticColor(iid : u32, velocity : f32) -> vec3f {
+  let value = clamp((diagnosticBuf[iid + u.diagOffset] + u.pad) * u.diagScale, 0.0, 1.0);
+  let low = min(value * 2.0, 1.0);
+  let high = max(value * 2.0 - 1.0, 0.0);
+  var col = mix(
+    mix(vec3f(0.08, 0.25, 1.0), vec3f(0.9, 0.12, 0.85), low),
+    vec3f(1.0, 0.55, 0.08),
+    high
+  );
+  // Diagnostic-only palette selectors mirror the splat path.
+  if (u.palette == 5u) { col = vec3f(value * 1.15, value * value * 0.8, value * value * value * 0.35); }
+  if (u.palette == 6u) { col = vec3f(0.12 + 0.78 * value, 0.08 + 0.85 * (1.0 - abs(2.0 * value - 1.0)), 0.32 + 0.5 * (1.0 - value)); }
+  if (u.palette == 7u) { col = mix(vec3f(0.23, 0.3, 0.95), vec3f(0.95, 0.25, 0.22), value); }
+  return col * (0.55 + 0.45 * velocity);
+}
 
 struct VSOut {
   @builtin(position) clip  : vec4f,
@@ -101,6 +121,14 @@ fn vs(@builtin(vertex_index) vid : u32,
       cls == 2u
     );
     col = base * (0.55 + 0.45 * t);
+  } else if (u.palette == 4u) {
+    let group = iid % 3u;
+    let base = select(
+      select(vec3f(0.12, 0.95, 1.0), vec3f(1.0, 0.18, 0.78), group == 1u),
+      vec3f(1.0, 0.72, 0.12),
+      group == 2u
+    );
+    col = base * (0.55 + 0.45 * t);
   } else if (u.classes > 0u) {
     // per-species base colour (cosine palette, golden-angle spaced hues),
     // brightness modulated by speed
@@ -109,6 +137,7 @@ fn vs(@builtin(vertex_index) vid : u32,
     let base = 0.55 + 0.45 * cos(vec3f(hue, hue + 2.0944, hue + 4.1888));
     col = base * (0.55 + 0.45 * t);
   }
+  if (u.diagnostic != 0u) { col = diagnosticColor(iid, t); }
   out.color = col;
   return out;
 }
@@ -129,7 +158,18 @@ export interface GpuPointOpts {
   maxSpeed?: number;
   /** multi-species count — colours dots per class (0 = speed colouring) */
   classes?: number;
-  palette?: "speed" | "species" | "rgb-roles" | "rgb-families";
+  palette?: "speed" | "species" | "rgb-roles" | "rgb-families" | "optimizer-groups-v1";
+  /** Optional per-particle scalar colour diagnostic. Values map to [0,1]. */
+  colorDiagnostic?: PointColorDiagnostic;
+}
+
+export interface PointColorDiagnostic {
+  buffer: GPUBuffer;
+  mode: "raw" | "per-unit";
+  offsetFloats?: number;
+  scale?: number;
+  bias?: number;
+  colormap?: "inferno" | "viridis" | "coolwarm";
 }
 
 export class GpuPointRendererWebGPU {
@@ -143,7 +183,7 @@ export class GpuPointRendererWebGPU {
   private readonly ctx: GpuCtx;
   private readonly pipeline: GPURenderPipeline;
   private readonly uni: GPUBuffer;
-  private readonly uniData = new ArrayBuffer(32);
+  private readonly uniData = new ArrayBuffer(48);
   private readonly uniF = new Float32Array(this.uniData);
   private readonly uniU = new Uint32Array(this.uniData);
   private readonly bg: [number, number, number];
@@ -151,6 +191,8 @@ export class GpuPointRendererWebGPU {
   private maxSpeed: number;
   private readonly classes: number;
   private readonly palette: number;
+  private colorDiagnostic: PointColorDiagnostic | null;
+  private readonly zeroDiagnostic: GPUBuffer;
 
   /**
    * @param canvas on-screen canvas (must NOT have a 2d/webgl context yet).
@@ -173,19 +215,32 @@ export class GpuPointRendererWebGPU {
       blend: BLEND_ADD,
       topology: "triangle-strip",
     });
-    this.uni = uniformBuffer(device, 32);
+    this.uni = uniformBuffer(device, 48);
     this.pointSize = opts.pointSize ?? 2;
     this.bg = opts.background ?? [2, 0, 12];
     this.maxSpeed = opts.maxSpeed ?? 4;
     this.classes = opts.classes ?? 0;
     this.palette =
-      opts.palette === "rgb-families"
+      opts.palette === "optimizer-groups-v1"
+        ? 4
+        : opts.palette === "rgb-families"
         ? 3
         : opts.palette === "rgb-roles"
         ? 2
         : opts.palette === "species"
         ? 1
         : 0;
+    this.colorDiagnostic = opts.colorDiagnostic ?? null;
+    this.zeroDiagnostic = device.createBuffer({
+      size: 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    this.device.queue.writeBuffer(this.zeroDiagnostic, 0, new Float32Array([0]));
+  }
+
+  /** Select a scalar colour source while retaining point/velocity geometry. */
+  setColorDiagnostic(diagnostic: PointColorDiagnostic | null): void {
+    this.colorDiagnostic = diagnostic;
   }
 
   /** Live velocity-colour scale; independent of the render pipeline. */
@@ -199,6 +254,7 @@ export class GpuPointRendererWebGPU {
   private bufBind: GPUBindGroup | null = null;
   private bufBindPos: GPUBuffer | null = null;
   private bufBindVel: GPUBuffer | null = null;
+  private bufBindDiagnostic: GPUBuffer | null = null;
 
   /** Draw N round dots straight from raw GPU buffers (interleaved xy f32) —
    *  the zero-copy path for the fused advect kernel's particle state.
@@ -248,17 +304,31 @@ export class GpuPointRendererWebGPU {
     this.uniF[3] = this.maxSpeed;
     this.uniU[4] = 1; // hasVel
     this.uniU[5] = this.classes;
-    this.uniU[6] = this.palette;
+    this.uniU[6] = diagnostic
+      ? diagnostic.colormap === "viridis" ? 6 : diagnostic.colormap === "coolwarm" ? 7 : 5
+      : this.palette;
+    const diagnostic = this.colorDiagnostic;
+    this.uniU[7] = diagnostic ? 1 : 0;
+    this.uniU[8] = Math.max(0, Math.floor(diagnostic?.offsetFloats ?? 0));
+    this.uniF[9] = Number.isFinite(diagnostic?.scale) ? Math.max(0, diagnostic!.scale!) : 1;
+    this.uniF[10] = Number.isFinite(diagnostic?.bias) ? diagnostic!.bias! : 0;
     this.device.queue.writeBuffer(this.uni, 0, this.uniData);
 
-    if (this.bufBindPos !== posBuf || this.bufBindVel !== velBuf) {
+    const diagnosticBuffer = diagnostic?.buffer ?? this.zeroDiagnostic;
+    if (
+      this.bufBindPos !== posBuf ||
+      this.bufBindVel !== velBuf ||
+      this.bufBindDiagnostic !== diagnosticBuffer
+    ) {
       this.bufBind = bindGroup(this.device, this.pipeline, [
         { binding: 0, resource: { buffer: this.uni } },
         { binding: 1, resource: { buffer: posBuf } },
         { binding: 2, resource: { buffer: velBuf } },
+        { binding: 3, resource: { buffer: diagnosticBuffer } },
       ]);
       this.bufBindPos = posBuf;
       this.bufBindVel = velBuf;
+      this.bufBindDiagnostic = diagnosticBuffer;
     }
     const group = this.bufBind!;
 
@@ -303,6 +373,10 @@ export class GpuPointRendererWebGPU {
     this.uniU[4] = vel ? 1 : 0; // byte offset 16
     this.uniU[5] = this.classes;
     this.uniU[6] = this.palette;
+    const diagnostic = this.colorDiagnostic;
+    this.uniU[7] = diagnostic ? 1 : 0;
+    this.uniU[8] = Math.max(0, Math.floor(diagnostic?.offsetFloats ?? 0));
+    this.uniF[9] = Number.isFinite(diagnostic?.scale) ? Math.max(0, diagnostic!.scale!) : 1;
     this.device.queue.writeBuffer(this.uni, 0, this.uniData);
 
     // Zero-copy: tfjs tensor GPU buffers, same device -> bindable directly.
@@ -313,6 +387,7 @@ export class GpuPointRendererWebGPU {
       { binding: 0, resource: { buffer: this.uni } },
       { binding: 1, resource: { buffer: (posGpu as any).buffer } },
       { binding: 2, resource: { buffer: ((velGpu ?? posGpu) as any).buffer } },
+      { binding: 3, resource: { buffer: diagnostic?.buffer ?? this.zeroDiagnostic } },
     ]);
 
     renderPass(
@@ -336,6 +411,9 @@ export class GpuPointRendererWebGPU {
     } catch (_) {}
     try {
       (this.ctx.context as any).unconfigure?.();
+    } catch (_) {}
+    try {
+      this.zeroDiagnostic.destroy();
     } catch (_) {}
   }
 }

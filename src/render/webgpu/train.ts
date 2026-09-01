@@ -47,12 +47,59 @@ export interface TrainPhysics {
   maxVelocity: number;
 }
 
+/**
+ * Optional generator optimizer layout. The legacy `lr` field remains the
+ * uniform learning rate; omitting this (or using `uniform`) is therefore
+ * backward-compatible with every existing caller and serialized control.
+ *
+ * `shared-heads` applies `shared` to hashgrid feature-table segments and the
+ * two head rates to packed head 0 and head 1 segments respectively.
+ */
+export type GeneratorLearningRates =
+  | { readonly tag: "uniform" }
+  | {
+      readonly tag: "shared-heads";
+      readonly shared: number;
+      readonly head0: number;
+      readonly head1: number;
+    };
+
+export interface ResolvedGeneratorLearningRates {
+  readonly uniform: number;
+  readonly shared: number;
+  readonly head0: number;
+  readonly head1: number;
+}
+
+/**
+ * Pure validation and expansion of the public LR contract. Keeping the
+ * uniform fallback here makes all callers (including tests) agree on the
+ * values uploaded to the WGSL uniform buffer.
+ */
+export function resolveGeneratorLearningRates(
+  lr: number,
+  rates?: GeneratorLearningRates
+): ResolvedGeneratorLearningRates {
+  const resolved =
+    rates?.tag === "shared-heads"
+      ? { uniform: lr, shared: rates.shared, head0: rates.head0, head1: rates.head1 }
+      : { uniform: lr, shared: lr, head0: lr, head1: lr };
+  for (const [name, value] of Object.entries(resolved)) {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`train: ${name} learning rate must be finite and >= 0`);
+    }
+  }
+  return resolved;
+}
+
 export interface TrainStepOpts {
   /** batch size (≤ MAX_BATCH) */
   n: number;
   alpha: number;
   /** Adam learning rate (used when apply) */
   lr: number;
+  /** Optional per-packed-segment generator Adam rates. */
+  learningRates?: GeneratorLearningRates;
   /** RNG stream for in-kernel batch generation/sampling (frame counter is perfect) */
   seed?: number;
   /**
@@ -125,7 +172,7 @@ export class FusedTrainer {
   private readonly uniA: GPUBuffer;
   private readonly uniB: GPUBuffer;
   private readonly uniAData = new ArrayBuffer(64);
-  private readonly uniBData = new ArrayBuffer(32);
+  private readonly uniBData = new ArrayBuffer(48);
   private bindA: GPUBindGroup;
   private readonly bindB: GPUBindGroup;
   /**
@@ -328,7 +375,7 @@ export class FusedTrainer {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.uniB = device.createBuffer({
-      size: 32,
+      size: 48,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.partDummy = device.createBuffer({
@@ -475,20 +522,24 @@ export class FusedTrainer {
 
     const fB = new Float32Array(this.uniBData);
     const uB = new Uint32Array(this.uniBData);
-    fB[0] = o.lr;
-    fB[1] = ADAM_DEFAULTS.beta1;
-    fB[2] = ADAM_DEFAULTS.beta2;
-    fB[3] = ADAM_DEFAULTS.eps;
-    uB[4] = Math.max(1, this.adamStep);
-    uB[5] = apply ? 1 : 0;
-    uB[6] = o.n;
+    const rates = resolveGeneratorLearningRates(o.lr, o.learningRates);
+    fB[0] = rates.uniform;
+    fB[1] = rates.shared;
+    fB[2] = rates.head0;
+    fB[3] = rates.head1;
+    fB[4] = ADAM_DEFAULTS.beta1;
+    fB[5] = ADAM_DEFAULTS.beta2;
+    fB[6] = ADAM_DEFAULTS.eps;
+    uB[7] = Math.max(1, this.adamStep);
+    uB[8] = apply ? 1 : 0;
+    uB[9] = o.n;
     // Chunk by SAMPLES so a small batch stays on one chunk (no partials
     // overhead) and a big one spreads across the GPU.
     const chunks = Math.max(
       1,
       Math.min(this.gradChunkCap, Math.ceil(o.n / SAMPLES_PER_GRAD_CHUNK))
     );
-    uB[7] = chunks;
+    uB[10] = chunks;
     this.device.queue.writeBuffer(this.uniB, 0, this.uniBData);
 
     // PASS A = three dispatches sharing this.bindA: fwd (wgA workgroups —

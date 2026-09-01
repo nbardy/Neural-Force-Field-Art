@@ -284,7 +284,7 @@ function defaultsForPiece(piece: number): RuntimeConfig {
   );
   return {
     piece,
-    border: { tag: "wrap" },
+    border: GALLERY[piece].border ?? { tag: "wrap" },
     encoding: adv.tag === "on" ? adv.encoding : ({ tag: "pair-rotation" } as TupleEncoding),
     target: adv.tag === "on" ? adversaryTargetOf(adv) : { tag: "force" },
     loss: adv.tag === "on" ? adversaryLossOf(adv) : { tag: "raw-vector" },
@@ -976,6 +976,23 @@ function ControlSection({
   );
 }
 
+function ControlSubsection({
+  title,
+  children,
+  testid,
+}: {
+  title: string;
+  children: ReactNode;
+  testid?: string;
+}): ReactElement {
+  return (
+    <section className="tui-subsection" aria-label={title} data-testid={testid}>
+      <div className="tui-subsection-title">{title}</div>
+      <div className="tui-subsection-body">{children}</div>
+    </section>
+  );
+}
+
 function RangeRow({
   label,
   value,
@@ -1038,6 +1055,7 @@ function Segmented<T extends string>({
             role="radio"
             aria-checked={value === choice.value}
             data-active={value === choice.value ? "true" : "false"}
+            data-tooltip={choice.title}
             title={choice.title}
             onClick={() => onChange(choice.value)}
           >
@@ -1338,7 +1356,7 @@ function App(): ReactElement {
     () => restoredDock?.particles ?? 1_000
   );
   const [samples, setSamples] = useState(
-    () => restoredDock?.samples ?? 256
+    () => restoredDock?.samples ?? GALLERY[DEFAULT_PIECE_INDEX].sampleRate ?? 256
   );
   // The "train B" ceiling is a property of the LIVE trainer (device storage
   // limits × field layout × rollout K), not a constant. Seeded optimistically
@@ -1346,14 +1364,17 @@ function App(): ReactElement {
   // a stale value here is cosmetic, never fatal.
   const [maxSamples, setMaxSamples] = useState(TRAIN_BATCH_MAX);
   const [maxVelocity, setMaxVelocity] = useState(
-    () => restoredDock?.maxVelocity ?? 24
+    () => restoredDock?.maxVelocity ?? GALLERY[DEFAULT_PIECE_INDEX].maxVelocity
   );
   const [drive, setDrive] = useState(() => restoredDock?.drive ?? 0.65);
   const [generatorLearningRate, setGeneratorLearningRate] = useState(
-    () => restoredDock?.generatorLearningRate ?? 1e-3
+    () => restoredDock?.generatorLearningRate ?? GALLERY[DEFAULT_PIECE_INDEX].learningRate
   );
   const [discriminatorLearningRate, setDiscriminatorLearningRate] = useState(
-    () => restoredDock?.discriminatorLearningRate ?? 3e-3
+    () =>
+      restoredDock?.discriminatorLearningRate ??
+      GALLERY[DEFAULT_PIECE_INDEX].discriminatorLearningRate ??
+      3e-3
   );
   /**
    * Pixel-critic reward. NOT restored from the persisted dock and not in
@@ -1365,7 +1386,7 @@ function App(): ReactElement {
    */
   const [pixelWeight, setPixelWeight] = useState(0);
   const [resetRate, setResetRate] = useState(
-    () => restoredDock?.resetRate ?? 0.01
+    () => restoredDock?.resetRate ?? GALLERY[DEFAULT_PIECE_INDEX].resetRate
   );
   const [decay, setDecay] = useState(() => restoredDock?.decay ?? 0);
   const [look, setLook] = useState<InkLook>(
@@ -1936,7 +1957,8 @@ function App(): ReactElement {
             <p className="tui-note restart-note">border is compiled · changing it restarts</p>
           </ControlSection>
 
-          <ControlSection title="ink" testid="ink-controls">
+          <ControlSection title="display" testid="display-controls">
+            <ControlSubsection title="ink" testid="ink-controls">
             {piece.lookEditable && (
               <Segmented
                 label="look"
@@ -2000,6 +2022,74 @@ function App(): ReactElement {
                   handleRef.current?.setStrokeLength(value);
                 }}
               />
+            )}
+            </ControlSubsection>
+
+            {adversary && (
+              <ControlSubsection title="color" testid="color-controls">
+                {isAgreeDisagree ? (
+                  <div className="tui-static-row" data-testid="color-mode-control">
+                    <span>color</span>
+                    <strong>RGB · A / B / derived C</strong>
+                  </div>
+                ) : (
+                  <>
+                    <Segmented
+                      label="color"
+                      value={colorMode.tag}
+                      testid="color-mode-control"
+                      choices={[
+                        {
+                          value: "velocity",
+                          label: "VEL",
+                          title:
+                            "Velocity color maps each particle's current post-force speed; it changes with the rendered motion, not the ink shape.",
+                        },
+                        {
+                          value: "surprise-raw",
+                          label: "RAW",
+                          title:
+                            "Raw payoff color shows the absolute adversarial payoff. It can look particular because magnitude and local scale dominate; stroke geometry still comes from the ink controls.",
+                        },
+                        {
+                          value: "surprise-per-unit",
+                          label: "PER UNIT",
+                          title:
+                            "Per-unit payoff normalizes payoff by the local force/velocity scale, emphasizing relative surprise. It can look particular while VEL/CURL still affect ink geometry.",
+                        },
+                      ]}
+                      onChange={(tag) =>
+                        updateColor(
+                          tag === "velocity"
+                            ? { tag: "velocity" }
+                            : {
+                                tag,
+                                colormap:
+                                  colorMode.tag !== "velocity" ? colorMode.colormap : "inferno",
+                              }
+                        )
+                      }
+                    />
+                    <p className="tui-note color-mode-note">
+                      VEL colors motion; RAW / PER UNIT color payoff. Ink geometry is separate.
+                    </p>
+                  </>
+                )}
+                {!isAgreeDisagree && colorMode.tag !== "velocity" && (
+                  <Segmented
+                    label="map"
+                    value={colorMode.colormap}
+                    testid="colormap-control"
+                    choices={CMAPS.map((name) => ({ value: name, label: name.toUpperCase() }))}
+                    onChange={(colormap) => updateColor({ ...colorMode, colormap })}
+                  />
+                )}
+                {piece.palette === "optimizer-groups-v1" && (
+                  <p className="tui-note color-mode-note" data-testid="special-color-legend">
+                    SPECIAL · cyan shared · pink head A · gold head B · brightness = speed
+                  </p>
+                )}
+              </ControlSubsection>
             )}
           </ControlSection>
 
@@ -2155,6 +2245,13 @@ function App(): ReactElement {
                   {(discriminatorLearningRate / generatorLearningRate).toFixed(2)}×
                 </strong>
               </div>
+              {piece.generatorLearningRates?.tag === "shared-heads" && (
+                <div className="tui-note" data-testid="generator-lr-groups">
+                  G groups · shared {piece.generatorLearningRates.shared.toExponential(1)} ·
+                  A {piece.generatorLearningRates.head0.toExponential(1)} ·
+                  B {piece.generatorLearningRates.head1.toExponential(1)}
+                </div>
+              )}
             </ControlSection>
           )}
 
@@ -2503,43 +2600,6 @@ function App(): ReactElement {
               <p className="tui-note restart-note">
                 target, loss, tuple, observer, K and ε rebuild GPU pipelines
               </p>
-              {isAgreeDisagree ? (
-                <div className="tui-static-row" data-testid="color-mode-control">
-                  <span>color</span>
-                  <strong>RGB · A / B / derived C</strong>
-                </div>
-              ) : (
-                <Segmented
-                  label="color"
-                  value={colorMode.tag}
-                  testid="color-mode-control"
-                  choices={[
-                    { value: "velocity", label: "VEL" },
-                    { value: "surprise-raw", label: "RAW" },
-                    { value: "surprise-per-unit", label: "PER UNIT" },
-                  ]}
-                  onChange={(tag) =>
-                    updateColor(
-                      tag === "velocity"
-                        ? { tag: "velocity" }
-                        : {
-                            tag,
-                            colormap:
-                              colorMode.tag !== "velocity" ? colorMode.colormap : "inferno",
-                          }
-                    )
-                  }
-                />
-              )}
-              {!isAgreeDisagree && colorMode.tag !== "velocity" && (
-                <Segmented
-                  label="map"
-                  value={colorMode.colormap}
-                  testid="colormap-control"
-                  choices={CMAPS.map((name) => ({ value: name, label: name.toUpperCase() }))}
-                  onChange={(colormap) => updateColor({ ...colorMode, colormap })}
-                />
-              )}
             </ControlSection>
           )}
 

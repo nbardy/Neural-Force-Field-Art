@@ -1313,7 +1313,8 @@ export const TRAIN_WG_B = 64;
 
 /**
  * Pass B bindings:
- *   0 uniform UB { lr, beta1, beta2, eps, t, apply, n, pad }
+ *   0 uniform UB { lr, sharedLR, head0LR, head1LR, beta1, beta2, eps,
+ *                   t, apply, n, chunks }
  *   1 storage read_write weights
  *   2 storage read       scratch
  *   3 storage read_write grads   (always written — verification reads this)
@@ -1463,9 +1464,26 @@ export function trainPassBShader(
     }
   }
 
+  // The packed layout is fixed when this shader is generated. Selecting the
+  // rate by segment range avoids a second metadata buffer and keeps optimizer
+  // configuration out of the per-frame bind-group layout.
+  const lrRanges = field.segments.map((seg) => {
+    const rate = seg.role === "grid"
+      ? "ub.sharedLR"
+      : seg.head === 0
+        ? "ub.head0LR"
+        : seg.head === 1
+          ? "ub.head1LR"
+          : "ub.lr";
+    return `  if (t >= ${seg.floatOffset}u && t < ${seg.floatOffset + seg.floatLength}u) { return ${rate}; }`;
+  }).join("\n");
+
   return /* wgsl */ `
 struct UB {
   lr : f32,
+  sharedLR : f32,
+  head0LR : f32,
+  head1LR : f32,
   beta1 : f32,
   beta2 : f32,
   eps : f32,
@@ -1483,6 +1501,11 @@ struct UB {
 ${extGradCount > 0 ? "// external game gradients, structurally separate from field loss\n@group(0) @binding(6) var<storage, read> extGrad0 : array<f32>;" : ""}
 ${extGradCount > 1 ? "@group(0) @binding(7) var<storage, read> extGrad1 : array<f32>;" : ""}
 @group(0) @binding(8) var<storage, read_write> gradPartials : array<f32>;
+
+fn learningRateForWeight(t : u32) -> f32 {
+${lrRanges}
+  return ub.lr;
+}
 
 // STAGE 1 (split-K). One thread per (weight, batch-chunk): each reduces its
 // weight over ONE SLICE of the batch, not the whole thing.
@@ -1533,7 +1556,7 @@ ${extGradCount > 1 ? "  g = g + extGrad1[t];" : ""}
     let tf_ = f32(ub.t);
     let mhat = m / (1.0 - pow(ub.beta1, tf_));
     let vhat = v / (1.0 - pow(ub.beta2, tf_));
-    let step = ub.lr * mhat / (sqrt(vhat) + ub.eps);
+    let step = learningRateForWeight(t) * mhat / (sqrt(vhat) + ub.eps);
     let next = weights[t] - step;
     weights[t] = select(weights[t], next, next == next && abs(next) <= 3.402823466e+38);
   }

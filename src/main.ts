@@ -69,7 +69,7 @@ import { SplatRenderer, SplatStyle } from "./render/webgpu/splat";
 import { AdvectKernel } from "./render/webgpu/advect";
 import type { BorderMode, FieldLayout } from "./render/webgpu/advect_wgsl";
 import { totalMacs } from "./render/webgpu/advect_wgsl";
-import { FusedTrainer } from "./render/webgpu/train";
+import { FusedTrainer, type GeneratorLearningRates } from "./render/webgpu/train";
 import { MAX_BATCH, type FieldLossSpec } from "./render/webgpu/train_wgsl";
 import { FieldProbe, type FieldHealth } from "./render/webgpu/field_probe";
 import {
@@ -370,6 +370,8 @@ export interface ArtPieceConfig {
   drive?: number;
   maxVelocity: number;
   resetRate: number;
+  /** Initial train-B sample count for this piece; absent defaults to 256. */
+  sampleRate?: number;
   drawRate: number;
   /**
    * Field/generator Adam learning rate. On a standalone adversary piece the
@@ -379,11 +381,17 @@ export interface ArtPieceConfig {
    * are live controls because their ratio changes the game, not just its speed.
    */
   learningRate: number;
+  /** Initial predictor/discriminator Adam LR; absent defaults to 3e-3. */
+  discriminatorLearningRate?: number;
+  /** Initial border mode; an explicit start-loop override wins. */
+  border?: BorderMode;
   backgroundColor: [number, number, number];
   alphaBlend: number;
   renderer: RendererType;
+  /** Optional per-packed-segment generator rates for fused dual-head fields. */
+  generatorLearningRates?: GeneratorLearningRates;
   /** Explicit particle palette; Agree+Disagree uses stable exact RGB roles. */
-  palette?: "speed" | "species" | "rgb-roles" | "rgb-families";
+  palette?: "speed" | "species" | "rgb-roles" | "rgb-families" | "optimizer-groups-v1";
   mode?: "standard" | "agree-disagree";
   /**
    * Legacy path: a sigmoid MLP whose `[0,1]` output is re-centered by
@@ -566,8 +574,8 @@ export function driveForForceMagnitude(
  * the dock's sliders were gated on the RELATIONAL game being on.
  */
 export const GAME_LEARNING_RATE_RANGE = {
-  generator: { min: 1e-5, max: 1e-2 },
-  discriminator: { min: 1e-4, max: 3e-2 },
+  generator: { min: 1e-6, max: 1e-1 },
+  discriminator: { min: 1e-6, max: 1e-1 },
 } as const;
 
 /**
@@ -660,7 +668,7 @@ export function resolveLiveGameControls(
       GAME_LEARNING_RATE_RANGE.discriminator.min,
       Math.min(
         GAME_LEARNING_RATE_RANGE.discriminator.max,
-        floatParam(q, "dLR", 3e-3)
+        floatParam(q, "dLR", cfg.discriminatorLearningRate ?? 3e-3)
       )
     ),
     // A piece with no declared critic has no reward to scale: 0 is the MEANING
@@ -2865,7 +2873,7 @@ export const GALLERY: ArtPieceConfig[] = [
   // sessions at a DIFFERENT artwork — a rename is loud (see
   // DEFAULT_PIECE_INDEX below), a renumber is not. New pieces go at the end.
   {
-    // THE DEFAULT PIECE (see DEFAULT_PIECE_NAME). The Pair WTA K=4 game — the
+    // ORIGINAL DEFAULT PIECE (see DEFAULT_PIECE_NAME). The Pair WTA K=4 game — the
     // SE(2)-canonicalized pair observer with an explicit ANGULAR payoff, which
     // is what makes the swirls — moved onto the HASHGRID dual field.
     // The grid's local features give the generator per-cell freedom instead of
@@ -3091,6 +3099,49 @@ export const GALLERY: ArtPieceConfig[] = [
     fieldLoss: ZERO_FIELD_LOSS,
     computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
   },
+  {
+    // Captured dock recipe promoted as a new work. Keep this entry appended:
+    // gallery indices are part of persisted dock state and shared URLs.
+    // The supplied recipe is point-observed, WTA-K10, soft-angle, and uses a
+    // dual HashGrid field with curl ink.
+    name: "Adversary · Point · HashGrid · Curl · WTA10",
+    particleCount: 190000,
+    friction: 0.97,
+    drive: 0.9,
+    forceMagnitude: forceMagnitudeForDrive(0.9, 65.75, 0.97),
+    maxVelocity: 65.75,
+    resetRate: 0.014,
+    drawRate: 2,
+    learningRate: 0.0048,
+    discriminatorLearningRate: 0.00011208369124213449,
+    sampleRate: 9584,
+    border: { tag: "reset" },
+    generatorLearningRates: {
+      tag: "shared-heads",
+      shared: 0.0008,
+      head0: 0.0048,
+      head1: 0.0018,
+    },
+    palette: "optimizer-groups-v1",
+    backgroundColor: [2, 3, 9],
+    alphaBlend: 0.17,
+    renderer: "alpha-fade",
+    stroke: "curl",
+    strokeLen: 3,
+    fieldArch: { ...ARCH.dualHashgrid, alpha: 0.17 },
+    archEditable: true,
+    archDock: DUAL_ARCH_DOCK,
+    adversary: {
+      tag: "on",
+      kind: { tag: "wta", k: 10, relaxEps: 0.05 },
+      encoding: { tag: "point" },
+      loss: { tag: "soft-angle", tau: 0.05 },
+      weight: 0.015,
+      pressure: GALLERY_ANTI_COLLAPSE,
+    },
+    fieldLoss: ZERO_FIELD_LOSS,
+    computeLoss: helmholtzChaosLoss(ZERO_FIELD_LOSS),
+  },
 ];
 
 /**
@@ -3098,7 +3149,7 @@ export const GALLERY: ArtPieceConfig[] = [
  * so that appending pieces cannot shift the default and renaming this one
  * fails LOUDLY at module load instead of silently falling back to GALLERY[0].
  */
-export const DEFAULT_PIECE_NAME = "Adversary · Pair · HashGrid · Curl";
+export const DEFAULT_PIECE_NAME = "Adversary · Point · HashGrid · Curl · WTA10";
 
 export const DEFAULT_PIECE_INDEX: number = (() => {
   const index = GALLERY.findIndex((piece) => piece.name === DEFAULT_PIECE_NAME);
@@ -3411,7 +3462,7 @@ export function startLoop(
   let running = true;
   const cfg = GALLERY[configIndex];
   let particleCount = cfg.particleCount; // rendered/advected particles (live)
-  let sampleRate = 256; // points the field trains on per frame (live)
+  let sampleRate = cfg.sampleRate ?? 256; // points the field trains on per frame (live)
   let warnedSampleRate = 0; // last over-cap request warned about (drag de-dupe)
   let resetRate = cfg.resetRate; // respawn fraction (live — see setResetRate)
   let maxVelocity = cfg.maxVelocity;
@@ -3422,6 +3473,7 @@ export function startLoop(
   let forceMagnitude = initialGameControls.forceMagnitude;
   let generatorLearningRate = initialGameControls.generatorLearningRate;
   let discriminatorLearningRate = initialGameControls.discriminatorLearningRate;
+  const groupedGeneratorRates = cfg.generatorLearningRates;
   // κ runs ONCE, here: piece defaults merged with `?adv/?advK/?advM/?advEps/
   // ?advWeight`, the physical `?drive`, game `?gLR/?dLR`, and `?color/?cmap`.
   // Everything below consumes canonical values.
@@ -3451,7 +3503,7 @@ export function startLoop(
       adversaryLossOf(advSpec)
     );
   }
-  const border = options.overrides?.border ?? ({ tag: "wrap" } as const);
+  const border = options.overrides?.border ?? cfg.border ?? ({ tag: "wrap" } as const);
   const observerGeometry: ObserverGeometry =
     border.tag === "wrap" ? "periodic" : "euclidean";
   let colorMode = resolveColorMode(cfg, advSpec, query);
@@ -3945,6 +3997,21 @@ export function startLoop(
           n: sampleRate,
           alpha: (field as HelmholtzField).alpha,
           lr: generatorLearningRate,
+          learningRates:
+            groupedGeneratorRates?.tag === "shared-heads"
+              ? {
+                  tag: "shared-heads",
+                  shared:
+                    groupedGeneratorRates.shared *
+                    (generatorLearningRate / Math.max(cfg.learningRate, 1e-12)),
+                  head0:
+                    groupedGeneratorRates.head0 *
+                    (generatorLearningRate / Math.max(cfg.learningRate, 1e-12)),
+                  head1:
+                    groupedGeneratorRates.head1 *
+                    (generatorLearningRate / Math.max(cfg.learningRate, 1e-12)),
+                }
+              : undefined,
           seed: frame,
           source: trainSource,
           mixRandom,
@@ -4202,24 +4269,27 @@ export function startLoop(
     // (3) RENDER — dots drawn straight from the kernel's particle buffers,
     //     recorded into `enc`.
     let renderMs = 0;
-    // A surprise diagnostic takes the whole render pass: colour comes from one
-    // plane of the fused per-particle diagnostic buffer, not from velocity.
+    // Diagnostic colour is orthogonal to ink geometry. The selected surprise
+    // plane is sampled for the HUD and handed to the normal point/splat
+    // renderer; DOT/VEL/CURL therefore remains active for RAW and PER UNIT.
     if (isSurpriseColorMode(colorMode) && advTrainer && advSurStats) {
       const metric = surpriseMetricOf(colorMode)!;
       const plane = advTrainer.surprisePlane(metric);
-      const r0 = performance.now();
-      const sr = surpriseRenderers.get(colorMode.colormap)!;
-      sr.span = advSurStats.norm.span;
-      sr.encodeRender(
-        enc,
-        advect.posBuffer,
-        plane.buffer,
-        advect.count,
-        w,
-        h,
-        tsRender,
-        plane.offsetFloats
-      );
+      // Use the normalizer's EMA-smoothed P2/P98 span for rendering. The raw
+      // sample remains a HUD/debug readout; using it here makes the palette
+      // flicker and can resurrect numerical noise as a full rainbow.
+      const span = advSurStats.norm.span;
+      const scale = 1 / Math.max(span.hi - span.lo, 1e-6);
+      const diagnostic = {
+        buffer: plane.buffer,
+        mode: metric === "raw-payoff" ? ("raw" as const) : ("per-unit" as const),
+        offsetFloats: plane.offsetFloats,
+        bias: -span.lo,
+        scale,
+        colormap: colorMode.colormap,
+      };
+      splat?.setColorDiagnostic(diagnostic);
+      renderer?.setColorDiagnostic(diagnostic);
       advSurRec = advSurStats.encodeSample(
         enc,
         plane.buffer,
@@ -4228,8 +4298,11 @@ export function startLoop(
         advTrainer.surpriseCoverage().window,
         plane.offsetFloats
       );
-      renderMs = performance.now() - r0;
-    } else if (renderer) {
+    } else {
+      splat?.setColorDiagnostic(null);
+      renderer?.setColorDiagnostic(null);
+    }
+    if (renderer) {
       const r0 = performance.now();
       const useSplat =
         splat !== null &&
