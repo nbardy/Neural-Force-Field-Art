@@ -1,4 +1,8 @@
-## Neural Force Feld Art
+# Neural Force Field Art
+
+**Live demo:** https://nbardy.github.io/Neural-Force-Field-Art/
+
+GitHub Pages deployment: `gh-pages` branch.
 
 This is an experiment of mine that [started years ago](https://github.com/nbardy/force-field-ml-art). My goal is to make art with neural
 networks that optimizes movement of particles with neural networks.
