@@ -276,6 +276,36 @@ function resolveArchPreset(q: URLSearchParams): ArchPresetKey | null {
   return raw;
 }
 
+function pieceSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+/** `?piece=<index|name|slug>` — select a gallery recipe without a dock blob. */
+export function resolvePieceParam(q: URLSearchParams): number | null {
+  const raw = q.get("piece");
+  if (raw === null || raw.trim() === "") return null;
+  if (/^\d+$/.test(raw)) {
+    const index = Number(raw);
+    return Number.isSafeInteger(index) && index >= 0 && index < GALLERY.length
+      ? index
+      : null;
+  }
+  const needle = raw.trim().toLowerCase();
+  const index = GALLERY.findIndex(
+    (piece) => piece.name.toLowerCase() === needle || pieceSlug(piece.name) === pieceSlug(raw)
+  );
+  return index >= 0 ? index : null;
+}
+
+function initialPieceSelection(): number {
+  const selected = resolvePieceParam(new URLSearchParams(window.location.search));
+  if (selected !== null) return selected;
+  return DEFAULT_PIECE_INDEX;
+}
+
 function defaultsForPiece(piece: number): RuntimeConfig {
   // URL adversary knobs are intentionally GLOBAL: selecting another gallery
   // piece re-resolves that piece through the same query. This matches
@@ -629,6 +659,7 @@ const DOCK_OVERRIDE_PARAMS = [
   "drive",
   "color",
   "cmap",
+  "piece",
   "decay",
   "stroke",
   "strokeLen",
@@ -1352,14 +1383,14 @@ function App(): ReactElement {
   // (DEFAULT_PIECE_INDEX), never a literal here: a hardcoded 0 is what made
   // "the default" a property of GALLERY's ORDER instead of a named choice.
   const [runtime, setRuntime] = useState<RuntimeConfig>(
-    () => restoredDock?.runtime ?? defaultsForPiece(DEFAULT_PIECE_INDEX)
+    () => restoredDock?.runtime ?? defaultsForPiece(initialPieceSelection())
   );
 
   const [particles, setParticles] = useState(
     () => restoredDock?.particles ?? 1_000
   );
   const [samples, setSamples] = useState(
-    () => restoredDock?.samples ?? GALLERY[DEFAULT_PIECE_INDEX].sampleRate ?? 256
+    () => restoredDock?.samples ?? GALLERY[runtime.piece].sampleRate ?? 256
   );
   // The "train B" ceiling is a property of the LIVE trainer (device storage
   // limits × field layout × rollout K), not a constant. Seeded optimistically
@@ -1367,16 +1398,16 @@ function App(): ReactElement {
   // a stale value here is cosmetic, never fatal.
   const [maxSamples, setMaxSamples] = useState(TRAIN_BATCH_MAX);
   const [maxVelocity, setMaxVelocity] = useState(
-    () => restoredDock?.maxVelocity ?? GALLERY[DEFAULT_PIECE_INDEX].maxVelocity
+    () => restoredDock?.maxVelocity ?? GALLERY[runtime.piece].maxVelocity
   );
   const [drive, setDrive] = useState(() => restoredDock?.drive ?? 0.65);
   const [generatorLearningRate, setGeneratorLearningRate] = useState(
-    () => restoredDock?.generatorLearningRate ?? GALLERY[DEFAULT_PIECE_INDEX].learningRate
+    () => restoredDock?.generatorLearningRate ?? GALLERY[runtime.piece].learningRate
   );
   const [discriminatorLearningRate, setDiscriminatorLearningRate] = useState(
     () =>
       restoredDock?.discriminatorLearningRate ??
-      GALLERY[DEFAULT_PIECE_INDEX].discriminatorLearningRate ??
+      GALLERY[runtime.piece].discriminatorLearningRate ??
       3e-3
   );
   /**
@@ -1389,7 +1420,7 @@ function App(): ReactElement {
    */
   const [pixelWeight, setPixelWeight] = useState(0);
   const [resetRate, setResetRate] = useState(
-    () => restoredDock?.resetRate ?? GALLERY[DEFAULT_PIECE_INDEX].resetRate
+    () => restoredDock?.resetRate ?? GALLERY[runtime.piece].resetRate
   );
   const [decay, setDecay] = useState(() => restoredDock?.decay ?? 0);
   const [look, setLook] = useState<InkLook>(
@@ -1424,7 +1455,7 @@ function App(): ReactElement {
   const [colorMode, setColorMode] = useState<ColorMode>(
     () =>
       restoredDock?.colorMode ??
-      GALLERY[DEFAULT_PIECE_INDEX].colorMode ?? { tag: "velocity" }
+      GALLERY[runtime.piece].colorMode ?? { tag: "velocity" }
   );
   const [surpriseSpan, setSurpriseSpan] = useState<{
     lo: number;
