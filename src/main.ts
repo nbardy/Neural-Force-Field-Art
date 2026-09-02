@@ -364,6 +364,8 @@ export interface PixelCriticSpec {
 
 export interface ArtPieceConfig {
   name: string;
+  /** Curated artwork shown in the bottom named-piece strip. */
+  named?: boolean;
   particleCount: number;
   friction: number;
   forceMagnitude: number;
@@ -2226,6 +2228,7 @@ export const GALLERY: ArtPieceConfig[] = [
   {
     // Spiral attractor — look (Ghost/Clean/Trails) and arch are dock axes.
     name: "Spiral",
+    named: false,
     particleCount: 1000,
     friction: 0.985,
     forceMagnitude: 3.0,
@@ -2244,6 +2247,7 @@ export const GALLERY: ArtPieceConfig[] = [
   },
   {
     name: "Vortex",
+    named: false,
     particleCount: 1200,
     friction: 0.985,
     forceMagnitude: 3.0,
@@ -2264,6 +2268,7 @@ export const GALLERY: ArtPieceConfig[] = [
   {
     // Particle→spiral radial residual (+ tiny center). Arch/look via dock.
     name: "Galaxy",
+    named: false,
     particleCount: 1500,
     friction: 0.975,
     forceMagnitude: 4.0,
@@ -2283,6 +2288,7 @@ export const GALLERY: ArtPieceConfig[] = [
   {
     // Cover-only Chamfer ↑. Arch (Fourier/SIREN/…) and look via dock.
     name: "Spiral Cover",
+    named: false,
     particleCount: 1500,
     friction: 0.975,
     forceMagnitude: 4.0,
@@ -2306,6 +2312,7 @@ export const GALLERY: ArtPieceConfig[] = [
     // particleCount is 200k (slider to 1M): advection is a single fused WGSL
     // dispatch (see render/webgpu/advect.ts), so count no longer gates FPS.
     name: "Neural Field · Max Chaos",
+    named: false,
     particleCount: 200000,
     friction: 0.99,
     forceMagnitude: 3.5,
@@ -2329,6 +2336,7 @@ export const GALLERY: ArtPieceConfig[] = [
     // stable hash of particle index (storage-free); renderer colours by
     // species. FUSED-ONLY (tfjs has no class input — ?train=tfjs ignored).
     name: "Neural Field · Species",
+    named: false,
     particleCount: 200000,
     friction: 0.99,
     forceMagnitude: 3.5,
@@ -2362,6 +2370,7 @@ export const GALLERY: ArtPieceConfig[] = [
     // The live field co-trains and has finite capacity, so no claim is made that
     // the displayed residual must monotonically vanish.
     name: "Adversary · Single (control)",
+    named: false,
     particleCount: 90000,
     friction: 0.97,
     drive: 0.55,
@@ -2404,6 +2413,7 @@ export const GALLERY: ArtPieceConfig[] = [
     // nonzero residual; K alone is not evidence of novelty.
     // Coloured by velocity with long ghost trails — the motion is the subject.
     name: "Adversary · WTA K=8",
+    named: false,
     particleCount: 120000,
     friction: 0.97,
     drive: 0.65,
@@ -2454,6 +2464,7 @@ export const GALLERY: ArtPieceConfig[] = [
     // "which are large" — the interesting question once the residual is
     // permanently nonzero.
     name: "Adversary · Pair WTA K=4",
+    named: false,
     particleCount: 70000,
     friction: 0.97,
     drive: 0.65,
@@ -2513,6 +2524,7 @@ export const GALLERY: ArtPieceConfig[] = [
     // legible. 60k particles = 20k triangles per surprise cycle — the tuple
     // count, not the particle count, is what the encode step pays for.
     name: "Adversary · Tri WTA K=6",
+    named: false,
     particleCount: 60000,
     friction: 0.97,
     drive: 0.65,
@@ -2549,6 +2561,7 @@ export const GALLERY: ArtPieceConfig[] = [
     // The observer removes global translation+rotation only. It deliberately
     // does not claim permutation or scale invariance.
     name: "Adversary · Quad WTA K=6",
+    named: false,
     particleCount: 60000,
     friction: 0.97,
     drive: 0.65,
@@ -2602,6 +2615,7 @@ export const GALLERY: ArtPieceConfig[] = [
   // uncontested extGrad still produces full-size steps.
   {
     name: "Pixel · VecField",
+    named: false,
     particleCount: 80000,
     friction: 0.97,
     drive: 0.65,
@@ -2649,6 +2663,7 @@ export const GALLERY: ArtPieceConfig[] = [
   },
   {
     name: "Pixel · NextFrame",
+    named: false,
     particleCount: 80000,
     friction: 0.97,
     drive: 0.65,
@@ -2696,6 +2711,7 @@ export const GALLERY: ArtPieceConfig[] = [
   },
   {
     name: "Pixel · RealFake",
+    named: false,
     particleCount: 80000,
     friction: 0.97,
     drive: 0.65,
@@ -2747,6 +2763,7 @@ export const GALLERY: ArtPieceConfig[] = [
     // density snapshots. This makes the critic learn temporal improvement
     // rather than only the latest-vs-uniform distinction.
     name: "Pixel · RealFake · Historical",
+    named: false,
     particleCount: 80000,
     friction: 0.97,
     drive: 0.65,
@@ -2781,6 +2798,7 @@ export const GALLERY: ArtPieceConfig[] = [
   },
   {
     name: "Pixel · Inpaint",
+    named: false,
     particleCount: 80000,
     friction: 0.97,
     drive: 0.65,

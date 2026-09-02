@@ -1064,6 +1064,38 @@ function RangeRow({
   );
 }
 
+function SelectRow({
+  label,
+  value,
+  choices,
+  onChange,
+  testid,
+}: {
+  label: string;
+  value: string;
+  choices: readonly { value: string; label: string }[];
+  onChange: (value: string) => void;
+  testid: string;
+}): ReactElement {
+  return (
+    <label className="tui-row" data-testid={testid}>
+      <span className="tui-label">{label}</span>
+      <select
+        className="tui-select"
+        value={value}
+        aria-label={label}
+        onChange={(event) => onChange(event.currentTarget.value)}
+      >
+        {choices.map((choice) => (
+          <option key={choice.value} value={choice.value}>
+            {choice.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function Segmented<T extends string>({
   label,
   value,
@@ -1529,6 +1561,9 @@ function App(): ReactElement {
    * pretending the piece has no critic at all.
    */
   const pixelCritic = piece.pixelDisc;
+  const configPieces = GALLERY.map((galleryPiece, index) => ({ galleryPiece, index })).filter(
+    ({ galleryPiece }) => galleryPiece.named === false
+  );
   /** Either game. The step-size sliders belong to whichever one is running. */
   const hasGame = adversary || pixelCritic !== undefined;
   const dockPresets = archDockPresets(piece.archDock ?? "aesthetic");
@@ -2128,6 +2163,26 @@ function App(): ReactElement {
               </ControlSubsection>
             )}
           </ControlSection>
+
+          {configPieces.length > 0 && (
+            <ControlSection title="config" testid="config-controls">
+              <SelectRow
+                label="preset"
+                value={String(runtime.piece)}
+                testid="config-preset-control"
+                choices={configPieces.map(({ galleryPiece, index }) => ({
+                  value: String(index),
+                  label: galleryPiece.name,
+                }))}
+                onChange={(value) =>
+                  setRuntime((previous) => runtimeForPieceSwitch(previous, Number(value)))
+                }
+              />
+              <p className="tui-note">
+                Config presets expose losses, architectures, and critic settings in the dock.
+              </p>
+            </ControlSection>
+          )}
 
           {piece.fieldArch && (
             <ControlSection title="model" testid="model-arch-controls">
@@ -2857,7 +2912,7 @@ function App(): ReactElement {
         aria-label="Art piece"
         data-testid="art-piece-gallery"
       >
-        {GALLERY.map((galleryPiece, index) => (
+        {GALLERY.map((galleryPiece, index) => galleryPiece.named !== false && (
           <button
             key={galleryPiece.name}
             type="button"
