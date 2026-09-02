@@ -868,7 +868,7 @@ fn gdAt(c : u32) -> f32 {
 }
 
 /** GAP → MLP forward (real-fake). Leaves `logit` uniform across the workgroup. */
-function emitGapMlpFwdPar(d: PixelDiscDims): string {
+function emitGapMlpFwdPar(d: PixelDiscDims, age = "0.0", era = "0.0"): string {
   const { K, hidden } = d;
   const wl = pixelWeightLayout(d);
   if (wl.kind !== "real-fake") throw new Error("GAP MLP only for real-fake");
@@ -877,6 +877,11 @@ function emitGapMlpFwdPar(d: PixelDiscDims): string {
     var s = 0.0;
     for (var c = 0u; c < N_CELL; c = c + 1u) { s = s + cSoftAt(k, c); }
     wgZ[k] = s / f32(N_CELL);
+  }
+  ${BAR}
+  if (tid == 0u) {
+    wgZ[0] = wgZ[0] + ${age};
+    ${K > 1 ? `wgZ[1] = wgZ[1] + ${era};` : ""}
   }
   ${BAR}
   for (var i = tid; i < ${hidden}u; i = i + ${PIXEL_DISC_WG}u) {
@@ -1243,7 +1248,7 @@ function emitCriticDiscBody(d: PixelDiscDims, metaStats: number): string {
   var discLoss = 0.0;
   {
     ${emitFwdPar(d, dens0)}
-    ${emitGapMlpFwdPar(d)}
+    ${emitGapMlpFwdPar(d, "0.0", "1.0")}
     let bce = bceGradLogit(logit, 1.0);
     discLoss = discLoss + bce.x;
     ${emitGapMlpBwdPar(d, "bce.y", true)}
@@ -1252,7 +1257,7 @@ function emitCriticDiscBody(d: PixelDiscDims, metaStats: number): string {
   }
   {
     ${emitFwdPar(d, densAux)}
-    ${emitGapMlpFwdPar(d)}
+    ${emitGapMlpFwdPar(d, "uni.fakeAge", "uni.fakeEra")}
     let bce = bceGradLogit(logit, 0.0);
     discLoss = discLoss + bce.x;
     ${emitGapMlpBwdPar(d, "bce.y", true)}
@@ -1480,7 +1485,7 @@ function emitCriticGenBody(d: PixelDiscDims, metaStats: number): string {
       if (wl.kind !== "real-fake") throw new Error("layout mismatch");
       return /* wgsl */ `
   ${emitFwdPar(d, dens0)}
-  ${emitGapMlpFwdPar(d)}
+  ${emitGapMlpFwdPar(d, "0.0", "1.0")}
   if (tid == 0u) { critMeta[${metaStats + PIXEL_STATS.genLoss}u] = uni.genSign * (-logit); }
   ${emitGapMlpBwdPar(d, "uni.genSign * -1.0", false)}
   ${emitBwdActPar(d)}
@@ -1868,6 +1873,8 @@ struct Uni {
   genSign : f32,
   maskSeed : u32,
   pad1 : u32,
+  fakeAge : f32,
+  fakeEra : f32,
 };
 @group(0) @binding(0) var<uniform> uni : Uni;
 @group(0) @binding(1) var<storage, read> weights : array<f32>;

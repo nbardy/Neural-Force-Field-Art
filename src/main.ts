@@ -357,6 +357,8 @@ export interface PixelCriticSpec {
     readonly captureEvery?: number;
     /** Probability of comparing against history instead of uniform fake noise. */
     readonly probability?: number;
+    /** Normalization horizon, in critic steps, for age conditioning. */
+    readonly horizon?: number;
   };
 }
 
@@ -2771,6 +2773,7 @@ export const GALLERY: ArtPieceConfig[] = [
         capacity: 256,
         captureEvery: 4,
         probability: 0.75,
+        horizon: 1024,
       },
     },
     fieldLoss: ZERO_FIELD_LOSS,

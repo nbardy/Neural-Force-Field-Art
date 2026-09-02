@@ -95,7 +95,8 @@ if (historicalPixel?.pixelDisc) {
     historicalPixel.pixelDisc.kind === "real-fake" &&
       historicalPixel.pixelDisc.historicalReplay?.capacity === 256 &&
       historicalPixel.pixelDisc.historicalReplay.captureEvery === 4 &&
-      historicalPixel.pixelDisc.historicalReplay.probability === 0.75,
+      historicalPixel.pixelDisc.historicalReplay.probability === 0.75 &&
+      historicalPixel.pixelDisc.historicalReplay.horizon === 1024,
     "historical RealFake has a bounded rolling density replay"
   );
 }

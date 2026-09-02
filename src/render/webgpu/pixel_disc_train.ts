@@ -79,6 +79,8 @@ export interface PixelDiscHistoricalReplayOpts {
   captureEvery?: number;
   /** Probability of using an old snapshot as the negative example. */
   probability?: number;
+  /** Steps over which replay age ramps from 0 to 1. */
+  horizon?: number;
 }
 
 export class PixelDiscTrainer {
@@ -113,6 +115,8 @@ export class PixelDiscTrainer {
   private historyWrite = 0;
   private historyCount = 0;
   private historyStep = 0;
+  private readonly historySteps: number[];
+  private readonly historyHorizon: number;
   private readonly historyCaptureEvery: number;
   private readonly historyProbability: number;
   private adamStep = 0;
@@ -203,6 +207,12 @@ export class PixelDiscTrainer {
     ) {
       throw new Error(`pixel_disc: bad historical replay probability=${history.probability}`);
     }
+    if (
+      history?.horizon !== undefined &&
+      (!Number.isInteger(history.horizon) || history.horizon <= 0)
+    ) {
+      throw new Error(`pixel_disc: bad historical replay horizon=${history.horizon}`);
+    }
     const historyCapacity = history?.capacity ?? 0;
     this.historyBuf = history
       ? device.createBuffer({
@@ -212,8 +222,10 @@ export class PixelDiscTrainer {
       : null;
     this.historyCaptureEvery = history?.captureEvery ?? 1;
     this.historyProbability = history?.probability ?? 1;
+    this.historySteps = history ? new Array(historyCapacity).fill(0) : [];
+    this.historyHorizon = history?.horizon ?? historyCapacity * this.historyCaptureEvery;
     this.uniBuf = device.createBuffer({
-      size: 64,
+      size: 80,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.partDummy = device.createBuffer({ size: 8, usage: GPUBufferUsage.STORAGE });
@@ -305,6 +317,7 @@ export class PixelDiscTrainer {
     this.historyWrite = 0;
     this.historyCount = 0;
     this.historyStep = 0;
+    this.historySteps.fill(0);
   }
 
   uploadCriticWeights(w: Float32Array): void {
@@ -387,6 +400,8 @@ export class PixelDiscTrainer {
     f[13] = o.genWeight === 0 ? 0 : -Math.abs(o.genWeight);
     u[14] = maskSeed;
     u[15] = 0;
+    f[16] = 0;
+    f[17] = 0;
     this.device.queue.writeBuffer(this.uniBuf, 0, this.uniData);
 
     const nCell = this.dims.G * this.dims.G;
@@ -441,6 +456,7 @@ export class PixelDiscTrainer {
         this.historyWrite * nCellBytes,
         nCellBytes
       );
+      this.historySteps[this.historyWrite] = this.historyStep;
       this.historyWrite = (this.historyWrite + 1) % (this.historyBuf.size / nCellBytes);
       this.historyCount = Math.min(this.historyCount + 1, this.historyBuf.size / nCellBytes);
     }
@@ -460,6 +476,12 @@ export class PixelDiscTrainer {
         if (replayHit) {
           const nCellBytes = nCell * 4;
           const slot = this.historyRandomInt(availableHistoryCount);
+          f[16] = Math.max(
+            0,
+            Math.min(1, (this.historyStep - this.historySteps[slot]) / this.historyHorizon)
+          );
+          f[17] = Math.max(0, Math.min(1, this.historySteps[slot] / this.historyHorizon));
+          this.device.queue.writeBuffer(this.uniBuf, 0, this.uniData);
           encoder.copyBufferToBuffer(
             this.historyBuf!,
             slot * nCellBytes,

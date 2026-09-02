@@ -27,6 +27,9 @@ unbounded fictitious play.
 - The current real density is captured before the discriminator pass.
 - An older snapshot is copied into the fake density region on replay hits;
   otherwise the existing uniform fake path runs unchanged.
+- Replay records capture-step metadata. The critic receives normalized age and
+  era channels through the existing pooled representation; no unique learned
+  snapshot-ID table is used.
 - Generator training remains current and differentiable: historical replay is
   discriminator-only and never becomes a gradient source.
 - Added `Pixel · RealFake · Historical` as a named gallery trial.
