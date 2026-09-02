@@ -2850,6 +2850,7 @@ export const GALLERY: ArtPieceConfig[] = [
     // There are no C weights, C optimizer, or direct C loss. Stable particle
     // roles render A/B/C as exact red/green/blue.
     name: "Adversary · Agree + Disagree RGB",
+    named: true,
     mode: "agree-disagree",
     palette: "rgb-roles",
     particleCount: 90000,
@@ -2900,6 +2901,7 @@ export const GALLERY: ArtPieceConfig[] = [
     // smooth field that stretches, the adversary is not. The tension is the
     // point, and the weight is the dial between them.
     name: "Adversary · Chaos Weave",
+    named: true,
     particleCount: 90000,
     friction: 0.97,
     drive: 0.75,
@@ -2981,6 +2983,7 @@ export const GALLERY: ArtPieceConfig[] = [
     //     piece still OPENS ON WRAP however this entry is written.
     // (Train B 256 needs no field: it is already startLoop's sampleRate.)
     name: "Adversary · Pair · HashGrid · Curl",
+    named: true,
     particleCount: 70000,
     friction: 0.97,
     drive: 0.9,
@@ -3069,6 +3072,7 @@ export const GALLERY: ArtPieceConfig[] = [
     // investigation is that piling terms on produces a field optimized for the
     // sum and legible as none of them.
     name: "Neural Field · Max Structure",
+    named: true,
     particleCount: 200000,
     friction: 0.985,
     forceMagnitude: 4.5,
@@ -3135,6 +3139,7 @@ export const GALLERY: ArtPieceConfig[] = [
     //
     // Design + gates: agent_notes/2026-08-19_family_conditioned_hashgrid_adversary.md
     name: "Adversary · RGB Families · HashGrid",
+    named: true,
     particleCount: 90000,
     friction: 0.97,
     drive: 0.6,
@@ -3176,6 +3181,7 @@ export const GALLERY: ArtPieceConfig[] = [
     // The supplied recipe is point-observed, WTA-K10, soft-angle, and uses a
     // dual HashGrid field with curl ink.
     name: "Adversary · Point · HashGrid · Curl · WTA10 · Coolwarm Raw",
+    named: true,
     particleCount: 190000,
     friction: 0.97,
     drive: 0.9,
@@ -3212,6 +3218,7 @@ export const GALLERY: ArtPieceConfig[] = [
     // rename of the older Pair/HashGrid work at index 17. Gallery entries are
     // append-only because shared dock links persist their numeric piece index.
     name: "Sand of Times",
+    named: true,
     particleCount: 190000,
     friction: 0.97,
     drive: 0.9,

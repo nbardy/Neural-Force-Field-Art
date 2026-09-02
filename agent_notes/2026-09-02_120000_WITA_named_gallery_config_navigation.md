@@ -11,10 +11,12 @@ into the right-side configuration controls.
 - Added optional `ArtPieceConfig.named` metadata.
 - Marked exploratory shape, adversary-control, Pixel-critic, and generic field
   variants as `named: false`.
-- Added a reusable `SelectRow` control and a `config` section listing those
-  presets. Selecting one still uses the existing piece rebuild path, so every
-  existing recipe remains available and its settings appear in the shared dock.
-- The bottom radio strip now filters to entries whose `named` flag is not false.
+- Added a reusable `SelectRow` control and an `objective` section. Its
+  Adversary/Shape segmented control acts as the top-level radio choice, and a
+  second selector lists only the recipes in that family. Selecting one still
+  uses the existing piece rebuild path, so every existing recipe remains
+  available and its settings appear in the shared dock.
+- The bottom radio strip now filters to entries explicitly marked `named: true`.
 - Existing piece indices, `?piece=`, and `?dock=` resolution remain unchanged.
 
 ## Scope note
@@ -27,4 +29,5 @@ without changing the compatibility contract.
 
 - `npm run build -- --no-cache` passed.
 - `bun tools/gallery_config_test.ts` passed.
+- `bun tools/pixel_disc_test.ts` passed, including the GPU smoke checks.
 - `git diff --check` passed.

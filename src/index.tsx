@@ -1564,6 +1564,16 @@ function App(): ReactElement {
   const configPieces = GALLERY.map((galleryPiece, index) => ({ galleryPiece, index })).filter(
     ({ galleryPiece }) => galleryPiece.named === false
   );
+  type ObjectiveFamily = "adversary" | "shape";
+  const objectiveFamily: ObjectiveFamily =
+    piece.adversary !== undefined || piece.pixelDisc !== undefined ? "adversary" : "shape";
+  const objectiveConfigs = configPieces.filter(({ galleryPiece }) =>
+    objectiveFamily === "adversary"
+      ? galleryPiece.adversary !== undefined || galleryPiece.pixelDisc !== undefined
+      : galleryPiece.adversary === undefined && galleryPiece.pixelDisc === undefined
+  );
+  const selectedObjectiveConfig =
+    objectiveConfigs.find(({ index }) => index === runtime.piece) ?? objectiveConfigs[0];
   /** Either game. The step-size sliders belong to whichever one is running. */
   const hasGame = adversary || pixelCritic !== undefined;
   const dockPresets = archDockPresets(piece.archDock ?? "aesthetic");
@@ -2165,21 +2175,43 @@ function App(): ReactElement {
           </ControlSection>
 
           {configPieces.length > 0 && (
-            <ControlSection title="config" testid="config-controls">
-              <SelectRow
-                label="preset"
-                value={String(runtime.piece)}
-                testid="config-preset-control"
-                choices={configPieces.map(({ galleryPiece, index }) => ({
-                  value: String(index),
-                  label: galleryPiece.name,
-                }))}
-                onChange={(value) =>
-                  setRuntime((previous) => runtimeForPieceSwitch(previous, Number(value)))
-                }
+            <ControlSection title="objective" testid="objective-controls">
+              <Segmented
+                label="objective"
+                value={objectiveFamily}
+                testid="objective-family-control"
+                choices={[
+                  { value: "adversary", label: "ADVERSARY" },
+                  { value: "shape", label: "SHAPE" },
+                ]}
+                onChange={(value) => {
+                  const family = value as ObjectiveFamily;
+                  const next = configPieces.find(({ galleryPiece }) =>
+                    family === "adversary"
+                      ? galleryPiece.adversary !== undefined || galleryPiece.pixelDisc !== undefined
+                      : galleryPiece.adversary === undefined && galleryPiece.pixelDisc === undefined
+                  );
+                  if (next) {
+                    setRuntime((previous) => runtimeForPieceSwitch(previous, next.index));
+                  }
+                }}
               />
+              {selectedObjectiveConfig && (
+                <SelectRow
+                  label="variant"
+                  value={String(selectedObjectiveConfig.index)}
+                  testid="objective-variant-control"
+                  choices={objectiveConfigs.map(({ galleryPiece, index }) => ({
+                    value: String(index),
+                    label: galleryPiece.name,
+                  }))}
+                  onChange={(value) =>
+                    setRuntime((previous) => runtimeForPieceSwitch(previous, Number(value)))
+                  }
+                />
+              )}
               <p className="tui-note">
-                Config presets expose losses, architectures, and critic settings in the dock.
+                Objective recipes group the adversary and shape experiments; named pieces stay below.
               </p>
             </ControlSection>
           )}
@@ -2912,7 +2944,7 @@ function App(): ReactElement {
         aria-label="Art piece"
         data-testid="art-piece-gallery"
       >
-        {GALLERY.map((galleryPiece, index) => galleryPiece.named !== false && (
+        {GALLERY.map((galleryPiece, index) => galleryPiece.named === true && (
           <button
             key={galleryPiece.name}
             type="button"
